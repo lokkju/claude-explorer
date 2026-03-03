@@ -1,0 +1,38 @@
+# Emacs
+*~
+\#*\#
+.\#*
+*.elc
+.dir-locals.el
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.uv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.npm/
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+.claude-exporter/
