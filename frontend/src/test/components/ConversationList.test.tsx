@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render, screen, waitFor } from '../utils';
 import { ConversationList } from '../../components/conversation/ConversationList';
 import { server } from '../mocks/server';

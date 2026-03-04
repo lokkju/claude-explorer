@@ -30,15 +30,21 @@ export function Sidebar({ className }: SidebarProps) {
       </div>
 
       {/* Search */}
-      <div className="p-4">
+      <div className="p-4 pb-2">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <Input
-            placeholder="Search conversations..."
+            placeholder="Search titles..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
           />
+        </div>
+        <div className="mt-2 text-xs text-zinc-500">
+          <kbd className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-700">
+            {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+K
+          </kbd>{' '}
+          to search messages
         </div>
       </div>
 

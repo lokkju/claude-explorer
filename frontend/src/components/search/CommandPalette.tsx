@@ -1,0 +1,225 @@
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router'
+import { Command } from 'cmdk'
+import { Search, FileText, MessageSquare, X } from 'lucide-react'
+import { useSearch } from '@/hooks/useConversations'
+import { cn, formatDate } from '@/lib/utils'
+import type { SearchResult, MessageSnippet } from '@/lib/types'
+
+export function CommandPalette() {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const navigate = useNavigate()
+
+  const { data: results, isLoading } = useSearch(query)
+
+  // Cmd+K to open
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        setOpen((o) => !o)
+      }
+    }
+    document.addEventListener('keydown', down)
+    return () => document.removeEventListener('keydown', down)
+  }, [])
+
+  const handleSelect = useCallback(
+    (conversationUuid: string) => {
+      navigate(`/conversations/${conversationUuid}`)
+      setOpen(false)
+      setQuery('')
+    },
+    [navigate]
+  )
+
+  const handleClose = useCallback(() => {
+    setOpen(false)
+    setQuery('')
+  }, [])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50">
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/50"
+        onClick={handleClose}
+        aria-hidden="true"
+      />
+
+      {/* Dialog */}
+      <div className="fixed left-1/2 top-[20%] w-full max-w-2xl -translate-x-1/2">
+        <Command
+          className="rounded-lg border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+          shouldFilter={false}
+        >
+          <div className="flex items-center border-b border-zinc-200 px-3 dark:border-zinc-800">
+            <Search className="mr-2 h-4 w-4 shrink-0 text-zinc-500" />
+            <Command.Input
+              value={query}
+              onValueChange={setQuery}
+              placeholder="Search messages..."
+              className="flex h-12 w-full bg-transparent py-3 text-sm outline-none placeholder:text-zinc-500 dark:placeholder:text-zinc-400"
+              autoFocus
+            />
+            <button
+              onClick={handleClose}
+              className="ml-2 rounded p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            >
+              <X className="h-4 w-4 text-zinc-500" />
+            </button>
+          </div>
+
+          <Command.List className="max-h-[400px] overflow-y-auto p-2">
+            {query.length < 2 && (
+              <Command.Empty className="py-6 text-center text-sm text-zinc-500">
+                Type at least 2 characters to search...
+              </Command.Empty>
+            )}
+
+            {query.length >= 2 && isLoading && (
+              <div className="py-6 text-center text-sm text-zinc-500">
+                Searching...
+              </div>
+            )}
+
+            {query.length >= 2 && !isLoading && results?.length === 0 && (
+              <Command.Empty className="py-6 text-center text-sm text-zinc-500">
+                No results found.
+              </Command.Empty>
+            )}
+
+            {results?.map((result) => (
+              <SearchResultItem
+                key={result.conversation_uuid}
+                result={result}
+                query={query}
+                onSelect={handleSelect}
+              />
+            ))}
+          </Command.List>
+
+          <div className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800">
+            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
+              Esc
+            </kbd>{' '}
+            to close
+          </div>
+        </Command>
+      </div>
+    </div>
+  )
+}
+
+interface SearchResultItemProps {
+  result: SearchResult
+  query: string
+  onSelect: (uuid: string) => void
+}
+
+function SearchResultItem({ result, query, onSelect }: SearchResultItemProps) {
+  const isTitleMatch = result.matching_messages.some(
+    (m) => m.message_uuid === 'title'
+  )
+  const messageMatches = result.matching_messages.filter(
+    (m) => m.message_uuid !== 'title'
+  )
+
+  return (
+    <Command.Item
+      value={result.conversation_uuid}
+      onSelect={() => onSelect(result.conversation_uuid)}
+      className="flex cursor-pointer flex-col gap-2 rounded-md px-3 py-2 hover:bg-zinc-100 aria-selected:bg-zinc-100 dark:hover:bg-zinc-800 dark:aria-selected:bg-zinc-800"
+    >
+      {/* Conversation header */}
+      <div className="flex items-center gap-2">
+        <FileText className="h-4 w-4 text-zinc-400" />
+        <span className="flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
+          {isTitleMatch ? (
+            <HighlightedText text={result.conversation_name} query={query} />
+          ) : (
+            result.conversation_name
+          )}
+        </span>
+        <span className="text-xs text-zinc-500">
+          {formatDate(result.conversation_updated_at)}
+        </span>
+      </div>
+
+      {/* Message snippets */}
+      {messageMatches.slice(0, 3).map((snippet, idx) => (
+        <SnippetPreview key={idx} snippet={snippet} query={query} />
+      ))}
+
+      {messageMatches.length > 3 && (
+        <div className="text-xs text-zinc-500">
+          +{messageMatches.length - 3} more matches
+        </div>
+      )}
+    </Command.Item>
+  )
+}
+
+interface SnippetPreviewProps {
+  snippet: MessageSnippet
+  query: string
+}
+
+function SnippetPreview({ snippet, query }: SnippetPreviewProps) {
+  return (
+    <div className="ml-6 flex items-start gap-2 text-sm">
+      <MessageSquare className="mt-0.5 h-3 w-3 shrink-0 text-zinc-400" />
+      <div className="min-w-0 flex-1">
+        <span
+          className={cn(
+            'mr-2 text-xs font-medium',
+            snippet.sender === 'human'
+              ? 'text-blue-600 dark:text-blue-400'
+              : 'text-emerald-600 dark:text-emerald-400'
+          )}
+        >
+          {snippet.sender === 'human' ? 'You' : 'Claude'}:
+        </span>
+        <span className="text-zinc-600 dark:text-zinc-300">
+          <HighlightedText text={snippet.snippet} query={query} />
+        </span>
+      </div>
+    </div>
+  )
+}
+
+interface HighlightedTextProps {
+  text: string
+  query: string
+}
+
+function HighlightedText({ text, query }: HighlightedTextProps) {
+  if (!query) return <>{text}</>
+
+  const regex = new RegExp(`(${escapeRegex(query)})`, 'gi')
+  const parts = text.split(regex)
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark
+            key={i}
+            className="rounded bg-yellow-200 px-0.5 dark:bg-yellow-800"
+          >
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  )
+}
+
+function escapeRegex(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}

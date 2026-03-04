@@ -30,7 +30,7 @@ test.describe('Keyboard Navigation', () => {
   });
 
   test('search input accepts text', async ({ page }) => {
-    const searchInput = page.getByPlaceholder('Search conversations...');
+    const searchInput = page.getByPlaceholder('Search titles...');
 
     // Type something
     await searchInput.fill('test query');
@@ -42,7 +42,7 @@ test.describe('Keyboard Navigation', () => {
   });
 
   test('clicking on sidebar search focuses input', async ({ page }) => {
-    const searchInput = page.getByPlaceholder('Search conversations...');
+    const searchInput = page.getByPlaceholder('Search titles...');
 
     // Click on search input
     await searchInput.click();
@@ -115,7 +115,7 @@ test.describe('Accessibility', () => {
     await page.goto('/');
 
     // Search input should have placeholder
-    const searchInput = page.getByPlaceholder('Search conversations...');
+    const searchInput = page.getByPlaceholder('Search titles...');
     await expect(searchInput).toBeVisible();
 
     // Placeholder serves as accessible name

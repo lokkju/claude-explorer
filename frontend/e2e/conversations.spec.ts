@@ -8,7 +8,7 @@ test.describe('Conversation Browser', () => {
     await expect(page.getByText('Claude Exporter')).toBeVisible();
 
     // Should show search input
-    await expect(page.getByPlaceholder('Search conversations...')).toBeVisible();
+    await expect(page.getByPlaceholder('Search titles...')).toBeVisible();
 
     // Should load and display conversations (may have "Starred" section)
     await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
@@ -50,7 +50,7 @@ test.describe('Conversation Browser', () => {
     const initialCount = await page.locator('button').filter({ hasText: /msgs$/ }).count();
 
     // Search for something specific
-    const searchInput = page.getByPlaceholder('Search conversations...');
+    const searchInput = page.getByPlaceholder('Search titles...');
     await searchInput.fill('React');
 
     // Wait for filter to apply
