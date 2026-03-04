@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
+import { AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // Import highlight.js styles
@@ -22,6 +23,17 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || '')
           const isInline = !match
+          const text = String(children).trim()
+
+          // Detect Claude Desktop's "unsupported block" placeholder
+          if (text === 'This block is not supported on your current device yet.') {
+            return (
+              <span className="my-2 flex items-center gap-2 rounded-md border border-zinc-300 bg-zinc-100 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>Tool call or artifact not captured in export</span>
+              </span>
+            )
+          }
 
           if (isInline) {
             return (
