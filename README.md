@@ -155,7 +155,7 @@ uv sync
 uv run claude-exporter capture
 
 # Terminal 2 — launch Claude Desktop through the proxy
-open -a "Claude" --args --proxy-server="127.0.0.1:8080"
+open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 ```
 
 Click around in Claude Desktop for a few seconds. The addon will print:

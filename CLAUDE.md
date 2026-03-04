@@ -19,7 +19,7 @@ After installing (`uv sync`), use the `claude-exporter` command:
 claude-exporter capture
 
 # In another terminal, launch Claude Desktop through the proxy:
-open -a "Claude" --args --proxy-server="127.0.0.1:8080"
+open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 
 # Step 2: Fetch all conversations
 claude-exporter fetch
@@ -49,13 +49,13 @@ Options:
 **Platform-specific launch commands:**
 ```bash
 # macOS
-open -a "Claude" --args --proxy-server="127.0.0.1:8080"
+open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 
 # Windows
-"C:\...\Claude.exe" --proxy-server="127.0.0.1:8080"
+"C:\...\Claude.exe" --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 
 # Linux
-claude --proxy-server="127.0.0.1:8080"
+claude --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 ```
 
 #### `claude-exporter fetch`

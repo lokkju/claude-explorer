@@ -60,12 +60,16 @@ def fetch(
     from fetcher.bulk_fetch import ClaudeFetcher, load_credentials
 
     # Get credentials
+    cf_bm = None
+    cf_clearance = None
     if session_key and org_id:
         pass
     else:
         creds = load_credentials(credentials)
         session_key = session_key or creds.get("session_key")
         org_id = org_id or creds.get("org_id")
+        cf_bm = creds.get("cf_bm")
+        cf_clearance = creds.get("cf_clearance")
 
     if not session_key or not org_id:
         raise click.ClickException(
@@ -79,6 +83,8 @@ def fetch(
         delay=delay,
         incremental=incremental,
         verbose=verbose,
+        cf_bm=cf_bm,
+        cf_clearance=cf_clearance,
     )
 
     fetcher.run(limit=limit)
@@ -94,7 +100,7 @@ def capture(port: int):
 
     After running this command:
     1. Open a new terminal
-    2. Run: open -a "Claude" --args --proxy-server="127.0.0.1:8080"
+    2. Run: open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
     3. Use Claude Desktop normally until credentials are captured
     4. Press 'q' to quit mitmproxy
     """
@@ -104,7 +110,7 @@ def capture(port: int):
     click.echo(f"Proxy listening on port {port}")
     click.echo()
     click.echo("In another terminal, launch Claude Desktop through the proxy:")
-    click.echo(f'  open -a "Claude" --args --proxy-server="127.0.0.1:{port}"')
+    click.echo(f'  open -a "Claude" --args --proxy-server="127.0.0.1:{port}" --ignore-certificate-errors')
     click.echo()
     click.echo("Use Claude Desktop normally. Credentials will be captured automatically.")
     click.echo("Press 'q' to quit mitmproxy when done.")

@@ -5,9 +5,9 @@ Usage:
     mitmproxy -s fetcher/mitmproxy_addon.py --listen-port 8080
 
 Then launch Claude Desktop through the proxy:
-    macOS:   open -a "Claude" --args --proxy-server="127.0.0.1:8080"
-    Windows: "Claude.exe" --proxy-server="127.0.0.1:8080"
-    Linux:   claude --proxy-server="127.0.0.1:8080"
+    macOS:   open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
+    Windows: "Claude.exe" --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
+    Linux:   claude --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 
 The addon will automatically capture credentials when you use Claude Desktop
 and save them to ~/.claude-exporter/credentials.json
@@ -25,7 +25,10 @@ from mitmproxy import http, ctx
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-exporter" / "credentials.json"
 
 # Patterns for extracting data
-SESSION_KEY_PATTERN = re.compile(r"sessionKey=([^;]+)")
+# Cookies can be separated by "; " or ", " depending on the client
+SESSION_KEY_PATTERN = re.compile(r"sessionKey=([^;,]+)")
+CF_BM_PATTERN = re.compile(r"__cf_bm=([^;,]+)")
+CF_CLEARANCE_PATTERN = re.compile(r"cf_clearance=([^;,]+)")
 ORG_ID_PATTERN = re.compile(r"/api/organizations/([a-f0-9-]{36})/")
 
 
@@ -36,6 +39,8 @@ class ClaudeCredentialCapture:
         self.credentials_path = DEFAULT_CREDENTIALS_PATH
         self.session_key: str | None = None
         self.org_id: str | None = None
+        self.cf_bm: str | None = None
+        self.cf_clearance: str | None = None
         self.captured = False
 
     def request(self, flow: http.HTTPFlow) -> None:
@@ -44,18 +49,27 @@ class ClaudeCredentialCapture:
         if not self._is_claude_request(flow.request.host):
             return
 
-        # Extract session key from cookies
+        # Extract cookies
         cookie_header = flow.request.headers.get("cookie", "")
-        session_key = self._extract_session_key(cookie_header)
+
+        session_key = self._extract_pattern(SESSION_KEY_PATTERN, cookie_header)
         if session_key:
             self.session_key = session_key
+
+        cf_bm = self._extract_pattern(CF_BM_PATTERN, cookie_header)
+        if cf_bm:
+            self.cf_bm = cf_bm
+
+        cf_clearance = self._extract_pattern(CF_CLEARANCE_PATTERN, cookie_header)
+        if cf_clearance:
+            self.cf_clearance = cf_clearance
 
         # Extract org ID from URL path
         org_id = self._extract_org_id(flow.request.path)
         if org_id:
             self.org_id = org_id
 
-        # Save credentials once we have both
+        # Save credentials once we have session_key and org_id
         if self.session_key and self.org_id and not self.captured:
             self._save_credentials()
             self.captured = True
@@ -65,9 +79,9 @@ class ClaudeCredentialCapture:
         """Check if request is to Claude's API."""
         return host in ("claude.ai", "api.claude.ai", "www.claude.ai")
 
-    def _extract_session_key(self, cookie_header: str) -> str | None:
-        """Extract sessionKey from cookie header."""
-        match = SESSION_KEY_PATTERN.search(cookie_header)
+    def _extract_pattern(self, pattern: re.Pattern, text: str) -> str | None:
+        """Extract a value using a regex pattern."""
+        match = pattern.search(text)
         if match:
             return match.group(1)
         return None
@@ -86,6 +100,8 @@ class ClaudeCredentialCapture:
         credentials = {
             "session_key": self.session_key,
             "org_id": self.org_id,
+            "cf_bm": self.cf_bm,
+            "cf_clearance": self.cf_clearance,
             "captured_at": datetime.now(timezone.utc).isoformat(),
         }
 

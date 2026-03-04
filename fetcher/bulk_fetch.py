@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import click
-import httpx
+from curl_cffi import requests as curl_requests
 
 
 # Default paths
@@ -33,7 +33,7 @@ DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-exporter" / "credentials.json"
 DEFAULT_OUTPUT_DIR = Path.home() / ".claude-exporter" / "conversations"
 
 # Claude API base URL
-API_BASE = "https://api.claude.ai/api"
+API_BASE = "https://claude.ai/api"
 
 # Request settings
 DEFAULT_DELAY = 0.3
@@ -51,6 +51,8 @@ class ClaudeFetcher:
         delay: float = DEFAULT_DELAY,
         incremental: bool = True,
         verbose: bool = False,
+        cf_bm: str | None = None,
+        cf_clearance: str | None = None,
     ):
         self.session_key = session_key
         self.org_id = org_id
@@ -59,17 +61,12 @@ class ClaudeFetcher:
         self.incremental = incremental
         self.verbose = verbose
 
-        # Create HTTP client with session cookie
-        self.client = httpx.Client(
-            timeout=REQUEST_TIMEOUT,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                "Accept": "application/json",
-                "Origin": "https://claude.ai",
-                "Referer": "https://claude.ai/",
-            },
-            cookies={"sessionKey": session_key},
-        )
+        # Build cookies dict
+        self.cookies = {"sessionKey": session_key}
+        if cf_bm:
+            self.cookies["__cf_bm"] = cf_bm
+        if cf_clearance:
+            self.cookies["cf_clearance"] = cf_clearance
 
     def _log(self, message: str) -> None:
         """Print message if verbose mode is on."""
@@ -80,6 +77,15 @@ class ClaudeFetcher:
         """Build API URL with org ID."""
         return f"{API_BASE}/organizations/{self.org_id}/{path}"
 
+    def _get(self, url: str) -> curl_requests.Response:
+        """Make a GET request with Chrome impersonation."""
+        return curl_requests.get(
+            url,
+            cookies=self.cookies,
+            impersonate="chrome",
+            timeout=REQUEST_TIMEOUT,
+        )
+
     def fetch_conversation_list(self) -> list[dict]:
         """Fetch list of all conversations."""
         conversations = []
@@ -89,7 +95,7 @@ class ClaudeFetcher:
         self._log(f"Fetching conversation list from {url}")
 
         while url:
-            response = self.client.get(url)
+            response = self._get(url)
             response.raise_for_status()
             data = response.json()
 
@@ -118,24 +124,22 @@ class ClaudeFetcher:
         self._log(f"Fetching conversation {uuid}")
 
         try:
-            response = self.client.get(url)
+            response = self._get(url)
             response.raise_for_status()
             return response.json()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
+        except Exception as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status == 404:
                 click.echo(f"  Warning: Conversation {uuid} not found (404)", err=True)
-            elif e.response.status_code == 401:
+            elif status == 401:
                 click.echo(f"  Error: Session expired (401). Re-run credential capture.", err=True)
                 raise
-            elif e.response.status_code == 429:
+            elif status == 429:
                 click.echo(f"  Rate limited. Waiting 60 seconds...", err=True)
                 time.sleep(60)
                 return self.fetch_conversation(uuid)  # Retry
             else:
                 click.echo(f"  Error fetching {uuid}: {e}", err=True)
-            return None
-        except httpx.RequestError as e:
-            click.echo(f"  Network error fetching {uuid}: {e}", err=True)
             return None
 
     def save_conversation(self, conversation: dict) -> None:
@@ -305,14 +309,7 @@ def main(
         verbose=verbose,
     )
 
-    try:
-        fetcher.run(limit=limit)
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 401:
-            raise click.ClickException(
-                "Session expired. Re-run the mitmproxy addon to capture new credentials."
-            )
-        raise
+    fetcher.run(limit=limit)
 
 
 if __name__ == "__main__":
