@@ -1,6 +1,8 @@
 import type {
   ConversationSummary,
   ConversationDetail,
+  ConversationTree,
+  MessageNode,
   Message,
   SearchResult,
   AppConfig,
@@ -183,4 +185,45 @@ export const mockSearchResults: SearchResult[] = [
 export const mockConfig: AppConfig = {
   data_dir: '/Users/test/.claude-exporter/conversations',
   conversation_count: 72,
+};
+
+// Mock conversation tree with branches
+const makeMsgNode = (
+  uuid: string,
+  sender: 'human' | 'assistant',
+  text: string,
+  parentUuid: string | null,
+  children: MessageNode[] = []
+): MessageNode => ({
+  message: {
+    uuid,
+    sender,
+    text,
+    content: [{ type: 'text', text }],
+    created_at: '2026-03-01T10:00:00Z',
+    updated_at: '2026-03-01T10:00:00Z',
+    truncated: false,
+    parent_message_uuid: parentUuid,
+    attachments: [],
+    files: [],
+  },
+  children,
+});
+
+export const mockConversationTree: ConversationTree = {
+  uuid: 'conv-2',
+  root_messages: [
+    makeMsgNode('tree-msg-1', 'human', 'How do I analyze data in Python?', null, [
+      makeMsgNode('tree-msg-2', 'assistant', 'You can use pandas for data analysis. Here\'s how:', 'tree-msg-1', [
+        makeMsgNode('tree-msg-3', 'human', 'Show me an example with CSV files', 'tree-msg-2', [
+          makeMsgNode('tree-msg-4', 'assistant', 'Here\'s how to read a CSV file with pandas...', 'tree-msg-3', []),
+        ]),
+        // Branch point - alternative follow-up
+        makeMsgNode('tree-msg-5', 'human', 'What about Excel files?', 'tree-msg-2', [
+          makeMsgNode('tree-msg-6', 'assistant', 'For Excel files, you can use pandas.read_excel()...', 'tree-msg-5', []),
+        ]),
+      ]),
+    ]),
+  ],
+  active_path: ['tree-msg-1', 'tree-msg-2', 'tree-msg-3', 'tree-msg-4'],
 };

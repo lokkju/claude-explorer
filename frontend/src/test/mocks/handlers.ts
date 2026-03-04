@@ -2,6 +2,7 @@ import { http, HttpResponse } from 'msw';
 import {
   mockConversations,
   mockConversationDetail,
+  mockConversationTree,
   mockSearchResults,
   mockConfig,
 } from './data';
@@ -66,6 +67,12 @@ export const handlers = [
   http.get('/api/conversations/:uuid/tree', ({ params }) => {
     const { uuid } = params;
 
+    // Return mock tree for conv-2 (which has_branches: true)
+    if (uuid === 'conv-2' || uuid === mockConversationTree.uuid) {
+      return HttpResponse.json(mockConversationTree);
+    }
+
+    // Return empty tree for other conversations
     return HttpResponse.json({
       uuid,
       root_messages: [],

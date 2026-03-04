@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useParams } from 'react-router'
 import { FileText, FileType, GitBranch } from 'lucide-react'
 import { useConversation } from '@/hooks/useConversations'
@@ -5,12 +6,14 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
+import { TreeViewModal } from '@/components/branch/TreeViewModal'
 import { formatFullDate, sanitizeFilename, downloadBlob } from '@/lib/utils'
 import { api } from '@/lib/api'
 
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
   const { data: conversation, isLoading, error } = useConversation(uuid || '')
+  const [isTreeOpen, setIsTreeOpen] = useState(false)
 
   if (!uuid) {
     return <EmptyState />
@@ -60,10 +63,13 @@ export function ConversationPage() {
             <span>{formatFullDate(conversation.created_at)}</span>
             <span>{conversation.message_count} messages</span>
             {conversation.has_branches && (
-              <span className="flex items-center gap-1">
+              <button
+                onClick={() => setIsTreeOpen(true)}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950"
+              >
                 <GitBranch className="h-3 w-3" />
-                Has branches
-              </span>
+                View branches
+              </button>
             )}
           </div>
         </div>
@@ -87,6 +93,20 @@ export function ConversationPage() {
           ))}
         </div>
       </ScrollArea>
+
+      {/* Tree View Modal */}
+      {conversation.has_branches && (
+        <TreeViewModal
+          uuid={conversation.uuid}
+          isOpen={isTreeOpen}
+          onClose={() => setIsTreeOpen(false)}
+          onSelectPath={(path) => {
+            // TODO: Implement branch switching by updating the view
+            // For now, just close the modal
+            console.log('Selected path:', path)
+          }}
+        />
+      )}
     </div>
   )
 }
