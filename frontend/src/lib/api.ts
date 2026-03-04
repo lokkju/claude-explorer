@@ -1,0 +1,72 @@
+import type {
+  ConversationSummary,
+  ConversationDetail,
+  ConversationTree,
+  ConversationFilters,
+  SearchResult,
+  AppConfig,
+  ApiError as ApiErrorType,
+} from './types'
+import { ApiError } from './types'
+import { mockConversations, mockConversationDetails, filterConversations } from './mockData'
+
+const BASE_URL = '/api'
+
+// Set to true to use mock data (for development without backend)
+const USE_MOCK_DATA = false
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(`${BASE_URL}${url}`)
+  if (!response.ok) {
+    throw new ApiError(response.status, await response.text())
+  }
+  return response.json()
+}
+
+export const api = {
+  getConversations: async (filters?: ConversationFilters): Promise<ConversationSummary[]> => {
+    if (USE_MOCK_DATA) {
+      // Simulate network delay
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      return filterConversations(mockConversations, filters?.search)
+    }
+    const params = new URLSearchParams()
+    if (filters?.search) params.set('search', filters.search)
+    if (filters?.starred !== undefined) params.set('starred', String(filters.starred))
+    if (filters?.model) params.set('model', filters.model)
+    if (filters?.sort) params.set('sort', filters.sort)
+    const query = params.toString()
+    return fetchJson<ConversationSummary[]>(`/conversations${query ? `?${query}` : ''}`)
+  },
+
+  getConversation: async (uuid: string): Promise<ConversationDetail> => {
+    if (USE_MOCK_DATA) {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      const detail = mockConversationDetails[uuid]
+      if (!detail) {
+        throw new ApiError(404, 'Conversation not found')
+      }
+      return detail
+    }
+    return fetchJson<ConversationDetail>(`/conversations/${uuid}`)
+  },
+
+  getConversationTree: (uuid: string): Promise<ConversationTree> =>
+    fetchJson<ConversationTree>(`/conversations/${uuid}/tree`),
+
+  search: (query: string): Promise<SearchResult[]> =>
+    fetchJson<SearchResult[]>(`/search?q=${encodeURIComponent(query)}`),
+
+  getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),
+
+  exportMarkdown: (uuid: string): Promise<Response> =>
+    fetch(`${BASE_URL}/conversations/${uuid}/export/markdown`),
+
+  exportPdf: (uuid: string): Promise<Response> =>
+    fetch(`${BASE_URL}/conversations/${uuid}/export/pdf`),
+
+  exportAllMarkdown: (): Promise<Response> =>
+    fetch(`${BASE_URL}/export/all/markdown`),
+}
+
+export type { ApiErrorType }

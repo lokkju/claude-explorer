@@ -34,5 +34,8 @@ node_modules/
 .DS_Store
 Thumbs.db
 
+# Build outputs
+frontend/dist/
+
 # Project specific
 .claude-exporter/

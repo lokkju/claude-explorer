@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+@theme {
+  /* Colors */
+  --color-sidebar: var(--color-zinc-50);
+  --color-sidebar-foreground: var(--color-zinc-900);
+  --color-bubble-human: var(--color-blue-50);
+  --color-bubble-human-foreground: var(--color-blue-900);
+  --color-bubble-assistant: var(--color-zinc-100);
+  --color-bubble-assistant-foreground: var(--color-zinc-900);
+  --color-tool-block: var(--color-amber-50);
+  --color-tool-block-foreground: var(--color-amber-900);
+
+  /* Spacing */
+  --spacing-sidebar-width: 320px;
+  --spacing-sidebar-collapsed: 64px;
+  --spacing-message-max-width: 768px;
+
+  /* Typography */
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+/* Dark mode overrides */
+.dark {
+  --color-sidebar: var(--color-zinc-900);
+  --color-sidebar-foreground: var(--color-zinc-50);
+  --color-bubble-human: var(--color-blue-950);
+  --color-bubble-human-foreground: var(--color-blue-50);
+  --color-bubble-assistant: var(--color-zinc-800);
+  --color-bubble-assistant-foreground: var(--color-zinc-50);
+  --color-tool-block: var(--color-amber-950);
+  --color-tool-block-foreground: var(--color-amber-50);
+}
+
+/* Base styles */
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* Code blocks */
+pre, code {
+  font-family: var(--font-mono);
+}
+
+/* Prose styling for markdown */
+.prose {
+  max-width: none;
+}
+
+.prose pre {
+  background-color: var(--color-zinc-900);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.prose code {
+  background-color: var(--color-zinc-100);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
+.dark .prose code {
+  background-color: var(--color-zinc-800);
+}
+
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-zinc-300);
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-zinc-700);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-zinc-400);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-zinc-600);
+}

@@ -1,0 +1,136 @@
+import { useParams } from 'react-router'
+import { FileText, FileType, GitBranch } from 'lucide-react'
+import { useConversation } from '@/hooks/useConversations'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { MessageBubble } from '@/components/message/MessageBubble'
+import { formatFullDate, sanitizeFilename, downloadBlob } from '@/lib/utils'
+import { api } from '@/lib/api'
+
+export function ConversationPage() {
+  const { uuid } = useParams<{ uuid: string }>()
+  const { data: conversation, isLoading, error } = useConversation(uuid || '')
+
+  if (!uuid) {
+    return <EmptyState />
+  }
+
+  if (isLoading) {
+    return <LoadingState />
+  }
+
+  if (error || !conversation) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="text-center">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+            Conversation not found
+          </h2>
+          <p className="text-sm text-zinc-500">
+            The conversation you're looking for doesn't exist.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const handleExportMarkdown = async () => {
+    const response = await api.exportMarkdown(conversation.uuid)
+    const blob = await response.blob()
+    downloadBlob(blob, `${sanitizeFilename(conversation.name)}.md`)
+  }
+
+  const handleExportPdf = async () => {
+    const response = await api.exportPdf(conversation.uuid)
+    const blob = await response.blob()
+    downloadBlob(blob, `${sanitizeFilename(conversation.name)}.pdf`)
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Header */}
+      <header className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+        <div className="flex-1 min-w-0">
+          <h1 className="truncate text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+            {conversation.name || 'Untitled'}
+          </h1>
+          <div className="mt-1 flex items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
+            <Badge variant="secondary">{conversation.model}</Badge>
+            <span>{formatFullDate(conversation.created_at)}</span>
+            <span>{conversation.message_count} messages</span>
+            {conversation.has_branches && (
+              <span className="flex items-center gap-1">
+                <GitBranch className="h-3 w-3" />
+                Has branches
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleExportMarkdown}>
+            <FileText className="h-4 w-4" />
+            <span className="ml-2">Markdown</span>
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportPdf}>
+            <FileType className="h-4 w-4" />
+            <span className="ml-2">PDF</span>
+          </Button>
+        </div>
+      </header>
+
+      {/* Messages */}
+      <ScrollArea className="flex-1 p-6">
+        <div className="mx-auto max-w-3xl space-y-6">
+          {conversation.messages.map((message) => (
+            <MessageBubble key={message.uuid} message={message} />
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  )
+}
+
+function EmptyState() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="text-center">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+          Select a conversation
+        </h2>
+        <p className="text-sm text-zinc-500">
+          Choose a conversation from the sidebar to view it.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function LoadingState() {
+  return (
+    <div className="flex h-full flex-col">
+      <header className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+        <div className="flex-1">
+          <div className="h-6 w-48 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <div className="mt-2 h-4 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+        </div>
+      </header>
+      <div className="flex-1 p-6">
+        <div className="mx-auto max-w-3xl space-y-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className={`flex ${i % 2 === 0 ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`h-24 w-2/3 animate-pulse rounded-lg ${
+                  i % 2 === 0 ? 'bg-blue-100 dark:bg-blue-900' : 'bg-zinc-100 dark:bg-zinc-800'
+                }`}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,184 @@
+import { useState } from 'react'
+import { User, Bot, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
+import { MarkdownRenderer } from './MarkdownRenderer'
+import { Button } from '@/components/ui/button'
+import { cn, formatDate } from '@/lib/utils'
+import type { Message, ContentBlock } from '@/lib/types'
+
+interface MessageBubbleProps {
+  message: Message
+}
+
+export function MessageBubble({ message }: MessageBubbleProps) {
+  const isHuman = message.sender === 'human'
+
+  return (
+    <div
+      className={cn(
+        'flex gap-3',
+        isHuman ? 'flex-row-reverse' : 'flex-row'
+      )}
+    >
+      {/* Avatar */}
+      <div
+        className={cn(
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+          isHuman
+            ? 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300'
+            : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300'
+        )}
+      >
+        {isHuman ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+      </div>
+
+      {/* Content */}
+      <div
+        className={cn(
+          'flex max-w-[80%] flex-col gap-2 rounded-lg px-4 py-3',
+          isHuman
+            ? 'bg-blue-50 dark:bg-blue-950'
+            : 'bg-zinc-100 dark:bg-zinc-800'
+        )}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+          <span className="font-medium">
+            {isHuman ? 'You' : 'Claude'}
+          </span>
+          <span>{formatDate(message.created_at)}</span>
+          {message.truncated && (
+            <span className="text-amber-600 dark:text-amber-400">
+              (truncated)
+            </span>
+          )}
+        </div>
+
+        {/* Message content */}
+        <div className="text-sm text-zinc-900 dark:text-zinc-100">
+          {message.content && message.content.length > 0 ? (
+            message.content.map((block, index) => (
+              <ContentBlockRenderer key={index} block={block} />
+            ))
+          ) : (
+            <MarkdownRenderer content={message.text} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface ContentBlockRendererProps {
+  block: ContentBlock
+}
+
+function ContentBlockRenderer({ block }: ContentBlockRendererProps) {
+  switch (block.type) {
+    case 'text':
+      return <MarkdownRenderer content={block.text || ''} />
+    case 'tool_use':
+      return <ToolUseBlock name={block.name || ''} input={block.input} />
+    case 'tool_result':
+      return <ToolResultBlock content={block.content || []} />
+    default:
+      return null
+  }
+}
+
+interface ToolUseBlockProps {
+  name: string
+  input: unknown
+}
+
+function ToolUseBlock({ name, input }: ToolUseBlockProps) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const inputJson = JSON.stringify(input, null, 2)
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(inputJson)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="my-2 rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-amber-800 dark:text-amber-200"
+      >
+        {isExpanded ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
+        <span>Tool: {name}</span>
+      </button>
+      {isExpanded && (
+        <div className="relative border-t border-amber-200 dark:border-amber-800">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute right-2 top-2 h-6 w-6"
+            onClick={handleCopy}
+          >
+            {copied ? (
+              <Check className="h-3 w-3 text-green-500" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+          </Button>
+          <pre className="overflow-x-auto p-3 text-xs text-amber-900 dark:text-amber-100">
+            {inputJson}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface ToolResultBlockProps {
+  content: ContentBlock[]
+}
+
+function ToolResultBlock({ content }: ToolResultBlockProps) {
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  // Extract text content for preview
+  const textContent = content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+
+  const previewLength = 200
+  const needsTruncation = textContent.length > previewLength
+
+  return (
+    <div className="my-2 rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-zinc-700 dark:text-zinc-300"
+      >
+        {isExpanded ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronRight className="h-4 w-4" />
+        )}
+        <span>Tool Result</span>
+        {!isExpanded && needsTruncation && (
+          <span className="text-xs text-zinc-500">
+            ({textContent.length} chars)
+          </span>
+        )}
+      </button>
+      {isExpanded && (
+        <div className="border-t border-zinc-200 p-3 dark:border-zinc-700">
+          <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-zinc-700 dark:text-zinc-300">
+            {textContent}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
