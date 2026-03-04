@@ -31,9 +31,11 @@ from curl_cffi import requests as curl_requests
 # Default paths
 DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-exporter" / "credentials.json"
 DEFAULT_OUTPUT_DIR = Path.home() / ".claude-exporter" / "conversations"
+DEFAULT_FILES_DIR = Path.home() / ".claude-exporter" / "files"
 
 # Claude API base URL
 API_BASE = "https://claude.ai/api"
+WEB_BASE = "https://claude.ai"
 
 # Request settings
 DEFAULT_DELAY = 0.3
@@ -48,18 +50,22 @@ class ClaudeFetcher:
         session_key: str,
         org_id: str,
         output_dir: Path,
+        files_dir: Path | None = None,
         delay: float = DEFAULT_DELAY,
         incremental: bool = True,
         verbose: bool = False,
+        download_files: bool = True,
         cf_bm: str | None = None,
         cf_clearance: str | None = None,
     ):
         self.session_key = session_key
         self.org_id = org_id
         self.output_dir = output_dir
+        self.files_dir = files_dir or DEFAULT_FILES_DIR
         self.delay = delay
         self.incremental = incremental
         self.verbose = verbose
+        self.download_files_flag = download_files
 
         # Build cookies dict
         self.cookies = {"sessionKey": session_key}
@@ -85,6 +91,153 @@ class ClaudeFetcher:
             impersonate="chrome",
             timeout=REQUEST_TIMEOUT,
         )
+
+    def _download_file(self, url: str, dest_path: Path) -> tuple[bool, Path]:
+        """Download a file from Claude's servers.
+
+        Returns (success, actual_path) - path may have different extension based on Content-Type.
+        """
+        try:
+            # Handle relative URLs
+            if url.startswith("/"):
+                url = f"{WEB_BASE}{url}"
+
+            response = curl_requests.get(
+                url,
+                cookies=self.cookies,
+                impersonate="chrome",
+                timeout=REQUEST_TIMEOUT * 2,  # Longer timeout for files
+            )
+            response.raise_for_status()
+
+            # Determine correct extension from Content-Type
+            content_type = response.headers.get("content-type", "")
+            actual_ext = self._ext_from_content_type(content_type)
+            if actual_ext and dest_path.suffix != actual_ext:
+                dest_path = dest_path.with_suffix(actual_ext)
+
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(dest_path, "wb") as f:
+                f.write(response.content)
+
+            self._log(f"  Downloaded: {dest_path.name}")
+            return True, dest_path
+        except Exception as e:
+            self._log(f"  Failed to download {url}: {e}")
+            return False, dest_path
+
+    def _ext_from_content_type(self, content_type: str) -> str | None:
+        """Get file extension from Content-Type header."""
+        content_type = content_type.split(";")[0].strip().lower()
+        mapping = {
+            "image/webp": ".webp",
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/gif": ".gif",
+            "application/pdf": ".pdf",
+            "image/svg+xml": ".svg",
+        }
+        return mapping.get(content_type)
+
+    def download_conversation_files(
+        self, conversation: dict, conv_uuid: str
+    ) -> dict:
+        """Download all files from a conversation and update paths."""
+        if not self.download_files_flag:
+            return conversation
+
+        conv_files_dir = self.files_dir / conv_uuid
+        files_downloaded = 0
+
+        for message in conversation.get("chat_messages", []):
+            # Process files field (images)
+            for file_info in message.get("files", []):
+                file_uuid = file_info.get("uuid") or file_info.get("id", "")
+                file_name = file_info.get("file_name", f"{file_uuid}.bin")
+
+                if not file_uuid:
+                    continue
+
+                file_dir = conv_files_dir / file_uuid
+
+                # Download thumbnail if available
+                thumb_url = file_info.get("thumbnail_url")
+                if thumb_url:
+                    ext = self._guess_extension(thumb_url, file_info.get("file_type"))
+                    thumb_path = file_dir / f"thumbnail{ext}"
+                    success, actual_path = self._download_file(thumb_url, thumb_path)
+                    if success:
+                        file_info["local_thumbnail"] = str(actual_path)
+                        files_downloaded += 1
+
+                # Download preview/full image if available
+                preview_url = file_info.get("preview_url")
+                if preview_url:
+                    ext = self._guess_extension(preview_url, file_info.get("file_type"))
+                    preview_path = file_dir / f"preview{ext}"
+                    success, actual_path = self._download_file(preview_url, preview_path)
+                    if success:
+                        file_info["local_preview"] = str(actual_path)
+                        files_downloaded += 1
+
+                # Download original if URL exists
+                original_url = file_info.get("original_url") or file_info.get("url")
+                if original_url:
+                    ext = self._guess_extension(original_url, file_info.get("file_type"))
+                    original_path = file_dir / f"original{ext}"
+                    success, actual_path = self._download_file(original_url, original_path)
+                    if success:
+                        file_info["local_original"] = str(actual_path)
+                        files_downloaded += 1
+
+            # Process files_v2 if present (same structure)
+            for file_info in message.get("files_v2", []):
+                file_uuid = file_info.get("uuid") or file_info.get("id", "")
+                if not file_uuid:
+                    continue
+
+                file_dir = conv_files_dir / file_uuid
+
+                for url_key in ["thumbnail_url", "preview_url", "url", "original_url"]:
+                    url = file_info.get(url_key)
+                    if url:
+                        ext = self._guess_extension(url, file_info.get("file_type"))
+                        dest_name = url_key.replace("_url", "") + ext
+                        dest_path = file_dir / dest_name
+                        success, actual_path = self._download_file(url, dest_path)
+                        if success:
+                            file_info[f"local_{url_key.replace('_url', '')}"] = str(actual_path)
+                            files_downloaded += 1
+
+        if files_downloaded > 0:
+            click.echo(f"  Downloaded {files_downloaded} file(s)")
+
+        return conversation
+
+    def _guess_extension(self, url: str, file_type: str | None) -> str:
+        """Guess file extension from URL or MIME type."""
+        # Check URL path for extension
+        if "/thumbnail" in url:
+            return ".jpg"  # Thumbnails are usually JPEG
+        if "." in url.split("/")[-1].split("?")[0]:
+            ext = "." + url.split("/")[-1].split("?")[0].split(".")[-1]
+            if len(ext) <= 5:  # Reasonable extension length
+                return ext
+
+        # Guess from MIME type
+        mime_to_ext = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "application/pdf": ".pdf",
+        }
+        if file_type and file_type in mime_to_ext:
+            return mime_to_ext[file_type]
+
+        return ".bin"
 
     def fetch_conversation_list(self) -> list[dict]:
         """Fetch list of all conversations."""
@@ -143,10 +296,13 @@ class ClaudeFetcher:
             return None
 
     def save_conversation(self, conversation: dict) -> None:
-        """Save conversation to JSON file."""
+        """Save conversation to JSON file, downloading any attached files."""
         uuid = conversation.get("uuid", "unknown")
-        path = self.output_dir / f"{uuid}.json"
 
+        # Download files and update conversation with local paths
+        conversation = self.download_conversation_files(conversation, uuid)
+
+        path = self.output_dir / f"{uuid}.json"
         with open(path, "w") as f:
             json.dump(conversation, f, indent=2)
 
@@ -252,6 +408,12 @@ def load_credentials(credentials_path: Path) -> dict:
     help="Where to save JSON files",
 )
 @click.option(
+    "--files-dir",
+    type=click.Path(path_type=Path),
+    default=DEFAULT_FILES_DIR,
+    help="Where to save downloaded files (images, PDFs)",
+)
+@click.option(
     "--credentials",
     type=click.Path(path_type=Path),
     default=DEFAULT_CREDENTIALS_PATH,
@@ -265,6 +427,11 @@ def load_credentials(credentials_path: Path) -> dict:
     help="Skip already-saved conversations (default: incremental)",
 )
 @click.option(
+    "--download-files/--no-download-files",
+    default=True,
+    help="Download attached images/PDFs (default: yes)",
+)
+@click.option(
     "--delay",
     type=float,
     default=DEFAULT_DELAY,
@@ -274,10 +441,12 @@ def load_credentials(credentials_path: Path) -> dict:
 @click.option("--verbose", is_flag=True, help="Show detailed output")
 def main(
     output_dir: Path,
+    files_dir: Path,
     credentials: Path,
     session_key: str | None,
     org_id: str | None,
     incremental: bool,
+    download_files: bool,
     delay: float,
     limit: int | None,
     verbose: bool,
@@ -304,9 +473,11 @@ def main(
         session_key=session_key,
         org_id=org_id,
         output_dir=output_dir,
+        files_dir=files_dir,
         delay=delay,
         incremental=incremental,
         verbose=verbose,
+        download_files=download_files,
     )
 
     fetcher.run(limit=limit)

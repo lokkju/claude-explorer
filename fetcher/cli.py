@@ -27,6 +27,12 @@ def main():
     help="Where to save JSON files",
 )
 @click.option(
+    "--files-dir",
+    type=click.Path(path_type=Path),
+    default=Path.home() / ".claude-exporter" / "files",
+    help="Where to save downloaded files (images, PDFs)",
+)
+@click.option(
     "--credentials",
     type=click.Path(path_type=Path),
     default=Path.home() / ".claude-exporter" / "credentials.json",
@@ -39,15 +45,22 @@ def main():
     default=True,
     help="Skip already-saved conversations",
 )
+@click.option(
+    "--download-files/--no-download-files",
+    default=True,
+    help="Download attached images/PDFs (default: yes)",
+)
 @click.option("--delay", type=float, default=0.3, help="Seconds between requests")
 @click.option("--limit", type=int, help="Max conversations to fetch")
 @click.option("--verbose", is_flag=True, help="Show detailed output")
 def fetch(
     output_dir: Path,
+    files_dir: Path,
     credentials: Path,
     session_key: str | None,
     org_id: str | None,
     incremental: bool,
+    download_files: bool,
     delay: float,
     limit: int | None,
     verbose: bool,
@@ -80,9 +93,11 @@ def fetch(
         session_key=session_key,
         org_id=org_id,
         output_dir=output_dir,
+        files_dir=files_dir,
         delay=delay,
         incremental=incremental,
         verbose=verbose,
+        download_files=download_files,
         cf_bm=cf_bm,
         cf_clearance=cf_clearance,
     )
