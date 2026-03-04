@@ -108,25 +108,26 @@ The `content` array contains typed blocks:
 ```
 claude-desktop-message-exporter/
 ├── README.md
+├── CLAUDE.md                 # Development guide
+├── pyproject.toml            # Python dependencies + CLI entry point
 ├── PLANS/
-│   ├── overview.md          # Project goals and architecture
-│   ├── fetcher.md           # Fetcher design and test plan
-│   └── backend.md           # Backend API design and test plan
+│   ├── overview.md           # Project goals and architecture
+│   ├── fetcher.md            # Fetcher design and test plan
+│   ├── backend.md            # Backend API design and test plan
+│   └── frontend.md           # Frontend design and test plan
 ├── fetcher/
-│   ├── README.md            # Step-by-step instructions with screenshots
-│   ├── mitmproxy-addon.py   # Intercepts traffic, captures session cookie
-│   └── bulk-fetch.py        # Downloads all conversations to local JSON
+│   ├── cli.py                # CLI entry point (claude-exporter command)
+│   ├── mitmproxy_addon.py    # Intercepts traffic, captures session cookie
+│   └── bulk_fetch.py         # Downloads all conversations to local JSON
 ├── backend/
-│   ├── main.py              # FastAPI app
-│   ├── models.py            # Pydantic models
-│   ├── store.py             # Reads and indexes JSON files from disk
-│   ├── search.py            # Full-text search
-│   ├── export.py            # Markdown + PDF export
-│   └── routers/             # conversations, search, export endpoints
-├── frontend/
-│   └── src/                 # React 18 + TypeScript + Tailwind + shadcn/ui
-└── scripts/
-    └── dev.sh               # Starts backend + frontend together
+│   ├── main.py               # FastAPI app
+│   ├── models.py             # Pydantic models
+│   ├── store.py              # Reads and indexes JSON files from disk
+│   ├── search.py             # Full-text search
+│   ├── export.py             # Markdown + PDF export
+│   └── routers/              # conversations, search, export endpoints
+└── frontend/
+    └── src/                  # React 18 + TypeScript + Tailwind + shadcn/ui
 ```
 
 ---
@@ -136,18 +137,25 @@ claude-desktop-message-exporter/
 ### Prerequisites
 
 ```bash
-brew install mitmproxy
-pip install uv
+# Install uv (Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone and install
+git clone https://github.com/youruser/claude-desktop-message-exporter
+cd claude-desktop-message-exporter
+uv sync
 ```
 
 ### Step 1: Capture Your Session Cookie
 
+**Important:** mitmproxy requires a proper ANSI terminal (e.g., Terminal.app, iTerm2, any standard terminal emulator). It will not work in non-TTY environments or basic shell output windows.
+
 ```bash
-# Terminal 1 — start the proxy
-mitmproxy -s fetcher/mitmproxy-addon.py --listen-port 8080
+# Terminal 1 — start the proxy (requires ANSI terminal)
+uv run claude-exporter capture
 
 # Terminal 2 — launch Claude Desktop through the proxy
-open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
+open -a "Claude" --args --proxy-server="127.0.0.1:8080"
 ```
 
 Click around in Claude Desktop for a few seconds. The addon will print:
@@ -162,18 +170,33 @@ Credentials are saved to `~/.claude-exporter/credentials.json`.
 ### Step 2: Download Your Conversations
 
 ```bash
-python fetcher/bulk-fetch.py
+uv run claude-exporter fetch
 ```
 
 This downloads all your conversations as JSON files to `~/.claude-exporter/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded.
 
+Options:
+- `--full-refresh` — Re-download all conversations
+- `--limit N` — Download only N conversations
+- `--verbose` — Show detailed progress
+
 ### Step 3: Browse and Export
 
 ```bash
-bash scripts/dev.sh
+uv run claude-exporter serve
 ```
 
-Opens the web app at `http://localhost:5173`.
+Opens the web app at `http://localhost:8000`.
+
+For development with hot-reload:
+```bash
+# Terminal 1 — backend
+DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --reload
+
+# Terminal 2 — frontend
+cd frontend && npm run dev
+```
+Then open `http://localhost:5173`.
 
 ---
 
