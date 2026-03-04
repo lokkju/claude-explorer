@@ -191,24 +191,55 @@ class ClaudeFetcher:
                         file_info["local_original"] = str(actual_path)
                         files_downloaded += 1
 
-            # Process files_v2 if present (same structure)
+            # Process files_v2 if present (different nested structure)
             for file_info in message.get("files_v2", []):
-                file_uuid = file_info.get("uuid") or file_info.get("id", "")
+                file_uuid = (
+                    file_info.get("file_uuid")
+                    or file_info.get("uuid")
+                    or file_info.get("id", "")
+                )
                 if not file_uuid:
                     continue
 
                 file_dir = conv_files_dir / file_uuid
+                file_name = file_info.get("file_name", "")
 
-                for url_key in ["thumbnail_url", "preview_url", "url", "original_url"]:
-                    url = file_info.get(url_key)
-                    if url:
-                        ext = self._guess_extension(url, file_info.get("file_type"))
-                        dest_name = url_key.replace("_url", "") + ext
-                        dest_path = file_dir / dest_name
-                        success, actual_path = self._download_file(url, dest_path)
-                        if success:
-                            file_info[f"local_{url_key.replace('_url', '')}"] = str(actual_path)
-                            files_downloaded += 1
+                # Handle thumbnail_asset (nested structure)
+                thumb_asset = file_info.get("thumbnail_asset", {})
+                thumb_url = thumb_asset.get("url") if thumb_asset else None
+                if thumb_url:
+                    ext = self._guess_extension(thumb_url, None)
+                    thumb_path = file_dir / f"thumbnail{ext}"
+                    success, actual_path = self._download_file(thumb_url, thumb_path)
+                    if success:
+                        file_info["local_thumbnail"] = str(actual_path)
+                        files_downloaded += 1
+
+                # Handle document_asset (PDFs and other documents)
+                doc_asset = file_info.get("document_asset", {})
+                doc_url = doc_asset.get("url") if doc_asset else None
+                if doc_url:
+                    # Use original filename extension if available
+                    if file_name and "." in file_name:
+                        ext = "." + file_name.rsplit(".", 1)[-1].lower()
+                    else:
+                        ext = self._guess_extension(doc_url, None)
+                    doc_path = file_dir / f"document{ext}"
+                    success, actual_path = self._download_file(doc_url, doc_path)
+                    if success:
+                        file_info["local_document"] = str(actual_path)
+                        files_downloaded += 1
+
+                # Handle preview_asset if present
+                preview_asset = file_info.get("preview_asset", {})
+                preview_url = preview_asset.get("url") if preview_asset else None
+                if preview_url:
+                    ext = self._guess_extension(preview_url, None)
+                    preview_path = file_dir / f"preview{ext}"
+                    success, actual_path = self._download_file(preview_url, preview_path)
+                    if success:
+                        file_info["local_preview"] = str(actual_path)
+                        files_downloaded += 1
 
         if files_downloaded > 0:
             click.echo(f"  Downloaded {files_downloaded} file(s)")
