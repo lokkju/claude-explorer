@@ -25,7 +25,23 @@ def format_timestamp(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def render_content_block(block: ContentBlock, indent: int = 0) -> str:
+# Placeholder text that Claude Desktop uses for tool calls
+TOOL_PLACEHOLDER = "This block is not supported on your current device yet."
+
+
+def filter_tool_placeholders(text: str) -> str:
+    """Remove tool placeholder blocks from markdown text."""
+    # Match code blocks containing the placeholder (with optional whitespace)
+    pattern = r"```\s*\n?\s*This block is not supported on your current device yet\.\s*\n?\s*```"
+    filtered = re.sub(pattern, "", text)
+    # Clean up excess newlines
+    filtered = re.sub(r"\n{3,}", "\n\n", filtered)
+    return filtered
+
+
+def render_content_block(
+    block: ContentBlock, indent: int = 0, include_tools: bool = True
+) -> str:
     """Render a content block to Markdown."""
     prefix = "  " * indent
 
@@ -33,6 +49,8 @@ def render_content_block(block: ContentBlock, indent: int = 0) -> str:
         return block.text
 
     if block.type == "tool_use":
+        if not include_tools:
+            return ""
         lines = [f"{prefix}**Tool: {block.name}**"]
         if block.input:
             import json
@@ -42,16 +60,18 @@ def render_content_block(block: ContentBlock, indent: int = 0) -> str:
         return "\n".join(lines)
 
     if block.type == "tool_result" and block.content:
+        if not include_tools:
+            return ""
         lines = [f"{prefix}<details>", f"{prefix}<summary>Tool Result</summary>", ""]
         for child in block.content:
-            lines.append(render_content_block(child, indent + 1))
+            lines.append(render_content_block(child, indent + 1, include_tools))
         lines.extend(["", f"{prefix}</details>"])
         return "\n".join(lines)
 
     return ""
 
 
-def message_to_markdown(message: Message) -> str:
+def message_to_markdown(message: Message, include_tools: bool = True) -> str:
     """Convert a single message to Markdown."""
     sender = "You" if message.sender == "human" else "Claude"
     timestamp = format_timestamp(message.created_at)
@@ -61,11 +81,15 @@ def message_to_markdown(message: Message) -> str:
     # Render content blocks
     if message.content:
         for block in message.content:
-            rendered = render_content_block(block)
+            rendered = render_content_block(block, include_tools=include_tools)
             if rendered:
                 lines.append(rendered)
     elif message.text:
-        lines.append(message.text)
+        text = message.text
+        # Filter out tool placeholders if include_tools is False
+        if not include_tools:
+            text = filter_tool_placeholders(text)
+        lines.append(text)
 
     lines.append("")
     lines.append("---")
@@ -74,7 +98,9 @@ def message_to_markdown(message: Message) -> str:
     return "\n".join(lines)
 
 
-def conversation_to_markdown(conversation: ConversationDetail) -> str:
+def conversation_to_markdown(
+    conversation: ConversationDetail, include_tools: bool = True
+) -> str:
     """Convert a conversation to Markdown."""
     lines = [
         f"# {conversation.name}",
@@ -88,12 +114,14 @@ def conversation_to_markdown(conversation: ConversationDetail) -> str:
     ]
 
     for message in conversation.messages:
-        lines.append(message_to_markdown(message))
+        lines.append(message_to_markdown(message, include_tools))
 
     return "\n".join(lines)
 
 
-def conversation_to_html(conversation: ConversationDetail) -> str:
+def conversation_to_html(
+    conversation: ConversationDetail, include_tools: bool = True
+) -> str:
     """Convert a conversation to HTML for PDF rendering."""
     # Basic HTML template with embedded CSS
     html = f"""<!DOCTYPE html>
@@ -192,9 +220,13 @@ def conversation_to_html(conversation: ConversationDetail) -> str:
         content_html = ""
         if message.content:
             for block in message.content:
-                content_html += render_content_block_html(block)
+                content_html += render_content_block_html(block, include_tools)
         elif message.text:
-            content_html = escape_html(message.text)
+            text = message.text
+            # Filter out tool placeholders if include_tools is False
+            if not include_tools:
+                text = filter_tool_placeholders(text)
+            content_html = escape_html(text)
 
         html += f"""
     <div class="message {message.sender}">
@@ -222,12 +254,14 @@ def escape_html(text: str) -> str:
     )
 
 
-def render_content_block_html(block: ContentBlock) -> str:
+def render_content_block_html(block: ContentBlock, include_tools: bool = True) -> str:
     """Render a content block to HTML."""
     if block.type == "text" and block.text:
         return escape_html(block.text)
 
     if block.type == "tool_use":
+        if not include_tools:
+            return ""
         import json
 
         input_str = json.dumps(block.input, indent=2) if block.input else ""
@@ -239,9 +273,11 @@ def render_content_block_html(block: ContentBlock) -> str:
         """
 
     if block.type == "tool_result" and block.content:
+        if not include_tools:
+            return ""
         result_html = ""
         for child in block.content:
-            result_html += render_content_block_html(child)
+            result_html += render_content_block_html(child, include_tools)
         return f"""
         <div class="tool-result">
             <strong>Tool Result</strong>
@@ -252,7 +288,7 @@ def render_content_block_html(block: ContentBlock) -> str:
     return ""
 
 
-def create_pdf(conversation: ConversationDetail) -> bytes:
+def create_pdf(conversation: ConversationDetail, include_tools: bool = True) -> bytes:
     """Create a PDF from a conversation using WeasyPrint."""
     try:
         from weasyprint import HTML
@@ -261,7 +297,7 @@ def create_pdf(conversation: ConversationDetail) -> bytes:
             "WeasyPrint is required for PDF export. Install with: pip install weasyprint"
         )
 
-    html_content = conversation_to_html(conversation)
+    html_content = conversation_to_html(conversation, include_tools)
     pdf_bytes = HTML(string=html_content).write_pdf()
     return pdf_bytes
 

@@ -1,19 +1,47 @@
-import { useState } from 'react'
-import { useParams } from 'react-router'
-import { FileText, FileType, GitBranch } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { useParams, useSearchParams } from 'react-router'
+import { FileText, FileType, GitBranch, Copy, Check, Wrench } from 'lucide-react'
 import { useConversation } from '@/hooks/useConversations'
+import { useSettings } from '@/contexts/SettingsContext'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
-import { formatFullDate, sanitizeFilename, downloadBlob } from '@/lib/utils'
+import { formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown } from '@/lib/utils'
 import { api } from '@/lib/api'
 
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const highlightMessageId = searchParams.get('highlight')
   const { data: conversation, isLoading, error } = useConversation(uuid || '')
+  const { showToolCalls, setShowToolCalls } = useSettings()
   const [isTreeOpen, setIsTreeOpen] = useState(false)
+  const [copiedAll, setCopiedAll] = useState(false)
+
+  // Scroll to highlighted message
+  useEffect(() => {
+    if (highlightMessageId && conversation && !isLoading) {
+      // Small delay to ensure DOM is rendered
+      const timer = setTimeout(() => {
+        const element = document.querySelector(
+          `[data-message-uuid="${highlightMessageId}"]`
+        )
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          // Flash highlight effect
+          element.classList.add('ring-2', 'ring-yellow-400', 'ring-offset-2')
+          setTimeout(() => {
+            element.classList.remove('ring-2', 'ring-yellow-400', 'ring-offset-2')
+            // Clear the highlight param from URL
+            setSearchParams({}, { replace: true })
+          }, 2000)
+        }
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [highlightMessageId, conversation, isLoading, setSearchParams])
 
   if (!uuid) {
     return <EmptyState />
@@ -39,15 +67,26 @@ export function ConversationPage() {
   }
 
   const handleExportMarkdown = async () => {
-    const response = await api.exportMarkdown(conversation.uuid)
+    const response = await api.exportMarkdown(conversation.uuid, showToolCalls)
     const blob = await response.blob()
     downloadBlob(blob, `${sanitizeFilename(conversation.name)}.md`)
   }
 
   const handleExportPdf = async () => {
-    const response = await api.exportPdf(conversation.uuid)
+    const response = await api.exportPdf(conversation.uuid, showToolCalls)
     const blob = await response.blob()
     downloadBlob(blob, `${sanitizeFilename(conversation.name)}.pdf`)
+  }
+
+  const handleCopyAll = async () => {
+    const markdown = conversationToMarkdown(
+      conversation.name,
+      conversation.messages,
+      showToolCalls
+    )
+    await navigator.clipboard.writeText(markdown)
+    setCopiedAll(true)
+    setTimeout(() => setCopiedAll(false), 2000)
   }
 
   return (
@@ -74,6 +113,28 @@ export function ConversationPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant={showToolCalls ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setShowToolCalls(!showToolCalls)}
+            title={showToolCalls ? 'Hide tool calls' : 'Show tool calls'}
+          >
+            <Wrench className="h-4 w-4" />
+            <span className="ml-2">Tools</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyAll}
+            title="Copy conversation as Markdown"
+          >
+            {copiedAll ? (
+              <Check className="h-4 w-4 text-green-500" />
+            ) : (
+              <Copy className="h-4 w-4" />
+            )}
+            <span className="ml-2">Copy</span>
+          </Button>
           <Button variant="outline" size="sm" onClick={handleExportMarkdown}>
             <FileText className="h-4 w-4" />
             <span className="ml-2">Markdown</span>

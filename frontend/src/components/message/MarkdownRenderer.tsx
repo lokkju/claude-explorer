@@ -7,12 +7,16 @@ import { cn } from '@/lib/utils'
 // Import highlight.js styles
 import 'highlight.js/styles/github-dark.css'
 
+// Placeholder text that Claude Desktop uses for tool calls
+export const TOOL_PLACEHOLDER = 'This block is not supported on your current device yet.'
+
 interface MarkdownRendererProps {
   content: string
   className?: string
+  showToolCalls?: boolean
 }
 
-export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, className, showToolCalls = true }: MarkdownRendererProps) {
   return (
     <ReactMarkdown
       className={cn('prose prose-sm dark:prose-invert max-w-none', className)}
@@ -26,7 +30,11 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
           const text = String(children).trim()
 
           // Detect Claude Desktop's "unsupported block" placeholder
-          if (text === 'This block is not supported on your current device yet.') {
+          if (text === TOOL_PLACEHOLDER) {
+            // Hide completely when showToolCalls is false
+            if (!showToolCalls) {
+              return null
+            }
             return (
               <span className="my-2 flex items-center gap-2 rounded-md border border-zinc-300 bg-zinc-100 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
                 <AlertCircle className="h-4 w-4 shrink-0" />

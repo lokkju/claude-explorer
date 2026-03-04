@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { Button } from '@/components/ui/button'
-import { cn, formatDate } from '@/lib/utils'
+import { useSettings } from '@/contexts/SettingsContext'
+import { cn, formatDate, messageToMarkdown } from '@/lib/utils'
 import type { Message, ContentBlock } from '@/lib/types'
 
 interface MessageBubbleProps {
@@ -11,11 +12,21 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isHuman = message.sender === 'human'
+  const { showToolCalls } = useSettings()
+  const [copied, setCopied] = useState(false)
+
+  const handleCopyMessage = async () => {
+    const markdown = messageToMarkdown(message, showToolCalls)
+    await navigator.clipboard.writeText(markdown)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   return (
     <div
+      data-message-uuid={message.uuid}
       className={cn(
-        'flex gap-3',
+        'group flex gap-3',
         isHuman ? 'flex-row-reverse' : 'flex-row'
       )}
     >
@@ -34,12 +45,27 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       {/* Content */}
       <div
         className={cn(
-          'flex max-w-[80%] flex-col gap-2 rounded-lg px-4 py-3',
+          'relative flex max-w-[80%] flex-col gap-2 rounded-lg px-4 py-3',
           isHuman
             ? 'bg-blue-50 dark:bg-blue-950'
             : 'bg-zinc-100 dark:bg-zinc-800'
         )}
       >
+        {/* Copy button - appears on hover */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute -right-2 -top-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100 bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 shadow-sm"
+          onClick={handleCopyMessage}
+          title="Copy message as Markdown"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-green-500" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </Button>
+
         {/* Header */}
         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
           <span className="font-medium">
@@ -57,10 +83,14 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         <div className="text-sm text-zinc-900 dark:text-zinc-100">
           {message.content && message.content.length > 0 ? (
             message.content.map((block, index) => (
-              <ContentBlockRenderer key={index} block={block} />
+              <ContentBlockRenderer
+                key={index}
+                block={block}
+                showToolCalls={showToolCalls}
+              />
             ))
           ) : (
-            <MarkdownRenderer content={message.text} />
+            <MarkdownRenderer content={message.text} showToolCalls={showToolCalls} />
           )}
         </div>
       </div>
@@ -70,16 +100,21 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
 interface ContentBlockRendererProps {
   block: ContentBlock
+  showToolCalls: boolean
 }
 
-function ContentBlockRenderer({ block }: ContentBlockRendererProps) {
+function ContentBlockRenderer({ block, showToolCalls }: ContentBlockRendererProps) {
   switch (block.type) {
     case 'text':
-      return <MarkdownRenderer content={block.text || ''} />
+      return <MarkdownRenderer content={block.text || ''} showToolCalls={showToolCalls} />
     case 'tool_use':
-      return <ToolUseBlock name={block.name || ''} input={block.input} />
+      return showToolCalls ? (
+        <ToolUseBlock name={block.name || ''} input={block.input} />
+      ) : null
     case 'tool_result':
-      return <ToolResultBlock content={block.content || []} />
+      return showToolCalls ? (
+        <ToolResultBlock content={block.content || []} />
+      ) : null
     default:
       return null
   }

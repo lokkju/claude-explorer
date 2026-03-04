@@ -107,8 +107,13 @@ export const handlers = [
   }),
 
   // GET /api/conversations/:uuid/export/markdown - export as markdown
-  http.get('/api/conversations/:uuid/export/markdown', () => {
-    const markdown = '# Building a React App\n\n**Human:** How do I create a React component?\n\n**Claude:** Here\'s how...';
+  http.get('/api/conversations/:uuid/export/markdown', ({ request }) => {
+    const url = new URL(request.url);
+    const includeTools = url.searchParams.get('include_tools') !== 'false';
+    const baseMarkdown = '# Building a React App\n\n**Human:** How do I create a React component?\n\n**Claude:** Here\'s how...';
+    const markdown = includeTools
+      ? baseMarkdown + '\n\n**Tool: read_file**\n```json\n{}\n```'
+      : baseMarkdown;
     return new HttpResponse(markdown, {
       headers: {
         'Content-Type': 'text/markdown',

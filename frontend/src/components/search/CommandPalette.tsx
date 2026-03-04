@@ -26,8 +26,8 @@ export function CommandPalette() {
   }, [])
 
   const handleSelect = useCallback(
-    (conversationUuid: string) => {
-      navigate(`/conversations/${conversationUuid}`)
+    (conversationUuid: string, messageUuid?: string) => {
+      navigate(`/conversations/${conversationUuid}${messageUuid ? `?highlight=${messageUuid}` : ''}`)
       setOpen(false)
       setQuery('')
     },
@@ -117,7 +117,7 @@ export function CommandPalette() {
 interface SearchResultItemProps {
   result: SearchResult
   query: string
-  onSelect: (uuid: string) => void
+  onSelect: (uuid: string, messageUuid?: string) => void
 }
 
 function SearchResultItem({ result, query, onSelect }: SearchResultItemProps) {
@@ -128,10 +128,13 @@ function SearchResultItem({ result, query, onSelect }: SearchResultItemProps) {
     (m) => m.message_uuid !== 'title'
   )
 
+  // Get the first message match to use when clicking on the header
+  const firstMessageUuid = messageMatches[0]?.message_uuid
+
   return (
     <Command.Item
       value={result.conversation_uuid}
-      onSelect={() => onSelect(result.conversation_uuid)}
+      onSelect={() => onSelect(result.conversation_uuid, firstMessageUuid)}
       className="flex cursor-pointer flex-col gap-2 rounded-md px-3 py-2 hover:bg-zinc-100 aria-selected:bg-zinc-100 dark:hover:bg-zinc-800 dark:aria-selected:bg-zinc-800"
     >
       {/* Conversation header */}
@@ -151,7 +154,15 @@ function SearchResultItem({ result, query, onSelect }: SearchResultItemProps) {
 
       {/* Message snippets */}
       {messageMatches.slice(0, 3).map((snippet, idx) => (
-        <SnippetPreview key={idx} snippet={snippet} query={query} />
+        <SnippetPreview
+          key={idx}
+          snippet={snippet}
+          query={query}
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect(result.conversation_uuid, snippet.message_uuid)
+          }}
+        />
       ))}
 
       {messageMatches.length > 3 && (
@@ -166,11 +177,15 @@ function SearchResultItem({ result, query, onSelect }: SearchResultItemProps) {
 interface SnippetPreviewProps {
   snippet: MessageSnippet
   query: string
+  onClick?: (e: React.MouseEvent) => void
 }
 
-function SnippetPreview({ snippet, query }: SnippetPreviewProps) {
+function SnippetPreview({ snippet, query, onClick }: SnippetPreviewProps) {
   return (
-    <div className="ml-6 flex items-start gap-2 text-sm">
+    <div
+      className="ml-6 flex items-start gap-2 text-sm rounded p-1 -m-1 hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer"
+      onClick={onClick}
+    >
       <MessageSquare className="mt-0.5 h-3 w-3 shrink-0 text-zinc-400" />
       <div className="min-w-0 flex-1">
         <span

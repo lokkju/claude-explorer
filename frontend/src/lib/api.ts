@@ -59,11 +59,11 @@ export const api = {
 
   getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),
 
-  exportMarkdown: (uuid: string): Promise<Response> =>
-    fetch(`${BASE_URL}/conversations/${uuid}/export/markdown`),
+  exportMarkdown: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
+    fetch(`${BASE_URL}/conversations/${uuid}/export/markdown?include_tools=${showToolCalls}`),
 
-  exportPdf: (uuid: string): Promise<Response> =>
-    fetch(`${BASE_URL}/conversations/${uuid}/export/pdf`),
+  exportPdf: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
+    fetch(`${BASE_URL}/conversations/${uuid}/export/pdf?include_tools=${showToolCalls}`),
 
   exportAllMarkdown: (): Promise<Response> =>
     fetch(`${BASE_URL}/export/all/markdown`),

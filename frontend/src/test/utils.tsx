@@ -2,6 +2,7 @@ import React, { type ReactElement } from 'react';
 import { render, type RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router';
+import { SettingsProvider } from '../contexts/SettingsContext';
 
 // Create a fresh QueryClient for each test
 function createTestQueryClient() {
@@ -25,7 +26,9 @@ function AllProviders({ children }: WrapperProps) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>{children}</BrowserRouter>
+      <SettingsProvider>
+        <BrowserRouter>{children}</BrowserRouter>
+      </SettingsProvider>
     </QueryClientProvider>
   );
 }
