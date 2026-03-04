@@ -55,9 +55,16 @@ pre, code {
 
 .prose pre {
   background-color: var(--color-zinc-900);
+  color: var(--color-zinc-100);
   border-radius: 0.5rem;
   padding: 1rem;
   overflow-x: auto;
+}
+
+.prose pre code {
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
 }
 
 .prose code {
@@ -69,11 +76,6 @@ pre, code {
 
 .dark .prose code {
   background-color: var(--color-zinc-800);
-}
-
-.prose pre code {
-  background-color: transparent;
-  padding: 0;
 }
 
 /* Scrollbar styling */
