@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from .config import get_settings
@@ -19,14 +19,18 @@ from .models import (
 def _parse_datetime(dt_str: str | None) -> datetime:
     """Parse datetime string from Claude's JSON format."""
     if not dt_str:
-        return datetime.now()
+        return datetime.now(timezone.utc)
     try:
         # Handle ISO format with optional timezone
         if dt_str.endswith("Z"):
             dt_str = dt_str[:-1] + "+00:00"
-        return datetime.fromisoformat(dt_str)
+        dt = datetime.fromisoformat(dt_str)
+        # Ensure timezone-aware
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except ValueError:
-        return datetime.now()
+        return datetime.now(timezone.utc)
 
 
 def _extract_text(content: list[dict[str, Any]]) -> str:
