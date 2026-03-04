@@ -10,6 +10,30 @@
 └── pyproject.toml    # Python dependencies
 ```
 
+## CLI Usage
+
+After installing (`uv sync`), use the `claude-exporter` command:
+
+```bash
+# Step 1: Capture credentials from Claude Desktop
+claude-exporter capture
+
+# In another terminal, launch Claude Desktop through the proxy:
+open -a "Claude" --args --proxy-server="127.0.0.1:8080"
+
+# Step 2: Fetch all conversations
+claude-exporter fetch
+
+# Step 3: Start the web server to browse
+claude-exporter serve
+```
+
+### CLI Commands
+
+- `claude-exporter capture` — Start mitmproxy to intercept Claude Desktop credentials
+- `claude-exporter fetch` — Download all conversations using captured credentials
+- `claude-exporter serve` — Start the web server (API + UI)
+
 ## Development Setup
 
 ### Python (Backend & Fetcher)
