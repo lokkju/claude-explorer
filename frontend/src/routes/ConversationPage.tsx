@@ -19,6 +19,7 @@ export function ConversationPage() {
   const { showToolCalls, setShowToolCalls } = useSettings()
   const [isTreeOpen, setIsTreeOpen] = useState(false)
   const [copiedAll, setCopiedAll] = useState(false)
+  const [copiedUuid, setCopiedUuid] = useState(false)
 
   // Scroll to highlighted message
   useEffect(() => {
@@ -111,6 +112,22 @@ export function ConversationPage() {
               </button>
             )}
           </div>
+          <button
+            onClick={async () => {
+              await navigator.clipboard.writeText(conversation.uuid)
+              setCopiedUuid(true)
+              setTimeout(() => setCopiedUuid(false), 2000)
+            }}
+            className="mt-1 flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+            title="Click to copy UUID"
+          >
+            {copiedUuid ? (
+              <Check className="h-3 w-3 text-green-500" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+            <span>{conversation.uuid}</span>
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <Button

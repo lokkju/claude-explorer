@@ -107,6 +107,9 @@ function ConversationListItem({
         <span>{formatDate(conversation.updated_at)}</span>
         <span>{conversation.message_count} msgs</span>
       </div>
+      <div className="truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-600">
+        {conversation.uuid}
+      </div>
     </button>
   )
 }
