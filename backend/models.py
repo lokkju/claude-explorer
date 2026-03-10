@@ -77,6 +77,7 @@ class ConversationDetail(ConversationSummary):
 
     messages: list[Message] = Field(default_factory=list)
     current_leaf_message_uuid: str = ""
+    file_path: str | None = None  # Path to the source file (JSON or JSONL)
 
 
 class MessageNode(BaseModel):

@@ -20,6 +20,7 @@ export function ConversationPage() {
   const [isTreeOpen, setIsTreeOpen] = useState(false)
   const [copiedAll, setCopiedAll] = useState(false)
   const [copiedUuid, setCopiedUuid] = useState(false)
+  const [copiedPath, setCopiedPath] = useState(false)
 
   // Scroll to highlighted message
   useEffect(() => {
@@ -151,6 +152,24 @@ export function ConversationPage() {
             )}
             <span>{conversation.uuid}</span>
           </button>
+          {conversation.file_path && (
+            <button
+              onClick={async () => {
+                await navigator.clipboard.writeText(conversation.file_path!)
+                setCopiedPath(true)
+                setTimeout(() => setCopiedPath(false), 2000)
+              }}
+              className="mt-0.5 flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+              title="Click to copy file path"
+            >
+              {copiedPath ? (
+                <Check className="h-3 w-3 text-green-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+              <span className="truncate max-w-lg">{conversation.file_path}</span>
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button

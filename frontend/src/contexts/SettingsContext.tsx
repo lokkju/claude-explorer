@@ -31,6 +31,20 @@ function getStoredValue<T>(key: string, fallback: T): T {
   return fallback
 }
 
+// Natural sort order for each field
+function getDefaultSortOrder(field: SortField): SortOrder {
+  switch (field) {
+    case 'updated_at':
+    case 'created_at':
+      return 'desc' // Most recent first
+    case 'name':
+    case 'project':
+      return 'asc' // Alphabetical
+    default:
+      return 'desc'
+  }
+}
+
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showToolCalls, setShowToolCalls] = useState(true)
   const [expandAllTools, setExpandAllTools] = useState(false)
@@ -51,6 +65,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const setSortField = (field: SortField) => {
     setSortFieldState(field)
     localStorage.setItem('sortField', JSON.stringify(field))
+    // Automatically set natural sort order for the field
+    const naturalOrder = getDefaultSortOrder(field)
+    setSortOrderState(naturalOrder)
+    localStorage.setItem('sortOrder', JSON.stringify(naturalOrder))
   }
 
   const setSortOrder = (order: SortOrder) => {

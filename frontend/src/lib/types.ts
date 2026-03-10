@@ -55,6 +55,7 @@ export interface Message {
 export interface ConversationDetail extends ConversationSummary {
   messages: Message[]
   current_leaf_message_uuid: string
+  file_path?: string | null
 }
 
 export interface MessageNode {

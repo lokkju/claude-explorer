@@ -298,26 +298,29 @@ class ConversationStore:
 
         return conversations
 
-    def _find_conversation_data(self, uuid: str) -> dict[str, Any] | None:
-        """Find conversation data by UUID from any source."""
+    def _find_conversation_data(self, uuid: str) -> tuple[dict[str, Any] | None, Path | None]:
+        """Find conversation data by UUID from any source.
+
+        Returns (data, file_path) tuple.
+        """
         # First check Claude Desktop JSON files
         for path in self._get_conversation_files():
             data = self._load_conversation(path)
             if data and data.get("uuid") == uuid:
-                return data
+                return data, path
 
         # Then check Claude Code JSONL files
         for jsonl_path in discover_jsonl_files(self.claude_dir):
             if jsonl_path.stem == uuid:
                 data = read_claude_code_conversation(jsonl_path)
                 if data and data.get("uuid") == uuid:
-                    return data
+                    return data, jsonl_path
 
-        return None
+        return None, None
 
     def get_conversation(self, uuid: str) -> ConversationDetail | None:
         """Get a single conversation by UUID with resolved active branch."""
-        data = self._find_conversation_data(uuid)
+        data, file_path = self._find_conversation_data(uuid)
         if not data:
             return None
 
@@ -350,11 +353,12 @@ class ConversationStore:
             git_branch=data.get("git_branch"),
             messages=messages,
             current_leaf_message_uuid=leaf_uuid,
+            file_path=str(file_path) if file_path else None,
         )
 
     def get_conversation_tree(self, uuid: str) -> ConversationTree | None:
         """Get the full message tree for a conversation."""
-        data = self._find_conversation_data(uuid)
+        data, _ = self._find_conversation_data(uuid)
         if not data:
             return None
 
