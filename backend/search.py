@@ -1,6 +1,7 @@
 """Full-text search implementation."""
 
 import re
+from typing import Literal
 
 from .models import SearchResult, MessageSnippet
 from .store import ConversationStore, _parse_datetime
@@ -40,7 +41,9 @@ def create_snippet(text: str, match_start: int, match_end: int) -> tuple[str, in
 
 
 def search_conversations(
-    store: ConversationStore, query: str
+    store: ConversationStore,
+    query: str,
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
 ) -> list[SearchResult]:
     """Search across all conversations for matching messages."""
     if not query or len(query.strip()) < 1:
@@ -50,7 +53,7 @@ def search_conversations(
     pattern = re.compile(re.escape(query), re.IGNORECASE)
     results = []
 
-    for conv in store.get_all_conversations_raw():
+    for conv in store.get_all_conversations_raw(source=source):
         matching_messages: list[MessageSnippet] = []
 
         # Search in conversation name

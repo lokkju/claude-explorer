@@ -3,9 +3,15 @@
 import json
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from .config import get_settings
+from .claude_code_reader import (
+    list_claude_code_conversations,
+    read_claude_code_conversation,
+    discover_jsonl_files,
+    DEFAULT_CLAUDE_DIR,
+)
 from .models import (
     ConversationSummary,
     ConversationDetail,
@@ -13,6 +19,7 @@ from .models import (
     Message,
     MessageNode,
     ContentBlock,
+    SubagentSummary,
 )
 
 
@@ -46,15 +53,27 @@ def _parse_content_blocks(content: list[dict[str, Any]]) -> list[ContentBlock]:
     """Parse raw content blocks into ContentBlock models."""
     blocks = []
     for block in content:
+        if isinstance(block, str):
+            # Sometimes content is a plain string (e.g., tool_result)
+            blocks.append(ContentBlock(type="text", text=block))
+            continue
+
         block_type = block.get("type", "text")
+        # Handle nested content - can be string or list
+        nested_content = block.get("content")
+        if nested_content and isinstance(nested_content, list):
+            parsed_nested = _parse_content_blocks(nested_content)
+        elif nested_content and isinstance(nested_content, str):
+            parsed_nested = [ContentBlock(type="text", text=nested_content)]
+        else:
+            parsed_nested = None
+
         parsed = ContentBlock(
             type=block_type,
             text=block.get("text"),
             name=block.get("name"),
             input=block.get("input"),
-            content=_parse_content_blocks(block.get("content", []))
-            if block.get("content")
-            else None,
+            content=parsed_nested,
         )
         blocks.append(parsed)
     return blocks
@@ -123,10 +142,11 @@ def build_message_tree(messages: list[dict[str, Any]]) -> list[MessageNode]:
 
 
 class ConversationStore:
-    """Store for reading conversation data from disk."""
+    """Store for reading conversation data from disk and Claude Code JSONL files."""
 
-    def __init__(self, data_dir: Path | None = None):
+    def __init__(self, data_dir: Path | None = None, claude_dir: Path | None = None):
         self.data_dir = data_dir or get_settings().data_dir
+        self.claude_dir = claude_dir or DEFAULT_CLAUDE_DIR
 
     def _get_conversation_files(self) -> list[Path]:
         """Get all conversation JSON files."""
@@ -145,7 +165,26 @@ class ConversationStore:
     def _make_summary(self, data: dict[str, Any]) -> ConversationSummary:
         """Create a ConversationSummary from raw conversation data."""
         chat_messages = data.get("chat_messages", [])
-        human_count = sum(1 for m in chat_messages if m.get("sender") == "human")
+        # Use pre-computed counts if available (from fast reader), else calculate
+        if chat_messages:
+            message_count = len(chat_messages)
+            human_count = sum(1 for m in chat_messages if m.get("sender") == "human")
+        else:
+            message_count = data.get("message_count", 0)
+            human_count = data.get("human_message_count", 0)
+
+        # Parse subagents if present
+        subagents = []
+        for agent_data in data.get("subagents", []):
+            subagents.append(SubagentSummary(
+                uuid=agent_data.get("uuid", ""),
+                agent_id=agent_data.get("agent_id", ""),
+                name=agent_data.get("name", ""),
+                model=agent_data.get("model", ""),
+                created_at=_parse_datetime(agent_data.get("created_at")),
+                updated_at=_parse_datetime(agent_data.get("updated_at")),
+                message_count=agent_data.get("message_count", 0),
+            ))
 
         return ConversationSummary(
             uuid=data.get("uuid", ""),
@@ -156,26 +195,66 @@ class ConversationStore:
             updated_at=_parse_datetime(data.get("updated_at")),
             is_starred=data.get("is_starred", False),
             is_temporary=data.get("is_temporary", False),
-            message_count=len(chat_messages),
+            message_count=message_count,
             human_message_count=human_count,
-            has_branches=has_branches(chat_messages),
+            has_branches=data.get("has_branches", False) if not chat_messages else has_branches(chat_messages),
+            source=data.get("source", "CLAUDE_AI"),
+            project_path=data.get("project_path"),
+            git_branch=data.get("git_branch"),
+            subagents=subagents,
         )
+
+    def _get_claude_code_conversations(self, full_content: bool = False) -> list[dict[str, Any]]:
+        """Get all Claude Code conversations from JSONL files.
+
+        Args:
+            full_content: If True, read full message content (slower, for search).
+                         If False, only read metadata (fast, for listing).
+        """
+        return list_claude_code_conversations(self.claude_dir, full_content=full_content)
+
+    def _get_all_conversations_data(
+        self,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        full_content: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Get raw conversation data from all sources.
+
+        Args:
+            source: Filter by conversation source
+            full_content: If True, read full message content (for search).
+                         If False, only read metadata (fast, for listing).
+        """
+        conversations = []
+
+        # Load Claude Desktop conversations (from JSON files)
+        if source in ("all", "CLAUDE_AI"):
+            for path in self._get_conversation_files():
+                data = self._load_conversation(path)
+                if data:
+                    # Skip Claude Code conversations that might have been imported
+                    if data.get("source") == "CLAUDE_CODE":
+                        continue
+                    conversations.append(data)
+
+        # Load Claude Code conversations (from JSONL files)
+        if source in ("all", "CLAUDE_CODE"):
+            conversations.extend(self._get_claude_code_conversations(full_content=full_content))
+
+        return conversations
 
     def list_conversations(
         self,
         search: str | None = None,
         starred: bool | None = None,
         model: str | None = None,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
         sort: str = "updated_at",
     ) -> list[ConversationSummary]:
         """List all conversations with optional filtering."""
         conversations = []
 
-        for path in self._get_conversation_files():
-            data = self._load_conversation(path)
-            if not data:
-                continue
-
+        for data in self._get_all_conversations_data(source):
             # Apply filters
             if starred is not None and data.get("is_starred") != starred:
                 continue
@@ -185,7 +264,8 @@ class ConversationStore:
                 search_lower = search.lower()
                 name_match = search_lower in data.get("name", "").lower()
                 summary_match = search_lower in data.get("summary", "").lower()
-                if not (name_match or summary_match):
+                project_match = search_lower in data.get("project_path", "").lower()
+                if not (name_match or summary_match or project_match):
                     continue
 
             conversations.append(self._make_summary(data))
@@ -200,80 +280,95 @@ class ConversationStore:
 
         return conversations
 
-    def get_conversation(self, uuid: str) -> ConversationDetail | None:
-        """Get a single conversation by UUID with resolved active branch."""
+    def _find_conversation_data(self, uuid: str) -> dict[str, Any] | None:
+        """Find conversation data by UUID from any source."""
+        # First check Claude Desktop JSON files
         for path in self._get_conversation_files():
             data = self._load_conversation(path)
-            if not data or data.get("uuid") != uuid:
-                continue
+            if data and data.get("uuid") == uuid:
+                return data
 
-            chat_messages = data.get("chat_messages", [])
-            leaf_uuid = data.get("current_leaf_message_uuid", "")
-
-            # Resolve active branch
-            if leaf_uuid and chat_messages:
-                branch = resolve_active_branch(chat_messages, leaf_uuid)
-            else:
-                branch = chat_messages
-
-            messages = [_parse_message(m) for m in branch]
-            human_count = sum(1 for m in chat_messages if m.get("sender") == "human")
-
-            return ConversationDetail(
-                uuid=data.get("uuid", ""),
-                name=data.get("name", "Untitled"),
-                summary=data.get("summary", ""),
-                model=data.get("model", ""),
-                created_at=_parse_datetime(data.get("created_at")),
-                updated_at=_parse_datetime(data.get("updated_at")),
-                is_starred=data.get("is_starred", False),
-                is_temporary=data.get("is_temporary", False),
-                message_count=len(chat_messages),
-                human_message_count=human_count,
-                has_branches=has_branches(chat_messages),
-                messages=messages,
-                current_leaf_message_uuid=leaf_uuid,
-            )
+        # Then check Claude Code JSONL files
+        for jsonl_path in discover_jsonl_files(self.claude_dir):
+            if jsonl_path.stem == uuid:
+                data = read_claude_code_conversation(jsonl_path)
+                if data and data.get("uuid") == uuid:
+                    return data
 
         return None
+
+    def get_conversation(self, uuid: str) -> ConversationDetail | None:
+        """Get a single conversation by UUID with resolved active branch."""
+        data = self._find_conversation_data(uuid)
+        if not data:
+            return None
+
+        chat_messages = data.get("chat_messages", [])
+        leaf_uuid = data.get("current_leaf_message_uuid", "")
+
+        # Resolve active branch
+        if leaf_uuid and chat_messages:
+            branch = resolve_active_branch(chat_messages, leaf_uuid)
+        else:
+            branch = chat_messages
+
+        messages = [_parse_message(m) for m in branch]
+        human_count = sum(1 for m in chat_messages if m.get("sender") == "human")
+
+        return ConversationDetail(
+            uuid=data.get("uuid", ""),
+            name=data.get("name", "Untitled"),
+            summary=data.get("summary", ""),
+            model=data.get("model", ""),
+            created_at=_parse_datetime(data.get("created_at")),
+            updated_at=_parse_datetime(data.get("updated_at")),
+            is_starred=data.get("is_starred", False),
+            is_temporary=data.get("is_temporary", False),
+            message_count=len(chat_messages),
+            human_message_count=human_count,
+            has_branches=has_branches(chat_messages),
+            source=data.get("source", "CLAUDE_AI"),
+            project_path=data.get("project_path"),
+            git_branch=data.get("git_branch"),
+            messages=messages,
+            current_leaf_message_uuid=leaf_uuid,
+        )
 
     def get_conversation_tree(self, uuid: str) -> ConversationTree | None:
         """Get the full message tree for a conversation."""
-        for path in self._get_conversation_files():
-            data = self._load_conversation(path)
-            if not data or data.get("uuid") != uuid:
-                continue
+        data = self._find_conversation_data(uuid)
+        if not data:
+            return None
 
-            chat_messages = data.get("chat_messages", [])
-            leaf_uuid = data.get("current_leaf_message_uuid", "")
+        chat_messages = data.get("chat_messages", [])
+        leaf_uuid = data.get("current_leaf_message_uuid", "")
 
-            # Build full tree
-            root_messages = build_message_tree(chat_messages)
+        # Build full tree
+        root_messages = build_message_tree(chat_messages)
 
-            # Get active path
-            if leaf_uuid:
-                branch = resolve_active_branch(chat_messages, leaf_uuid)
-                active_path = [m["uuid"] for m in branch]
-            else:
-                active_path = []
+        # Get active path
+        if leaf_uuid:
+            branch = resolve_active_branch(chat_messages, leaf_uuid)
+            active_path = [m["uuid"] for m in branch]
+        else:
+            active_path = []
 
-            return ConversationTree(
-                uuid=uuid,
-                root_messages=root_messages,
-                active_path=active_path,
-            )
+        return ConversationTree(
+            uuid=uuid,
+            root_messages=root_messages,
+            active_path=active_path,
+        )
 
-        return None
+    def get_all_conversations_raw(
+        self,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+    ) -> list[dict[str, Any]]:
+        """Get all raw conversation data for search/export (includes full message content)."""
+        return self._get_all_conversations_data(source, full_content=True)
 
-    def get_all_conversations_raw(self) -> list[dict[str, Any]]:
-        """Get all raw conversation data for search/export."""
-        conversations = []
-        for path in self._get_conversation_files():
-            data = self._load_conversation(path)
-            if data:
-                conversations.append(data)
-        return conversations
-
-    def count_conversations(self) -> int:
+    def count_conversations(
+        self,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+    ) -> int:
         """Count total number of conversations."""
-        return len(self._get_conversation_files())
+        return len(self._get_all_conversations_data(source))

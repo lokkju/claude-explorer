@@ -1,11 +1,20 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { Search, Settings, Download, MessageSquare } from 'lucide-react'
+import { Search, Settings, Download, MessageSquare, Terminal } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { ConversationList } from '@/components/conversation/ConversationList'
+import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { cn } from '@/lib/utils'
+import type { SourceFilter } from '@/lib/types'
 
 interface SidebarProps {
   className?: string
@@ -13,6 +22,7 @@ interface SidebarProps {
 
 export function Sidebar({ className }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
+  const { sourceFilter, setSourceFilter } = useSourceFilter()
 
   return (
     <aside
@@ -29,8 +39,8 @@ export function Sidebar({ className }: SidebarProps) {
         </h1>
       </div>
 
-      {/* Search */}
-      <div className="p-4 pb-2">
+      {/* Search and Filter */}
+      <div className="p-4 pb-2 space-y-2">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <Input
@@ -40,7 +50,31 @@ export function Sidebar({ className }: SidebarProps) {
             className="pl-9"
           />
         </div>
-        <div className="mt-2 text-xs text-zinc-500">
+        <Select value={sourceFilter} onValueChange={(v: string) => setSourceFilter(v as SourceFilter)}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Filter by source" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">
+              <span className="flex items-center gap-2">
+                All Conversations
+              </span>
+            </SelectItem>
+            <SelectItem value="CLAUDE_AI">
+              <span className="flex items-center gap-2">
+                <MessageSquare className="h-3 w-3 text-blue-500" />
+                Claude Desktop
+              </span>
+            </SelectItem>
+            <SelectItem value="CLAUDE_CODE">
+              <span className="flex items-center gap-2">
+                <Terminal className="h-3 w-3 text-green-500" />
+                Claude Code
+              </span>
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="text-xs text-zinc-500">
           <kbd className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-700">
             {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+K
           </kbd>{' '}
@@ -50,7 +84,7 @@ export function Sidebar({ className }: SidebarProps) {
 
       {/* Conversation List */}
       <ScrollArea className="flex-1">
-        <ConversationList searchQuery={searchQuery} />
+        <ConversationList searchQuery={searchQuery} sourceFilter={sourceFilter} />
       </ScrollArea>
 
       {/* Footer */}

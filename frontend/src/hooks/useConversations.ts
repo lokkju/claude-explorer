@@ -29,10 +29,10 @@ export function useConversationTree(uuid: string) {
   })
 }
 
-export function useSearch(query: string) {
+export function useSearch(query: string, source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all') {
   return useQuery({
-    queryKey: queryKeys.search(query),
-    queryFn: () => api.search(query),
+    queryKey: queryKeys.search(query, source),
+    queryFn: () => api.search(query, source),
     enabled: query.length >= 2,
     staleTime: 60 * 1000, // 1 minute
   })

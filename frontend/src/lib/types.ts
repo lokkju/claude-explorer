@@ -1,5 +1,17 @@
 // Conversation types
 
+export type ConversationSource = 'CLAUDE_AI' | 'CLAUDE_CODE'
+
+export interface SubagentSummary {
+  uuid: string
+  agent_id: string
+  name: string
+  model: string
+  created_at: string
+  updated_at: string
+  message_count: number
+}
+
 export interface ConversationSummary {
   uuid: string
   name: string
@@ -12,6 +24,10 @@ export interface ConversationSummary {
   message_count: number
   human_message_count: number
   has_branches: boolean
+  source: ConversationSource
+  project_path?: string | null
+  git_branch?: string | null
+  subagents?: SubagentSummary[]
 }
 
 export interface ContentBlock {
@@ -70,10 +86,13 @@ export interface SearchResult {
 
 // Filter types
 
+export type SourceFilter = 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE'
+
 export interface ConversationFilters {
   search?: string
   starred?: boolean
   model?: string
+  source?: SourceFilter
   sort?: 'updated_at' | 'created_at' | 'name'
 }
 

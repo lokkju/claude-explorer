@@ -12,7 +12,7 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isHuman = message.sender === 'human'
-  const { showToolCalls } = useSettings()
+  const { showToolCalls, expandAllTools } = useSettings()
   const [copied, setCopied] = useState(false)
 
   const handleCopyMessage = async () => {
@@ -87,6 +87,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 key={index}
                 block={block}
                 showToolCalls={showToolCalls}
+                expandAll={expandAllTools}
               />
             ))
           ) : (
@@ -101,19 +102,20 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 interface ContentBlockRendererProps {
   block: ContentBlock
   showToolCalls: boolean
+  expandAll?: boolean
 }
 
-function ContentBlockRenderer({ block, showToolCalls }: ContentBlockRendererProps) {
+function ContentBlockRenderer({ block, showToolCalls, expandAll }: ContentBlockRendererProps) {
   switch (block.type) {
     case 'text':
       return <MarkdownRenderer content={block.text || ''} showToolCalls={showToolCalls} />
     case 'tool_use':
       return showToolCalls ? (
-        <ToolUseBlock name={block.name || ''} input={block.input} />
+        <ToolUseBlock name={block.name || ''} input={block.input} forceExpanded={expandAll} />
       ) : null
     case 'tool_result':
       return showToolCalls ? (
-        <ToolResultBlock content={block.content || []} />
+        <ToolResultBlock content={block.content || []} forceExpanded={expandAll} />
       ) : null
     default:
       return null
@@ -123,12 +125,14 @@ function ContentBlockRenderer({ block, showToolCalls }: ContentBlockRendererProp
 interface ToolUseBlockProps {
   name: string
   input: unknown
+  forceExpanded?: boolean
 }
 
-function ToolUseBlock({ name, input }: ToolUseBlockProps) {
+function ToolUseBlock({ name, input, forceExpanded }: ToolUseBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  const expanded = forceExpanded || isExpanded
   const inputJson = JSON.stringify(input, null, 2)
 
   const handleCopy = async () => {
@@ -143,14 +147,14 @@ function ToolUseBlock({ name, input }: ToolUseBlockProps) {
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-amber-800 dark:text-amber-200"
       >
-        {isExpanded ? (
+        {expanded ? (
           <ChevronDown className="h-4 w-4" />
         ) : (
           <ChevronRight className="h-4 w-4" />
         )}
         <span>Tool: {name}</span>
       </button>
-      {isExpanded && (
+      {expanded && (
         <div className="relative border-t border-amber-200 dark:border-amber-800">
           <Button
             variant="ghost"
@@ -175,10 +179,13 @@ function ToolUseBlock({ name, input }: ToolUseBlockProps) {
 
 interface ToolResultBlockProps {
   content: ContentBlock[]
+  forceExpanded?: boolean
 }
 
-function ToolResultBlock({ content }: ToolResultBlockProps) {
+function ToolResultBlock({ content, forceExpanded }: ToolResultBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false)
+
+  const expanded = forceExpanded || isExpanded
 
   // Extract text content for preview
   const textContent = content
@@ -195,19 +202,19 @@ function ToolResultBlock({ content }: ToolResultBlockProps) {
         onClick={() => setIsExpanded(!isExpanded)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-zinc-700 dark:text-zinc-300"
       >
-        {isExpanded ? (
+        {expanded ? (
           <ChevronDown className="h-4 w-4" />
         ) : (
           <ChevronRight className="h-4 w-4" />
         )}
         <span>Tool Result</span>
-        {!isExpanded && needsTruncation && (
+        {!expanded && needsTruncation && (
           <span className="text-xs text-zinc-500">
             ({textContent.length} chars)
           </span>
         )}
       </button>
-      {isExpanded && (
+      {expanded && (
         <div className="border-t border-zinc-200 p-3 dark:border-zinc-700">
           <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-zinc-700 dark:text-zinc-300">
             {textContent}

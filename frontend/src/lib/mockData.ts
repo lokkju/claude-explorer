@@ -13,6 +13,7 @@ export const mockConversations: ConversationSummary[] = [
     message_count: 24,
     human_message_count: 12,
     has_branches: false,
+    source: 'CLAUDE_AI',
   },
   {
     uuid: '2',
@@ -26,6 +27,7 @@ export const mockConversations: ConversationSummary[] = [
     message_count: 42,
     human_message_count: 20,
     has_branches: true,
+    source: 'CLAUDE_AI',
   },
   {
     uuid: '3',
@@ -39,6 +41,7 @@ export const mockConversations: ConversationSummary[] = [
     message_count: 8,
     human_message_count: 4,
     has_branches: false,
+    source: 'CLAUDE_AI',
   },
   {
     uuid: '4',
@@ -52,6 +55,7 @@ export const mockConversations: ConversationSummary[] = [
     message_count: 16,
     human_message_count: 8,
     has_branches: false,
+    source: 'CLAUDE_AI',
   },
   {
     uuid: '5',
@@ -65,6 +69,7 @@ export const mockConversations: ConversationSummary[] = [
     message_count: 6,
     human_message_count: 3,
     has_branches: false,
+    source: 'CLAUDE_AI',
   },
 ]
 

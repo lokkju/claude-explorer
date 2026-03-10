@@ -31,6 +31,18 @@ class Message(BaseModel):
     files: list[Any] = Field(default_factory=list)
 
 
+class SubagentSummary(BaseModel):
+    """Summary of a subagent conversation."""
+
+    uuid: str
+    agent_id: str
+    name: str
+    model: str = ""
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0
+
+
 class ConversationSummary(BaseModel):
     """Summary of a conversation for list views."""
 
@@ -45,6 +57,10 @@ class ConversationSummary(BaseModel):
     message_count: int = 0
     human_message_count: int = 0
     has_branches: bool = False
+    source: Literal["CLAUDE_AI", "CLAUDE_CODE"] = "CLAUDE_AI"
+    project_path: str | None = None  # For Claude Code sessions
+    git_branch: str | None = None  # For Claude Code sessions
+    subagents: list[SubagentSummary] = Field(default_factory=list)  # Nested agent conversations
 
 
 class ConversationDetail(ConversationSummary):

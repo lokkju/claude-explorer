@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { Command } from 'cmdk'
 import { Search, FileText, MessageSquare, X } from 'lucide-react'
 import { useSearch } from '@/hooks/useConversations'
+import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { cn, formatDate } from '@/lib/utils'
 import type { SearchResult, MessageSnippet } from '@/lib/types'
 
@@ -10,8 +11,9 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const navigate = useNavigate()
+  const { sourceFilter } = useSourceFilter()
 
-  const { data: results, isLoading } = useSearch(query)
+  const { data: results, isLoading } = useSearch(query, sourceFilter)
 
   // Cmd+K to open
   useEffect(() => {

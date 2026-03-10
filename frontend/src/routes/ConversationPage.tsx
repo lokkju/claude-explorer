@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useSearchParams } from 'react-router'
-import { FileText, FileType, GitBranch, Copy, Check, Wrench } from 'lucide-react'
+import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown } from 'lucide-react'
 import { useConversation } from '@/hooks/useConversations'
 import { useSettings } from '@/contexts/SettingsContext'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -16,7 +16,7 @@ export function ConversationPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const highlightMessageId = searchParams.get('highlight')
   const { data: conversation, isLoading, error } = useConversation(uuid || '')
-  const { showToolCalls, setShowToolCalls } = useSettings()
+  const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools } = useSettings()
   const [isTreeOpen, setIsTreeOpen] = useState(false)
   const [copiedAll, setCopiedAll] = useState(false)
   const [copiedUuid, setCopiedUuid] = useState(false)
@@ -99,6 +99,17 @@ export function ConversationPage() {
             {conversation.name || 'Untitled'}
           </h1>
           <div className="mt-1 flex items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
+            {conversation.source === 'CLAUDE_CODE' ? (
+              <Badge variant="secondary" className="flex items-center gap-1 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
+                <Terminal className="h-3 w-3" />
+                Code
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="flex items-center gap-1 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+                <MessageSquare className="h-3 w-3" />
+                Desktop
+              </Badge>
+            )}
             <Badge variant="secondary">{conversation.model}</Badge>
             <span>{formatFullDate(conversation.created_at)}</span>
             <span>{conversation.message_count} messages</span>
@@ -112,6 +123,18 @@ export function ConversationPage() {
               </button>
             )}
           </div>
+          {conversation.source === 'CLAUDE_CODE' && conversation.project_path && (
+            <div className="mt-1 flex items-center gap-1 text-xs text-zinc-400 dark:text-zinc-500">
+              <FolderCode className="h-3 w-3" />
+              <span className="font-mono">{conversation.project_path}</span>
+              {conversation.git_branch && (
+                <>
+                  <GitBranch className="ml-2 h-3 w-3" />
+                  <span className="font-mono">{conversation.git_branch}</span>
+                </>
+              )}
+            </div>
+          )}
           <button
             onClick={async () => {
               await navigator.clipboard.writeText(conversation.uuid)
@@ -139,6 +162,17 @@ export function ConversationPage() {
             <Wrench className="h-4 w-4" />
             <span className="ml-2">Tools</span>
           </Button>
+          {showToolCalls && (
+            <Button
+              variant={expandAllTools ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setExpandAllTools(!expandAllTools)}
+              title={expandAllTools ? 'Collapse all tools' : 'Expand all tools'}
+            >
+              <ChevronsUpDown className="h-4 w-4" />
+              <span className="ml-2">{expandAllTools ? 'Collapse' : 'Expand'}</span>
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"

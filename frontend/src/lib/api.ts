@@ -34,6 +34,7 @@ export const api = {
     if (filters?.search) params.set('search', filters.search)
     if (filters?.starred !== undefined) params.set('starred', String(filters.starred))
     if (filters?.model) params.set('model', filters.model)
+    if (filters?.source) params.set('source', filters.source)
     if (filters?.sort) params.set('sort', filters.sort)
     const query = params.toString()
     return fetchJson<ConversationSummary[]>(`/conversations${query ? `?${query}` : ''}`)
@@ -54,8 +55,11 @@ export const api = {
   getConversationTree: (uuid: string): Promise<ConversationTree> =>
     fetchJson<ConversationTree>(`/conversations/${uuid}/tree`),
 
-  search: (query: string): Promise<SearchResult[]> =>
-    fetchJson<SearchResult[]>(`/search?q=${encodeURIComponent(query)}`),
+  search: (query: string, source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all'): Promise<SearchResult[]> => {
+    const params = new URLSearchParams({ q: query })
+    if (source !== 'all') params.set('source', source)
+    return fetchJson<SearchResult[]>(`/search?${params.toString()}`)
+  },
 
   getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),
 

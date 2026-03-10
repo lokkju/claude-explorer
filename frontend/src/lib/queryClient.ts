@@ -24,6 +24,6 @@ export const queryKeys = {
     detail: (uuid: string) => ['conversations', 'detail', uuid] as const,
     tree: (uuid: string) => ['conversations', 'tree', uuid] as const,
   },
-  search: (query: string) => ['search', query] as const,
+  search: (query: string, source?: string) => ['search', query, source] as const,
   config: ['config'] as const,
 }

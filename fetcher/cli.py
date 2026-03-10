@@ -2,8 +2,12 @@
 CLI entry point for claude-exporter.
 
 Usage:
-    claude-exporter fetch [OPTIONS]    Fetch conversations from Claude Desktop
+    claude-exporter capture [OPTIONS]  Capture credentials from Claude Desktop
+    claude-exporter fetch [OPTIONS]    Fetch conversations from Claude Desktop API
     claude-exporter serve [OPTIONS]    Start the web server
+
+Note: Claude Code sessions are read directly from ~/.claude/projects/
+      at runtime - no import step needed.
 """
 
 import subprocess

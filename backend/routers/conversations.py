@@ -1,5 +1,7 @@
 """Conversations router."""
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Query
 
 from ..models import ConversationSummary, ConversationDetail, ConversationTree
@@ -18,6 +20,9 @@ async def list_conversations(
     search: str | None = Query(None, description="Search in name/summary"),
     starred: bool | None = Query(None, description="Filter by starred status"),
     model: str | None = Query(None, description="Filter by model"),
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = Query(
+        "all", description="Filter by source (all, CLAUDE_AI, CLAUDE_CODE)"
+    ),
     sort: str = Query("updated_at", description="Sort field"),
 ) -> list[ConversationSummary]:
     """List all conversations with optional filtering."""
@@ -26,6 +31,7 @@ async def list_conversations(
         search=search,
         starred=starred,
         model=model,
+        source=source,
         sort=sort,
     )
 
