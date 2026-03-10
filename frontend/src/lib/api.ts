@@ -72,6 +72,21 @@ export const api = {
 
   exportAllMarkdown: (): Promise<Response> =>
     fetch(`${BASE_URL}/export/all/markdown`),
+
+  // Fetch operations (Claude Desktop only)
+  getFetchStatus: async (): Promise<{
+    has_credentials: boolean
+    credentials_path: string
+    output_dir: string
+    existing_count: number
+  }> => fetchJson('/fetch/status'),
+
+  // Returns EventSource for SSE streaming
+  startFetch: (incremental: boolean = true): EventSource => {
+    const params = new URLSearchParams()
+    if (!incremental) params.set('incremental', 'false')
+    return new EventSource(`${BASE_URL}/fetch/start?${params.toString()}`)
+  },
 }
 
 export type { ApiErrorType }

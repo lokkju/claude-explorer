@@ -19,12 +19,24 @@ The official export path (Settings → Privacy → Export Data) sends a download
 
 ### The Workaround
 
-Claude Desktop does **not** do SSL certificate pinning. That means we can:
+This tool offers two ways to capture your session credentials:
+
+**Method A: Browser Login (Default)**
+1. Open a Playwright-controlled browser to claude.ai
+2. Let you log in normally (SSO, email, etc.)
+3. Extract the **session cookie** (`sessionKey`) after authentication
+4. Use that session cookie to **bulk-fetch all conversations** directly from the claude.ai API
+
+**Method B: Proxy Interception (--proxy)**
+
+If you've lost access to the login (e.g., work SSO disabled) but Claude Desktop is still authenticated:
 
 1. Run **mitmproxy** as a local proxy on port 8080
 2. Launch Claude Desktop through the proxy with `--proxy-server=127.0.0.1:8080 --ignore-certificate-errors`
 3. Watch the intercepted traffic to capture the **session cookie** (`sessionKey`)
 4. Use that session cookie to **bulk-fetch all conversations** directly from the claude.ai API
+
+Claude Desktop does **not** do SSL certificate pinning, which makes the proxy method possible.
 
 ---
 
@@ -117,7 +129,8 @@ claude-desktop-message-exporter/
 │   └── frontend.md           # Frontend design and test plan
 ├── fetcher/
 │   ├── cli.py                # CLI entry point (claude-exporter command)
-│   ├── mitmproxy_addon.py    # Intercepts traffic, captures session cookie
+│   ├── playwright_capture.py # Browser-based credential capture (default)
+│   ├── mitmproxy_addon.py    # Proxy-based credential capture (--proxy)
 │   └── bulk_fetch.py         # Downloads all conversations to local JSON
 ├── backend/
 │   ├── main.py               # FastAPI app
@@ -144,15 +157,35 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/youruser/claude-desktop-message-exporter
 cd claude-desktop-message-exporter
 uv sync
+
+# Install Playwright browsers (for browser-based credential capture)
+uv run playwright install chromium
 ```
 
 ### Step 1: Capture Your Session Cookie
 
-**Important:** mitmproxy requires a proper ANSI terminal (e.g., Terminal.app, iTerm2, any standard terminal emulator). It will not work in non-TTY environments or basic shell output windows.
+There are two methods to capture credentials. Choose the one that fits your situation:
+
+#### Method A: Browser Login (Default)
+
+The simplest approach — opens a browser window where you log into Claude normally:
+
+```bash
+uv run claude-exporter capture
+```
+
+This opens Chromium, navigates to claude.ai, and waits for you to log in. Once authenticated, credentials are automatically extracted and saved to `~/.claude-exporter/credentials.json`.
+
+**Options:**
+- `--timeout N` — Max seconds to wait for login (default: 300)
+
+#### Method B: Proxy Interception (--proxy)
+
+Use this method when you **can't log into the web UI** but Claude Desktop is still authenticated. This was a lifesaver for recovering conversations from a work account after losing access to the SSO login.
 
 ```bash
 # Terminal 1 — start the proxy (requires ANSI terminal)
-uv run claude-exporter capture
+uv run claude-exporter capture --proxy
 
 # Terminal 2 — launch Claude Desktop through the proxy
 open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
@@ -162,10 +195,28 @@ Click around in Claude Desktop for a few seconds. The addon will print:
 
 ```
 ✅ Credentials captured! You can now quit mitmproxy (q) and close Claude Desktop.
-   Run: python fetcher/bulk-fetch.py
 ```
 
-Credentials are saved to `~/.claude-exporter/credentials.json`.
+**Options:**
+- `--port N` — Proxy port (default: 8080)
+
+**Platform-specific launch commands:**
+```bash
+# macOS
+open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
+
+# Windows
+"C:\...\Claude.exe" --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
+
+# Linux
+claude --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
+```
+
+**Note:** mitmproxy requires a proper ANSI terminal (Terminal.app, iTerm2, etc.). It will not work in non-TTY environments.
+
+---
+
+Both methods save credentials to `~/.claude-exporter/credentials.json`.
 
 ### Step 2: Download Your Conversations
 
@@ -214,7 +265,8 @@ Then open `http://localhost:5173`.
 
 | Layer | Technology |
 |-------|-----------|
-| Fetcher | mitmproxy, Python stdlib |
+| Credential Capture | Playwright (browser login), mitmproxy (proxy interception) |
+| Fetcher | httpx, curl_cffi |
 | Backend | FastAPI, uvicorn, uv, weasyprint |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS v4, shadcn/ui, TanStack Query |
 | Search | In-process full-text search over loaded JSON |

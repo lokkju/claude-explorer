@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { Search, Settings, Download, MessageSquare, Terminal } from 'lucide-react'
+import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ConversationList } from '@/components/conversation/ConversationList'
+import { FetchDialog } from '@/components/fetch/FetchDialog'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { cn } from '@/lib/utils'
@@ -23,6 +24,7 @@ interface SidebarProps {
 
 export function Sidebar({ className }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
+  const [fetchDialogOpen, setFetchDialogOpen] = useState(false)
   const { sourceFilter, setSourceFilter } = useSourceFilter()
   const { showPhantomSessions, setShowPhantomSessions } = useSettings()
 
@@ -112,10 +114,23 @@ export function Sidebar({ className }: SidebarProps) {
             <span className="ml-2">Settings</span>
           </Link>
         </Button>
-        <Button variant="ghost" size="icon" title="Export All">
-          <Download className="h-4 w-4" />
-        </Button>
+        <div className="flex gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            title="Fetch Claude Desktop conversations"
+            onClick={() => setFetchDialogOpen(true)}
+          >
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" title="Export All">
+            <Download className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
+
+      {/* Fetch Dialog */}
+      <FetchDialog isOpen={fetchDialogOpen} onClose={() => setFetchDialogOpen(false)} />
     </aside>
   )
 }

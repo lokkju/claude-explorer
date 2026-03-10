@@ -2,7 +2,7 @@
 CLI entry point for claude-exporter.
 
 Usage:
-    claude-exporter capture [OPTIONS]  Capture credentials from Claude Desktop
+    claude-exporter capture [OPTIONS]  Log into Claude and capture credentials
     claude-exporter fetch [OPTIONS]    Fetch conversations from Claude Desktop API
     claude-exporter serve [OPTIONS]    Start the web server
 
@@ -110,25 +110,112 @@ def fetch(
 
 
 @main.command()
-@click.option("--port", default=8080, help="Proxy port (default: 8080)")
-def capture(port: int):
-    """Start mitmproxy to capture Claude Desktop credentials.
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=Path.home() / ".claude-exporter" / "credentials.json",
+    help="Where to save credentials",
+)
+@click.option(
+    "--timeout",
+    "-t",
+    type=int,
+    default=300,
+    help="Max seconds to wait for login (default: 300)",
+)
+@click.option(
+    "--proxy",
+    is_flag=True,
+    help="Use mitmproxy method (for when you can't log in but Claude Desktop is still authenticated)",
+)
+@click.option(
+    "--port",
+    default=8080,
+    help="Proxy port when using --proxy method (default: 8080)",
+)
+def capture(output: Path, timeout: int, proxy: bool, port: int):
+    """Capture Claude session credentials.
 
-    This will start a proxy server. You need to launch Claude Desktop
-    through the proxy to capture your session credentials.
+    By default, opens a browser window where you can log into Claude normally.
+    Once logged in, credentials are automatically extracted and saved.
 
-    After running this command:
-    1. Open a new terminal
-    2. Run: open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
-    3. Use Claude Desktop normally until credentials are captured
-    4. Press 'q' to quit mitmproxy
+    Use --proxy for the mitmproxy method, which captures credentials from
+    Claude Desktop traffic. This is useful when you can't log in via web
+    (e.g., lost access to SSO) but Claude Desktop is still authenticated.
     """
+    if proxy:
+        _capture_via_proxy(port)
+    else:
+        _capture_via_browser(output, timeout)
+
+
+def _capture_via_browser(output: Path, timeout: int):
+    """Capture credentials by logging in via browser."""
+    import asyncio
+
+    # Check if playwright browsers are installed
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        raise click.ClickException(
+            "Playwright not installed. Run: uv sync && uv run playwright install chromium"
+        )
+
+    from fetcher.playwright_capture import capture_credentials, save_credentials
+
+    click.echo("=" * 60)
+    click.echo("  Claude Credential Capture (Browser)")
+    click.echo("=" * 60)
+    click.echo()
+
+    # Check if browsers are installed
+    try:
+        credentials = asyncio.run(capture_credentials(timeout=timeout))
+    except Exception as e:
+        if "Executable doesn't exist" in str(e) or "browserType.launch" in str(e):
+            raise click.ClickException(
+                "Playwright browsers not installed.\n"
+                "Run: uv run playwright install chromium"
+            )
+        raise
+
+    if credentials:
+        save_credentials(credentials, output)
+
+        click.echo()
+        click.echo("=" * 60)
+        click.echo("✅ CREDENTIALS CAPTURED SUCCESSFULLY!")
+        click.echo("=" * 60)
+        click.echo(f"   Session key: {credentials['session_key'][:20]}...")
+        click.echo(f"   Org ID: {credentials['org_id']}")
+        click.echo(f"   Saved to: {output}")
+        click.echo()
+        click.echo("   You can now fetch conversations:")
+        click.echo("   claude-exporter fetch")
+        click.echo("=" * 60)
+    else:
+        click.echo()
+        click.echo("❌ Failed to capture credentials.", err=True)
+        raise SystemExit(1)
+
+
+def _capture_via_proxy(port: int):
+    """Capture credentials via mitmproxy (for Claude Desktop)."""
     addon_path = Path(__file__).parent / "mitmproxy_addon.py"
 
-    click.echo("Starting mitmproxy to capture credentials...")
+    click.echo("=" * 60)
+    click.echo("  Claude Credential Capture (Proxy)")
+    click.echo("=" * 60)
+    click.echo()
+    click.echo("This method intercepts Claude Desktop traffic to capture")
+    click.echo("credentials. Useful when you can't log in via web but")
+    click.echo("Claude Desktop is still authenticated.")
+    click.echo()
     click.echo(f"Proxy listening on port {port}")
     click.echo()
     click.echo("In another terminal, launch Claude Desktop through the proxy:")
+    click.echo()
     click.echo(f'  open -a "Claude" --args --proxy-server="127.0.0.1:{port}" --ignore-certificate-errors')
     click.echo()
     click.echo("Use Claude Desktop normally. Credentials will be captured automatically.")

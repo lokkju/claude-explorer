@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import conversations, search, export, config
+from .routers import conversations, search, export, config, fetch
 
 
 @asynccontextmanager
@@ -47,6 +47,7 @@ app.include_router(conversations.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
+app.include_router(fetch.router, prefix="/api")
 
 
 @app.get("/")
