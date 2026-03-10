@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw } from 'lucide-react'
+import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -16,17 +16,33 @@ import { FetchDialog } from '@/components/fetch/FetchDialog'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { cn } from '@/lib/utils'
-import type { SourceFilter } from '@/lib/types'
+import type { SourceFilter, SortField } from '@/lib/types'
 
 interface SidebarProps {
   className?: string
 }
 
+const SORT_OPTIONS: { value: SortField; label: string }[] = [
+  { value: 'updated_at', label: 'Last Activity' },
+  { value: 'created_at', label: 'Start Time' },
+  { value: 'name', label: 'Title' },
+  { value: 'project', label: 'Project' },
+]
+
 export function Sidebar({ className }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [fetchDialogOpen, setFetchDialogOpen] = useState(false)
   const { sourceFilter, setSourceFilter } = useSourceFilter()
-  const { showPhantomSessions, setShowPhantomSessions } = useSettings()
+  const {
+    showPhantomSessions,
+    setShowPhantomSessions,
+    sortField,
+    setSortField,
+    sortOrder,
+    setSortOrder,
+    groupByProject,
+    setGroupByProject,
+  } = useSettings()
 
   return (
     <aside
@@ -78,6 +94,31 @@ export function Sidebar({ className }: SidebarProps) {
             </SelectItem>
           </SelectContent>
         </Select>
+        {/* Sort controls */}
+        <div className="flex items-center gap-1">
+          <Select value={sortField} onValueChange={(v: string) => setSortField(v as SortField)}>
+            <SelectTrigger className="flex-1 h-8 text-xs">
+              <ArrowUpDown className="h-3 w-3 mr-1 text-zinc-400" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2"
+            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+            title={sortOrder === 'asc' ? 'Ascending' : 'Descending'}
+          >
+            {sortOrder === 'asc' ? '↑' : '↓'}
+          </Button>
+        </div>
         <div className="flex items-center justify-between">
           <div className="text-xs text-zinc-500">
             <kbd className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-700">
@@ -85,15 +126,29 @@ export function Sidebar({ className }: SidebarProps) {
             </kbd>{' '}
             to search messages
           </div>
-          <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Show empty sessions created by local commands">
-            <input
-              type="checkbox"
-              checked={showPhantomSessions}
-              onChange={(e) => setShowPhantomSessions(e.target.checked)}
-              className="h-3 w-3 rounded border-zinc-300"
-            />
-            <span>Empty</span>
-          </label>
+          <div className="flex items-center gap-2">
+            {/* Group by project toggle - only show when Claude Code sessions are visible */}
+            {sourceFilter !== 'CLAUDE_AI' && (
+              <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Group sessions by project">
+                <input
+                  type="checkbox"
+                  checked={groupByProject}
+                  onChange={(e) => setGroupByProject(e.target.checked)}
+                  className="h-3 w-3 rounded border-zinc-300"
+                />
+                <FolderTree className="h-3 w-3" />
+              </label>
+            )}
+            <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Show empty sessions created by local commands">
+              <input
+                type="checkbox"
+                checked={showPhantomSessions}
+                onChange={(e) => setShowPhantomSessions(e.target.checked)}
+                className="h-3 w-3 rounded border-zinc-300"
+              />
+              <span>Empty</span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -103,6 +158,9 @@ export function Sidebar({ className }: SidebarProps) {
           searchQuery={searchQuery}
           sourceFilter={sourceFilter}
           includePhantom={showPhantomSessions}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          groupByProject={groupByProject}
         />
       </ScrollArea>
 

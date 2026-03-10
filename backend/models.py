@@ -59,8 +59,17 @@ class ConversationSummary(BaseModel):
     has_branches: bool = False
     source: Literal["CLAUDE_AI", "CLAUDE_CODE"] = "CLAUDE_AI"
     project_path: str | None = None  # For Claude Code sessions
+    project_name: str | None = None  # Short name extracted from project_path
     git_branch: str | None = None  # For Claude Code sessions
     subagents: list[SubagentSummary] = Field(default_factory=list)  # Nested agent conversations
+
+    def model_post_init(self, __context: Any) -> None:
+        """Compute project_name from project_path after initialization."""
+        if self.project_path and not self.project_name:
+            # Extract just the folder name from the full path
+            # e.g., /Users/rpeck/Source/my-project -> my-project
+            path = self.project_path.rstrip("/")
+            self.project_name = path.split("/")[-1] if "/" in path else path
 
 
 class ConversationDetail(ConversationSummary):

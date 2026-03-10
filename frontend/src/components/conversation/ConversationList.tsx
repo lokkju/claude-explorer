@@ -1,28 +1,39 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
-import { Star, GitBranch, Terminal, MessageSquare, ChevronRight, Bot } from 'lucide-react'
+import { Star, GitBranch, Terminal, MessageSquare, ChevronRight, Bot, FolderCode, ChevronDown } from 'lucide-react'
 import { useConversations } from '@/hooks/useConversations'
 import { Badge } from '@/components/ui/badge'
 import { cn, formatDate } from '@/lib/utils'
-import type { ConversationSummary, SubagentSummary, SourceFilter } from '@/lib/types'
+import type { ConversationSummary, SubagentSummary, SourceFilter, SortField, SortOrder } from '@/lib/types'
 
 interface ConversationListProps {
   searchQuery?: string
   sourceFilter?: SourceFilter
   includePhantom?: boolean
+  sortField?: SortField
+  sortOrder?: SortOrder
+  groupByProject?: boolean
 }
 
-export function ConversationList({ searchQuery, sourceFilter, includePhantom }: ConversationListProps) {
+export function ConversationList({
+  searchQuery,
+  sourceFilter,
+  includePhantom,
+  sortField = 'updated_at',
+  sortOrder = 'desc',
+  groupByProject = false,
+}: ConversationListProps) {
   const { uuid: selectedUuid } = useParams()
   const navigate = useNavigate()
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const filters = {
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
     ...(includePhantom && { includePhantom: true }),
+    sort: sortField,
+    sortOrder: sortOrder,
   }
-  const { data: conversations, isLoading, error } = useConversations(
-    Object.keys(filters).length > 0 ? filters : undefined
-  )
+  const { data: conversations, isLoading, error } = useConversations(filters)
 
   if (isLoading) {
     return <ConversationListSkeleton />
@@ -44,10 +55,103 @@ export function ConversationList({ searchQuery, sourceFilter, includePhantom }: 
     )
   }
 
+  // Toggle group collapse
+  const toggleGroup = (groupName: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupName)) {
+        next.delete(groupName)
+      } else {
+        next.add(groupName)
+      }
+      return next
+    })
+  }
+
   // Separate starred and unstarred
   const starred = conversations.filter((c) => c.is_starred)
   const unstarred = conversations.filter((c) => !c.is_starred)
 
+  // Group by project if enabled
+  if (groupByProject) {
+    // Group all conversations by project
+    const groups = new Map<string, ConversationSummary[]>()
+
+    for (const conv of conversations) {
+      const groupKey =
+        conv.source === 'CLAUDE_CODE'
+          ? conv.project_name || 'Unknown Project'
+          : 'Claude Desktop'
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, [])
+      }
+      groups.get(groupKey)!.push(conv)
+    }
+
+    // Sort groups: Claude Desktop first, then alphabetically
+    const sortedGroups = Array.from(groups.entries()).sort(([a], [b]) => {
+      if (a === 'Claude Desktop') return -1
+      if (b === 'Claude Desktop') return 1
+      return a.localeCompare(b)
+    })
+
+    return (
+      <div className="flex flex-col">
+        {sortedGroups.map(([groupName, groupConvs]) => {
+          const isCollapsed = collapsedGroups.has(groupName)
+          const starredInGroup = groupConvs.filter((c) => c.is_starred)
+          const unstarredInGroup = groupConvs.filter((c) => !c.is_starred)
+
+          return (
+            <div key={groupName}>
+              <button
+                onClick={() => toggleGroup(groupName)}
+                className="flex w-full items-center gap-2 px-4 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              >
+                <ChevronDown
+                  className={cn(
+                    'h-3 w-3 transition-transform',
+                    isCollapsed && '-rotate-90'
+                  )}
+                />
+                {groupName === 'Claude Desktop' ? (
+                  <MessageSquare className="h-3 w-3 text-blue-500" />
+                ) : (
+                  <FolderCode className="h-3 w-3 text-amber-500" />
+                )}
+                <span className="flex-1 truncate text-left">{groupName}</span>
+                <span className="text-zinc-400">({groupConvs.length})</span>
+              </button>
+              {!isCollapsed && (
+                <div className="ml-2 border-l border-zinc-200 dark:border-zinc-700">
+                  {starredInGroup.map((conv) => (
+                    <ConversationListItem
+                      key={conv.uuid}
+                      conversation={conv}
+                      isSelected={conv.uuid === selectedUuid}
+                      onClick={() => navigate(`/conversations/${conv.uuid}`)}
+                      showProject={false}
+                    />
+                  ))}
+                  {unstarredInGroup.map((conv) => (
+                    <ConversationListItem
+                      key={conv.uuid}
+                      conversation={conv}
+                      isSelected={conv.uuid === selectedUuid}
+                      onClick={() => navigate(`/conversations/${conv.uuid}`)}
+                      showProject={false}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // Flat view (no grouping)
   return (
     <div className="flex flex-col">
       {starred.length > 0 && (
@@ -82,12 +186,14 @@ interface ConversationListItemProps {
   conversation: ConversationSummary
   isSelected: boolean
   onClick: () => void
+  showProject?: boolean
 }
 
 function ConversationListItem({
   conversation,
   isSelected,
   onClick,
+  showProject = true,
 }: ConversationListItemProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const subagents = conversation.subagents || []
@@ -113,6 +219,13 @@ function ConversationListItem({
             <GitBranch className="h-4 w-4 text-zinc-400" />
           )}
         </div>
+        {/* Project name for Claude Code sessions (hide when grouped by project) */}
+        {showProject && conversation.source === 'CLAUDE_CODE' && conversation.project_name && (
+          <div className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+            <FolderCode className="h-3 w-3 text-amber-500" />
+            <span className="truncate">{conversation.project_name}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
           {conversation.source === 'CLAUDE_CODE' ? (
             <span title="Claude Code"><Terminal className="h-3 w-3 text-green-500" /></span>

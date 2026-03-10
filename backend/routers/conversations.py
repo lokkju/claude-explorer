@@ -23,7 +23,12 @@ async def list_conversations(
     source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = Query(
         "all", description="Filter by source (all, CLAUDE_AI, CLAUDE_CODE)"
     ),
-    sort: str = Query("updated_at", description="Sort field"),
+    sort: Literal["updated_at", "created_at", "name", "project"] = Query(
+        "updated_at", description="Sort field"
+    ),
+    sort_order: Literal["asc", "desc"] = Query(
+        "desc", description="Sort order (asc or desc)"
+    ),
     include_phantom: bool = Query(
         False, description="Include phantom sessions (local command artifacts)"
     ),
@@ -36,6 +41,7 @@ async def list_conversations(
         model=model,
         source=source,
         sort=sort,
+        sort_order=sort_order,
         include_phantom=include_phantom,
     )
 

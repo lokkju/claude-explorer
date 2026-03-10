@@ -26,6 +26,7 @@ export interface ConversationSummary {
   has_branches: boolean
   source: ConversationSource
   project_path?: string | null
+  project_name?: string | null
   git_branch?: string | null
   subagents?: SubagentSummary[]
 }
@@ -88,12 +89,16 @@ export interface SearchResult {
 
 export type SourceFilter = 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE'
 
+export type SortField = 'updated_at' | 'created_at' | 'name' | 'project'
+export type SortOrder = 'asc' | 'desc'
+
 export interface ConversationFilters {
   search?: string
   starred?: boolean
   model?: string
   source?: SourceFilter
-  sort?: 'updated_at' | 'created_at' | 'name'
+  sort?: SortField
+  sortOrder?: SortOrder
   includePhantom?: boolean
 }
 

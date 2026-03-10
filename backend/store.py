@@ -259,6 +259,7 @@ class ConversationStore:
         model: str | None = None,
         source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
         sort: str = "updated_at",
+        sort_order: Literal["asc", "desc"] = "desc",
         include_phantom: bool = False,
     ) -> list[ConversationSummary]:
         """List all conversations with optional filtering."""
@@ -281,12 +282,19 @@ class ConversationStore:
             conversations.append(self._make_summary(data))
 
         # Sort
+        reverse = sort_order == "desc"
         if sort == "name":
-            conversations.sort(key=lambda c: c.name.lower())
+            conversations.sort(key=lambda c: c.name.lower(), reverse=reverse)
         elif sort == "created_at":
-            conversations.sort(key=lambda c: c.created_at, reverse=True)
+            conversations.sort(key=lambda c: c.created_at, reverse=reverse)
+        elif sort == "project":
+            # Sort by project_name (None values go last)
+            conversations.sort(
+                key=lambda c: (c.project_name is None, (c.project_name or "").lower()),
+                reverse=reverse,
+            )
         else:  # updated_at (default)
-            conversations.sort(key=lambda c: c.updated_at, reverse=True)
+            conversations.sort(key=lambda c: c.updated_at, reverse=reverse)
 
         return conversations
 
