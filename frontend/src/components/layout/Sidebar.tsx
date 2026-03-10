@@ -37,7 +37,7 @@ export function Sidebar({ className }: SidebarProps) {
       <div className="flex items-center gap-2 border-b border-zinc-200 p-4 dark:border-zinc-800">
         <MessageSquare className="h-6 w-6 text-zinc-700 dark:text-zinc-300" />
         <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-          Claude Exporter
+          Claude Explorer
         </h1>
       </div>
 

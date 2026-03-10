@@ -5,7 +5,7 @@ test.describe('Conversation Browser', () => {
     await page.goto('/');
 
     // Should show the app header
-    await expect(page.getByText('Claude Exporter')).toBeVisible();
+    await expect(page.getByText('Claude Explorer')).toBeVisible();
 
     // Should show search input
     await expect(page.getByPlaceholder('Search titles...')).toBeVisible();
