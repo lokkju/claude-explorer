@@ -24,6 +24,9 @@ async def list_conversations(
         "all", description="Filter by source (all, CLAUDE_AI, CLAUDE_CODE)"
     ),
     sort: str = Query("updated_at", description="Sort field"),
+    include_phantom: bool = Query(
+        False, description="Include phantom sessions (local command artifacts)"
+    ),
 ) -> list[ConversationSummary]:
     """List all conversations with optional filtering."""
     store = get_store()
@@ -33,6 +36,7 @@ async def list_conversations(
         model=model,
         source=source,
         sort=sort,
+        include_phantom=include_phantom,
     )
 
 

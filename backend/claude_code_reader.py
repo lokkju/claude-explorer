@@ -117,6 +117,9 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
     if not name:
         name = jsonl_path.stem
 
+    # Detect phantom sessions (local command artifacts with no real conversation)
+    is_phantom = name.startswith("Caveat: The messages below were generated")
+
     session_id = first_user.get("sessionId", jsonl_path.stem)
     cwd = first_user.get("cwd", "")
     git_branch = first_user.get("gitBranch", "")
@@ -153,6 +156,7 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
         "message_count": message_count,
         "human_message_count": user_count,
         "has_branches": False,
+        "is_phantom": is_phantom,
     }
 
 
@@ -646,6 +650,7 @@ def _load_conversation_cached(jsonl_path: Path) -> dict[str, Any] | None:
 def list_claude_code_conversations(
     claude_dir: Path = DEFAULT_CLAUDE_DIR,
     full_content: bool = False,
+    include_phantom: bool = False,
 ) -> list[dict[str, Any]]:
     """List all Claude Code conversations from local JSONL files, including subagents.
 
@@ -653,6 +658,8 @@ def list_claude_code_conversations(
         claude_dir: Path to Claude config directory
         full_content: If True, read full conversation content (for search).
                      If False, only read metadata (fast, for listing).
+        include_phantom: If True, include phantom sessions (local command artifacts).
+                        Default False to hide these empty sessions.
 
     Features:
     - Uses orjson for ~5x faster JSON parsing
@@ -680,6 +687,10 @@ def list_claude_code_conversations(
     conversations = []
     for conv in conversations_raw:
         if conv:
+            # Filter out phantom sessions unless explicitly requested
+            if not include_phantom and conv.get("is_phantom", False):
+                continue
+
             session_id = conv["uuid"]
 
             # Look up agent summaries from pre-built index (no additional file I/O)

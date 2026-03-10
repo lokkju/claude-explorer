@@ -204,19 +204,25 @@ class ConversationStore:
             subagents=subagents,
         )
 
-    def _get_claude_code_conversations(self, full_content: bool = False) -> list[dict[str, Any]]:
+    def _get_claude_code_conversations(
+        self, full_content: bool = False, include_phantom: bool = False
+    ) -> list[dict[str, Any]]:
         """Get all Claude Code conversations from JSONL files.
 
         Args:
             full_content: If True, read full message content (slower, for search).
                          If False, only read metadata (fast, for listing).
+            include_phantom: If True, include phantom sessions (local command artifacts).
         """
-        return list_claude_code_conversations(self.claude_dir, full_content=full_content)
+        return list_claude_code_conversations(
+            self.claude_dir, full_content=full_content, include_phantom=include_phantom
+        )
 
     def _get_all_conversations_data(
         self,
         source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
         full_content: bool = False,
+        include_phantom: bool = False,
     ) -> list[dict[str, Any]]:
         """Get raw conversation data from all sources.
 
@@ -224,6 +230,7 @@ class ConversationStore:
             source: Filter by conversation source
             full_content: If True, read full message content (for search).
                          If False, only read metadata (fast, for listing).
+            include_phantom: If True, include phantom sessions (local command artifacts).
         """
         conversations = []
 
@@ -239,7 +246,9 @@ class ConversationStore:
 
         # Load Claude Code conversations (from JSONL files)
         if source in ("all", "CLAUDE_CODE"):
-            conversations.extend(self._get_claude_code_conversations(full_content=full_content))
+            conversations.extend(self._get_claude_code_conversations(
+                full_content=full_content, include_phantom=include_phantom
+            ))
 
         return conversations
 
@@ -250,11 +259,12 @@ class ConversationStore:
         model: str | None = None,
         source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
         sort: str = "updated_at",
+        include_phantom: bool = False,
     ) -> list[ConversationSummary]:
         """List all conversations with optional filtering."""
         conversations = []
 
-        for data in self._get_all_conversations_data(source):
+        for data in self._get_all_conversations_data(source, include_phantom=include_phantom):
             # Apply filters
             if starred is not None and data.get("is_starred") != starred:
                 continue

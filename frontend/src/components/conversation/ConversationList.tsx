@@ -9,14 +9,16 @@ import type { ConversationSummary, SubagentSummary, SourceFilter } from '@/lib/t
 interface ConversationListProps {
   searchQuery?: string
   sourceFilter?: SourceFilter
+  includePhantom?: boolean
 }
 
-export function ConversationList({ searchQuery, sourceFilter }: ConversationListProps) {
+export function ConversationList({ searchQuery, sourceFilter, includePhantom }: ConversationListProps) {
   const { uuid: selectedUuid } = useParams()
   const navigate = useNavigate()
   const filters = {
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
+    ...(includePhantom && { includePhantom: true }),
   }
   const { data: conversations, isLoading, error } = useConversations(
     Object.keys(filters).length > 0 ? filters : undefined

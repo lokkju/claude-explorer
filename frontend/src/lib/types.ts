@@ -94,6 +94,7 @@ export interface ConversationFilters {
   model?: string
   source?: SourceFilter
   sort?: 'updated_at' | 'created_at' | 'name'
+  includePhantom?: boolean
 }
 
 // Config types

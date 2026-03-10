@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select'
 import { ConversationList } from '@/components/conversation/ConversationList'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
+import { useSettings } from '@/contexts/SettingsContext'
 import { cn } from '@/lib/utils'
 import type { SourceFilter } from '@/lib/types'
 
@@ -23,6 +24,7 @@ interface SidebarProps {
 export function Sidebar({ className }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const { sourceFilter, setSourceFilter } = useSourceFilter()
+  const { showPhantomSessions, setShowPhantomSessions } = useSettings()
 
   return (
     <aside
@@ -74,17 +76,32 @@ export function Sidebar({ className }: SidebarProps) {
             </SelectItem>
           </SelectContent>
         </Select>
-        <div className="text-xs text-zinc-500">
-          <kbd className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-700">
-            {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+K
-          </kbd>{' '}
-          to search messages
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-zinc-500">
+            <kbd className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-700">
+              {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+K
+            </kbd>{' '}
+            to search messages
+          </div>
+          <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Show empty sessions created by local commands">
+            <input
+              type="checkbox"
+              checked={showPhantomSessions}
+              onChange={(e) => setShowPhantomSessions(e.target.checked)}
+              className="h-3 w-3 rounded border-zinc-300"
+            />
+            <span>Empty</span>
+          </label>
         </div>
       </div>
 
       {/* Conversation List */}
       <ScrollArea className="flex-1">
-        <ConversationList searchQuery={searchQuery} sourceFilter={sourceFilter} />
+        <ConversationList
+          searchQuery={searchQuery}
+          sourceFilter={sourceFilter}
+          includePhantom={showPhantomSessions}
+        />
       </ScrollArea>
 
       {/* Footer */}

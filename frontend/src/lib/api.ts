@@ -36,6 +36,7 @@ export const api = {
     if (filters?.model) params.set('model', filters.model)
     if (filters?.source) params.set('source', filters.source)
     if (filters?.sort) params.set('sort', filters.sort)
+    if (filters?.includePhantom) params.set('include_phantom', 'true')
     const query = params.toString()
     return fetchJson<ConversationSummary[]>(`/conversations${query ? `?${query}` : ''}`)
   },
