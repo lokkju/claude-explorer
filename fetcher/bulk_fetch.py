@@ -304,7 +304,8 @@ class ClaudeFetcher:
 
     def fetch_conversation(self, uuid: str) -> dict | None:
         """Fetch full conversation content."""
-        url = self._api_url(f"chat_conversations/{uuid}")
+        # Include query params to get full content including tool calls
+        url = self._api_url(f"chat_conversations/{uuid}?tree=True&rendering_mode=messages&render_all_tools=true")
         self._log(f"Fetching conversation {uuid}")
 
         try:
