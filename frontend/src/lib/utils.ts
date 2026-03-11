@@ -19,6 +19,18 @@ export function formatDate(date: string | Date): string {
   return format(d, 'MMM d')
 }
 
+export function formatMessageTimestamp(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date
+
+  if (isToday(d)) {
+    return format(d, 'h:mm:ss a')
+  }
+  if (isYesterday(d)) {
+    return 'Yesterday ' + format(d, 'h:mm:ss a')
+  }
+  return format(d, 'MMM d, yyyy h:mm:ss a')
+}
+
 export function formatRelativeDate(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date
   return formatDistanceToNow(d, { addSuffix: true })

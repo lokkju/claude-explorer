@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { queryKeys } from '@/lib/queryClient'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -32,6 +34,8 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
 export function Sidebar({ className }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [fetchDialogOpen, setFetchDialogOpen] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const queryClient = useQueryClient()
   const { sourceFilter, setSourceFilter } = useSourceFilter()
   const {
     showPhantomSessions,
@@ -44,6 +48,12 @@ export function Sidebar({ className }: SidebarProps) {
     setGroupByProject,
   } = useSettings()
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    await queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all })
+    setIsRefreshing(false)
+  }
+
   return (
     <aside
       className={cn(
@@ -54,9 +64,19 @@ export function Sidebar({ className }: SidebarProps) {
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-zinc-200 p-4 dark:border-zinc-800">
         <MessageSquare className="h-6 w-6 text-zinc-700 dark:text-zinc-300" />
-        <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+        <h1 className="flex-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
           Claude Explorer
         </h1>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          title="Refresh conversation list"
+        >
+          <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+        </Button>
       </div>
 
       {/* Search and Filter */}

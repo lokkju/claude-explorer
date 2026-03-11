@@ -3,7 +3,7 @@ import { User, Bot, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/contexts/SettingsContext'
-import { cn, formatDate, messageToMarkdown } from '@/lib/utils'
+import { cn, formatMessageTimestamp, messageToMarkdown } from '@/lib/utils'
 import type { Message, ContentBlock } from '@/lib/types'
 
 interface MessageBubbleProps {
@@ -71,7 +71,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           <span className="font-medium">
             {isHuman ? 'You' : 'Claude'}
           </span>
-          <span>{formatDate(message.created_at)}</span>
+          <span>{formatMessageTimestamp(message.created_at)}</span>
           {message.truncated && (
             <span className="text-amber-600 dark:text-amber-400">
               (truncated)
