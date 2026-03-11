@@ -109,16 +109,24 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
         first_msg = first_user.get("message", {})
         content = first_msg.get("content", "")
         if isinstance(content, str):
-            name = content[:100].strip()
+            # Skip "Caveat:" system messages when extracting name
+            if not content.startswith("Caveat: The messages below were generated"):
+                name = content[:100].strip()
         elif isinstance(content, list):
             text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-            name = " ".join(text_parts)[:100].strip()
+            combined = " ".join(text_parts)
+            if not combined.startswith("Caveat: The messages below were generated"):
+                name = combined[:100].strip()
 
     if not name:
         name = jsonl_path.stem
 
     # Detect phantom sessions (local command artifacts with no real conversation)
-    is_phantom = name.startswith("Caveat: The messages below were generated")
+    # A phantom session starts with "Caveat:" AND has no assistant responses
+    is_phantom = (
+        name.startswith("Caveat: The messages below were generated")
+        and len(assistant_message_ids) == 0
+    )
 
     session_id = first_user.get("sessionId", jsonl_path.stem)
     cwd = first_user.get("cwd", "")
