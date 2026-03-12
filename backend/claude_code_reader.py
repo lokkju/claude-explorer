@@ -58,12 +58,36 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
     """
     summary_entry = None
     first_user = None
+    first_real_user = None  # First user message that's not a system "Caveat" message
     first_assistant = None
     first_timestamp = None
 
     # Message counting
     user_count = 0
     assistant_message_ids: set[str] = set()
+
+    def _is_system_message(entry: dict) -> bool:
+        """Check if a user entry is a system message (Caveat, bash I/O, tool results)."""
+        msg = entry.get("message", {})
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            # Check for tool_result blocks (these are not real user messages)
+            if any(b.get("type") == "tool_result" for b in content):
+                return True
+            text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
+            text = " ".join(text_parts)
+        else:
+            return False
+
+        # Skip system-generated messages
+        return (
+            text.startswith("Caveat: The messages below were generated")
+            or text.startswith("<bash-input>")
+            or text.startswith("<bash-stdout>")
+            or text.startswith("<bash-stderr>")
+        )
 
     try:
         with open(jsonl_path, "rb") as f:  # Binary mode for orjson
@@ -86,6 +110,9 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
                         user_count += 1
                         if not first_user:
                             first_user = entry
+                        # Track first real user message for title extraction
+                        if not first_real_user and not _is_system_message(entry):
+                            first_real_user = entry
                     elif entry_type == "assistant":
                         # Dedupe by message.id to handle streaming chunks
                         msg = entry.get("message", {})
@@ -103,20 +130,16 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
     if not first_user:
         return None
 
-    # Build metadata
+    # Build metadata - use first_real_user (non-Caveat) for title if available
     name = summary_entry.get("summary") if summary_entry else None
-    if not name:
-        first_msg = first_user.get("message", {})
+    if not name and first_real_user:
+        first_msg = first_real_user.get("message", {})
         content = first_msg.get("content", "")
         if isinstance(content, str):
-            # Skip "Caveat:" system messages when extracting name
-            if not content.startswith("Caveat: The messages below were generated"):
-                name = content[:100].strip()
+            name = content[:100].strip()
         elif isinstance(content, list):
             text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-            combined = " ".join(text_parts)
-            if not combined.startswith("Caveat: The messages below were generated"):
-                name = combined[:100].strip()
+            name = " ".join(text_parts)[:100].strip()
 
     if not name:
         name = jsonl_path.stem
