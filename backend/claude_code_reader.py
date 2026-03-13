@@ -66,28 +66,75 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
     user_count = 0
     assistant_message_ids: set[str] = set()
 
-    def _is_system_message(entry: dict) -> bool:
-        """Check if a user entry is a system message (Caveat, bash I/O, tool results)."""
+    def _get_message_text(entry: dict) -> str:
+        """Extract text content from a message entry."""
         msg = entry.get("message", {})
         content = msg.get("content", "")
         if isinstance(content, str):
-            text = content
+            return content
         elif isinstance(content, list):
+            text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
+            return " ".join(text_parts)
+        return ""
+
+    def _is_system_message(entry: dict) -> bool:
+        """Check if a user entry is a system message (Caveat, bash I/O, tool results, commands)."""
+        msg = entry.get("message", {})
+        content = msg.get("content", "")
+
+        if isinstance(content, list):
             # Check for tool_result blocks (these are not real user messages)
             if any(b.get("type") == "tool_result" for b in content):
                 return True
-            text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-            text = " ".join(text_parts)
-        else:
-            return False
 
-        # Skip system-generated messages
+        text = _get_message_text(entry)
+
+        # Skip system-generated messages and command infrastructure
         return (
             text.startswith("Caveat: The messages below were generated")
+            or text.startswith("<local-command-caveat>")
             or text.startswith("<bash-input>")
             or text.startswith("<bash-stdout>")
             or text.startswith("<bash-stderr>")
+            or text.startswith("<command-message>")
+            or text.startswith("<command-name>")
+            or text.startswith("Unknown skill:")
+            or text.startswith("Unknown command:")
         )
+
+    def _extract_title_from_message(entry: dict) -> str | None:
+        """Extract a clean title from a message, handling XML tags and special formats."""
+        import re
+
+        text = _get_message_text(entry)
+        if not text:
+            return None
+
+        # Try to extract command name from <command-name>/foo</command-name>
+        cmd_match = re.search(r"<command-name>(/[^<]+)</command-name>", text)
+        if cmd_match:
+            return cmd_match.group(1)
+
+        # Skip messages that are just XML infrastructure
+        if text.startswith("<") and ">" in text:
+            # Check if there's useful content after the XML tags
+            # Remove all XML tags and see what's left
+            clean = re.sub(r"<[^>]+>", "", text).strip()
+            if clean and len(clean) > 10:
+                text = clean
+            else:
+                return None
+
+        # Clean up markdown and get first meaningful line
+        lines = text.strip().split("\n")
+        for line in lines:
+            # Strip markdown headers and whitespace
+            clean_line = re.sub(r"^#+\s*", "", line).strip()
+            # Skip empty lines and short fragments
+            if clean_line and len(clean_line) > 5:
+                return clean_line[:100]
+
+        return text[:100].strip() if text.strip() else None
 
     try:
         with open(jsonl_path, "rb") as f:  # Binary mode for orjson
@@ -130,16 +177,10 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
     if not first_user:
         return None
 
-    # Build metadata - use first_real_user (non-Caveat) for title if available
+    # Build metadata - use first_real_user (non-system) for title if available
     name = summary_entry.get("summary") if summary_entry else None
     if not name and first_real_user:
-        first_msg = first_real_user.get("message", {})
-        content = first_msg.get("content", "")
-        if isinstance(content, str):
-            name = content[:100].strip()
-        elif isinstance(content, list):
-            text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-            name = " ".join(text_parts)[:100].strip()
+        name = _extract_title_from_message(first_real_user)
 
     if not name:
         name = jsonl_path.stem
