@@ -6,11 +6,13 @@ export const queryClient = new QueryClient({
       staleTime: 5 * 60 * 1000, // 5 minutes
       retry: (failureCount, error) => {
         // Don't retry 404s
-        if (error instanceof Error && 'status' in error && error.status === 404) {
+        if (error instanceof Error && 'status' in error && (error as any).status === 404) {
           return false
         }
-        return failureCount < 3
+        // Retry connection errors more times (backend might be starting)
+        return failureCount < 5
       },
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000), // Exponential backoff, max 10s
     },
   },
 })
