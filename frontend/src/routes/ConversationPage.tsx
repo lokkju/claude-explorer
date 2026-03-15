@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useSearchParams } from 'react-router'
-import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown } from 'lucide-react'
+import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown } from 'lucide-react'
 import { useConversation } from '@/hooks/useConversations'
 import { useSettings } from '@/contexts/SettingsContext'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
@@ -21,6 +20,22 @@ export function ConversationPage() {
   const [copiedAll, setCopiedAll] = useState(false)
   const [copiedUuid, setCopiedUuid] = useState(false)
   const [copiedPath, setCopiedPath] = useState(false)
+  const [showScrollButton, setShowScrollButton] = useState(false)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Track scroll position to show/hide jump-to-bottom button
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement
+    const { scrollTop, scrollHeight, clientHeight } = target
+    // Show button when not near bottom (more than 200px from bottom)
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 200
+    setShowScrollButton(!isNearBottom)
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [])
 
   // Scroll to highlighted message
   useEffect(() => {
@@ -217,13 +232,31 @@ export function ConversationPage() {
       </header>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-6">
-        <div className="mx-auto max-w-3xl space-y-6">
-          {conversation.messages.map((message) => (
-            <MessageBubble key={message.uuid} message={message} />
-          ))}
+      <div className="relative flex-1 overflow-hidden">
+        <div
+          ref={scrollAreaRef}
+          className="h-full overflow-y-auto p-6"
+          onScroll={handleScroll}
+        >
+          <div className="mx-auto max-w-3xl space-y-6">
+            {conversation.messages.map((message) => (
+              <MessageBubble key={message.uuid} message={message} />
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
         </div>
-      </ScrollArea>
+
+        {/* Jump to bottom button */}
+        {showScrollButton && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-6 right-6 flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900/80 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-zinc-900 dark:bg-zinc-100/80 dark:text-zinc-900 dark:hover:bg-zinc-100"
+            title="Jump to bottom"
+          >
+            <ChevronDown className="h-5 w-5" />
+          </button>
+        )}
+      </div>
 
       {/* Tree View Modal */}
       {conversation.has_branches && (

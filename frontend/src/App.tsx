@@ -7,6 +7,7 @@ import { SourceFilterProvider } from '@/contexts/SourceFilterContext'
 import { RootLayout } from '@/components/layout/RootLayout'
 import { ConversationPage } from '@/routes/ConversationPage'
 import { CommandPalette } from '@/components/search/CommandPalette'
+import { ConnectionStatus } from '@/components/ConnectionStatus'
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
             </Routes>
           </BrowserRouter>
           <Toaster position="bottom-right" />
+          <ConnectionStatus />
         </SourceFilterProvider>
       </SettingsProvider>
     </QueryClientProvider>
