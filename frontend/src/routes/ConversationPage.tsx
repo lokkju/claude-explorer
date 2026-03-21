@@ -3,12 +3,14 @@ import { useParams, useSearchParams } from 'react-router'
 import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown } from 'lucide-react'
 import { useConversation } from '@/hooks/useConversations'
 import { useSettings } from '@/contexts/SettingsContext'
+import { useKeyboardNavigation, type MessageInfo } from '@/contexts/KeyboardNavigationContext'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
 import { formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { cn } from '@/lib/utils'
 
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
@@ -16,6 +18,13 @@ export function ConversationPage() {
   const highlightMessageId = searchParams.get('highlight')
   const { data: conversation, isLoading, error } = useConversation(uuid || '')
   const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools } = useSettings()
+  const {
+    setMessages,
+    selectedMessageIndex,
+    getSelectedMessageId,
+    focusArea,
+    setFocusArea,
+  } = useKeyboardNavigation()
   const [isTreeOpen, setIsTreeOpen] = useState(false)
   const [copiedAll, setCopiedAll] = useState(false)
   const [copiedUuid, setCopiedUuid] = useState(false)
@@ -23,6 +32,7 @@ export function ConversationPage() {
   const [showScrollButton, setShowScrollButton] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
   // Track scroll position to show/hide jump-to-bottom button
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -36,6 +46,35 @@ export function ConversationPage() {
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
+
+  // Register messages with keyboard navigation context
+  useEffect(() => {
+    if (conversation?.messages) {
+      const messageInfos: MessageInfo[] = conversation.messages.map((msg) => ({
+        uuid: msg.uuid,
+        sender: msg.sender,
+      }))
+      setMessages(messageInfos)
+      // Set focus to detail pane when conversation loads
+      setFocusArea('detail')
+    }
+    return () => {
+      setMessages([])
+    }
+  }, [conversation?.messages, setMessages, setFocusArea])
+
+  // Auto-scroll to selected message
+  useEffect(() => {
+    if (focusArea === 'detail' && conversation?.messages) {
+      const selectedId = getSelectedMessageId()
+      if (selectedId) {
+        const element = messageRefs.current.get(selectedId)
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
+      }
+    }
+  }, [selectedMessageIndex, focusArea, conversation?.messages, getSelectedMessageId])
 
   // Scroll to highlighted message
   useEffect(() => {
@@ -239,9 +278,27 @@ export function ConversationPage() {
           onScroll={handleScroll}
         >
           <div className="mx-auto max-w-3xl space-y-6">
-            {conversation.messages.map((message) => (
-              <MessageBubble key={message.uuid} message={message} />
-            ))}
+            {conversation.messages.map((message, index) => {
+              const isSelected = focusArea === 'detail' && selectedMessageIndex === index
+              return (
+                <div
+                  key={message.uuid}
+                  ref={(el) => {
+                    if (el) {
+                      messageRefs.current.set(message.uuid, el)
+                    } else {
+                      messageRefs.current.delete(message.uuid)
+                    }
+                  }}
+                  className={cn(
+                    'transition-all duration-150',
+                    isSelected && 'ring-2 ring-blue-500 ring-offset-2 rounded-lg dark:ring-offset-zinc-900'
+                  )}
+                >
+                  <MessageBubble message={message} />
+                </div>
+              )
+            })}
             <div ref={messagesEndRef} />
           </div>
         </div>

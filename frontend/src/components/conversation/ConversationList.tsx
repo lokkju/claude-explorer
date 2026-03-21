@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { Star, GitBranch, Terminal, MessageSquare, ChevronRight, Bot, FolderCode, ChevronDown } from 'lucide-react'
 import { useConversations } from '@/hooks/useConversations'
+import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import { Badge } from '@/components/ui/badge'
 import { cn, formatDate } from '@/lib/utils'
 import type { ConversationSummary, SubagentSummary, SourceFilter, SortField, SortOrder } from '@/lib/types'
@@ -26,6 +27,7 @@ export function ConversationList({
   const { uuid: selectedUuid } = useParams()
   const navigate = useNavigate()
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const { selectedIndex, setConversationIds, focusArea } = useKeyboardNavigation()
   const filters = {
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
@@ -34,6 +36,18 @@ export function ConversationList({
     sortOrder: sortOrder,
   }
   const { data: conversations, isLoading, error } = useConversations(filters)
+
+  // Register conversation IDs with navigation context (in display order: starred first)
+  useEffect(() => {
+    if (conversations) {
+      // Order IDs to match display: starred first, then unstarred
+      const starred = conversations.filter((c) => c.is_starred)
+      const unstarred = conversations.filter((c) => !c.is_starred)
+      const orderedConversations = [...starred, ...unstarred]
+      const ids = orderedConversations.map((c) => c.uuid)
+      setConversationIds(ids)
+    }
+  }, [conversations, setConversationIds])
 
   if (isLoading) {
     return <ConversationListSkeleton />
@@ -68,9 +82,17 @@ export function ConversationList({
     })
   }
 
-  // Separate starred and unstarred
+  // Separate starred and unstarred (display order: starred first)
   const starred = conversations.filter((c) => c.is_starred)
   const unstarred = conversations.filter((c) => !c.is_starred)
+  const orderedConversations = [...starred, ...unstarred]
+
+  // Helper to check if a conversation is keyboard-selected (uses display order)
+  const isKeyboardSelected = (uuid: string) => {
+    if (focusArea !== 'list') return false
+    const displayIndex = orderedConversations.findIndex((c) => c.uuid === uuid)
+    return displayIndex === selectedIndex
+  }
 
   // Group by project if enabled
   if (groupByProject) {
@@ -129,6 +151,7 @@ export function ConversationList({
                       key={conv.uuid}
                       conversation={conv}
                       isSelected={conv.uuid === selectedUuid}
+                      isKeyboardSelected={isKeyboardSelected(conv.uuid)}
                       onClick={() => navigate(`/conversations/${conv.uuid}`)}
                       showProject={false}
                     />
@@ -138,6 +161,7 @@ export function ConversationList({
                       key={conv.uuid}
                       conversation={conv}
                       isSelected={conv.uuid === selectedUuid}
+                      isKeyboardSelected={isKeyboardSelected(conv.uuid)}
                       onClick={() => navigate(`/conversations/${conv.uuid}`)}
                       showProject={false}
                     />
@@ -164,6 +188,7 @@ export function ConversationList({
               key={conv.uuid}
               conversation={conv}
               isSelected={conv.uuid === selectedUuid}
+              isKeyboardSelected={isKeyboardSelected(conv.uuid)}
               onClick={() => navigate(`/conversations/${conv.uuid}`)}
             />
           ))}
@@ -175,6 +200,7 @@ export function ConversationList({
           key={conv.uuid}
           conversation={conv}
           isSelected={conv.uuid === selectedUuid}
+          isKeyboardSelected={isKeyboardSelected(conv.uuid)}
           onClick={() => navigate(`/conversations/${conv.uuid}`)}
         />
       ))}
@@ -185,6 +211,7 @@ export function ConversationList({
 interface ConversationListItemProps {
   conversation: ConversationSummary
   isSelected: boolean
+  isKeyboardSelected: boolean
   onClick: () => void
   showProject?: boolean
 }
@@ -192,20 +219,39 @@ interface ConversationListItemProps {
 function ConversationListItem({
   conversation,
   isSelected,
+  isKeyboardSelected,
   onClick,
   showProject = true,
 }: ConversationListItemProps) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const itemRef = useRef<HTMLDivElement>(null)
   const subagents = conversation.subagents || []
   const hasSubagents = subagents.length > 0
 
+  // Scroll keyboard-selected item into view
+  useEffect(() => {
+    if (isKeyboardSelected && itemRef.current) {
+      itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [isKeyboardSelected])
+
   return (
     <div>
-      <button
+      <div
+        ref={itemRef}
+        role="button"
+        tabIndex={0}
         onClick={onClick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onClick()
+          }
+        }}
         className={cn(
-          'flex w-full flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800',
-          isSelected && 'bg-zinc-100 dark:bg-zinc-800'
+          'flex w-full cursor-pointer flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800',
+          isSelected && 'bg-zinc-100 dark:bg-zinc-800',
+          isKeyboardSelected && !isSelected && 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500'
         )}
       >
         <div className="flex items-start gap-2">
@@ -254,7 +300,7 @@ function ConversationListItem({
         <div className="truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-600">
           {conversation.uuid}
         </div>
-      </button>
+      </div>
       {isExpanded && hasSubagents && (
         <div className="ml-6 border-l-2 border-purple-200 dark:border-purple-800">
           {subagents.map((agent) => (
