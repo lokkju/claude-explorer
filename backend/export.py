@@ -71,6 +71,23 @@ def render_content_block(
     return ""
 
 
+def message_has_visible_content(message: Message, include_tools: bool = True) -> bool:
+    """Check if a message has any visible content (considering tool call visibility)."""
+    if message.text and message.text.strip():
+        if not include_tools:
+            filtered = filter_tool_placeholders(message.text).strip()
+            if not filtered:
+                return False
+        return True
+    if message.content:
+        for block in message.content:
+            if block.type == "text" and block.text and block.text.strip():
+                return True
+            if block.type in ("tool_use", "tool_result") and include_tools:
+                return True
+    return False
+
+
 def message_to_markdown(message: Message, include_tools: bool = True) -> str:
     """Convert a single message to Markdown."""
     sender = "You" if message.sender == "human" else "Claude"
@@ -114,7 +131,8 @@ def conversation_to_markdown(
     ]
 
     for message in conversation.messages:
-        lines.append(message_to_markdown(message, include_tools))
+        if message_has_visible_content(message, include_tools):
+            lines.append(message_to_markdown(message, include_tools))
 
     return "\n".join(lines)
 
@@ -213,6 +231,9 @@ def conversation_to_html(
 """
 
     for message in conversation.messages:
+        if not message_has_visible_content(message, include_tools):
+            continue
+
         sender = "You" if message.sender == "human" else "Claude"
         timestamp = format_timestamp(message.created_at)
 

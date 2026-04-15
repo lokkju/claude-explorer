@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router'
 import { Command } from 'cmdk'
 import { Search, FileText, MessageSquare, X } from 'lucide-react'
@@ -7,38 +7,133 @@ import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { cn, formatDate } from '@/lib/utils'
 import type { SearchResult, MessageSnippet } from '@/lib/types'
 
+interface SearchMatch {
+  conversationUuid: string
+  messageUuid?: string
+  conversationName: string
+  snippet?: string
+  sender?: string
+}
+
 export function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const navigate = useNavigate()
   const { sourceFilter } = useSourceFilter()
+  const matchIndexRef = useRef(-1)
+  const lastQueryRef = useRef('')
 
   const { data: results, isLoading } = useSearch(query, sourceFilter)
 
-  // Cmd+K to open
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => {
-      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault()
-        setOpen((o) => !o)
+  // Flatten results into navigable matches (message-level)
+  const flatMatches = useMemo<SearchMatch[]>(() => {
+    if (!results) return []
+    const matches: SearchMatch[] = []
+    for (const result of results) {
+      const messageMatches = result.matching_messages.filter(
+        (m) => m.message_uuid !== 'title'
+      )
+      if (messageMatches.length > 0) {
+        for (const msg of messageMatches) {
+          matches.push({
+            conversationUuid: result.conversation_uuid,
+            messageUuid: msg.message_uuid,
+            conversationName: result.conversation_name,
+            snippet: msg.snippet,
+            sender: msg.sender,
+          })
+        }
+      } else {
+        // Title-only match — navigate to conversation without message highlight
+        matches.push({
+          conversationUuid: result.conversation_uuid,
+          conversationName: result.conversation_name,
+        })
       }
     }
-    document.addEventListener('keydown', down)
-    return () => document.removeEventListener('keydown', down)
-  }, [])
+    return matches
+  }, [results])
 
-  const handleSelect = useCallback(
-    (conversationUuid: string, messageUuid?: string) => {
-      navigate(`/conversations/${conversationUuid}${messageUuid ? `?highlight=${messageUuid}` : ''}`)
-      setOpen(false)
-      setQuery('')
+  // Save query for Cmd+G reuse
+  useEffect(() => {
+    if (query.length >= 2) {
+      lastQueryRef.current = query
+    }
+  }, [query])
+
+  // Navigate to a match — ConversationPage handles focus + message selection via highlight param
+  const navigateToMatch = useCallback(
+    (match: SearchMatch) => {
+      navigate(
+        `/conversations/${match.conversationUuid}${match.messageUuid ? `?highlight=${match.messageUuid}` : ''}`
+      )
     },
     [navigate]
   )
 
+  // Cmd+K or Cmd+F to open, Cmd+G / Cmd+Shift+G to navigate matches
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      const cmdOrCtrl = e.metaKey || e.ctrlKey
+
+      // Cmd+K or Cmd+F: toggle palette
+      if ((e.key === 'k' || e.key === 'f') && cmdOrCtrl) {
+        e.preventDefault()
+        setOpen((o) => !o)
+        return
+      }
+
+      // Cmd+G: next match
+      if (e.key === 'g' && cmdOrCtrl && !e.shiftKey) {
+        e.preventDefault()
+        if (flatMatches.length > 0) {
+          matchIndexRef.current = (matchIndexRef.current + 1) % flatMatches.length
+          navigateToMatch(flatMatches[matchIndexRef.current])
+          setOpen(false)
+        } else if (lastQueryRef.current) {
+          setQuery(lastQueryRef.current)
+          setOpen(true)
+        }
+        return
+      }
+
+      // Cmd+Shift+G: previous match
+      if (e.key === 'g' && cmdOrCtrl && e.shiftKey) {
+        e.preventDefault()
+        if (flatMatches.length > 0) {
+          matchIndexRef.current =
+            (matchIndexRef.current - 1 + flatMatches.length) % flatMatches.length
+          navigateToMatch(flatMatches[matchIndexRef.current])
+          setOpen(false)
+        } else if (lastQueryRef.current) {
+          setQuery(lastQueryRef.current)
+          setOpen(true)
+        }
+        return
+      }
+    }
+    document.addEventListener('keydown', down)
+    return () => document.removeEventListener('keydown', down)
+  }, [flatMatches, navigateToMatch])
+
+  const handleSelect = useCallback(
+    (conversationUuid: string, messageUuid?: string) => {
+      // Find this match's index so Cmd+G continues from here
+      const idx = flatMatches.findIndex(
+        (m) =>
+          m.conversationUuid === conversationUuid &&
+          m.messageUuid === messageUuid
+      )
+      if (idx !== -1) matchIndexRef.current = idx
+
+      navigateToMatch({ conversationUuid, messageUuid, conversationName: '' })
+      setOpen(false)
+    },
+    [navigateToMatch, flatMatches]
+  )
+
   const handleClose = useCallback(() => {
     setOpen(false)
-    setQuery('')
   }, [])
 
   if (!open) return null
@@ -105,6 +200,18 @@ export function CommandPalette() {
           </Command.List>
 
           <div className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800">
+            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
+              Enter
+            </kbd>{' '}
+            to select{' · '}
+            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
+              ⌘G
+            </kbd>{' '}
+            next match{' · '}
+            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
+              ⌘⇧G
+            </kbd>{' '}
+            prev{' · '}
             <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
               Esc
             </kbd>{' '}

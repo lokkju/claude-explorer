@@ -8,9 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
-import { formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown } from '@/lib/utils'
+import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
-import { cn } from '@/lib/utils'
 
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
@@ -20,8 +19,11 @@ export function ConversationPage() {
   const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools } = useSettings()
   const {
     setMessages,
+    messages,
     selectedMessageIndex,
+    setSelectedMessageIndex,
     getSelectedMessageId,
+    getSelectedId,
     focusArea,
     setFocusArea,
   } = useKeyboardNavigation()
@@ -47,21 +49,30 @@ export function ConversationPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
 
-  // Register messages with keyboard navigation context
+  // Reset message index when a new conversation is opened
+  const prevUuidRef = useRef<string | undefined>()
+  useEffect(() => {
+    if (uuid && uuid !== prevUuidRef.current) {
+      prevUuidRef.current = uuid
+      setSelectedMessageIndex(0)
+    }
+  }, [uuid, setSelectedMessageIndex])
+
+  // Register visible messages with keyboard navigation context
   useEffect(() => {
     if (conversation?.messages) {
-      const messageInfos: MessageInfo[] = conversation.messages.map((msg) => ({
-        uuid: msg.uuid,
-        sender: msg.sender,
-      }))
+      const messageInfos: MessageInfo[] = conversation.messages
+        .filter((msg) => messageHasVisibleContent(msg, showToolCalls))
+        .map((msg) => ({
+          uuid: msg.uuid,
+          sender: msg.sender,
+        }))
       setMessages(messageInfos)
-      // Set focus to detail pane when conversation loads
-      setFocusArea('detail')
     }
     return () => {
       setMessages([])
     }
-  }, [conversation?.messages, setMessages, setFocusArea])
+  }, [conversation?.messages, showToolCalls, setMessages])
 
   // Auto-scroll to selected message
   useEffect(() => {
@@ -76,9 +87,16 @@ export function ConversationPage() {
     }
   }, [selectedMessageIndex, focusArea, conversation?.messages, getSelectedMessageId])
 
-  // Scroll to highlighted message
+  // Scroll to highlighted message, select it, and focus detail pane
   useEffect(() => {
     if (highlightMessageId && conversation && !isLoading) {
+      // Focus the detail pane and select the highlighted message
+      setFocusArea('detail')
+      const msgIdx = messages.findIndex((m) => m.uuid === highlightMessageId)
+      if (msgIdx !== -1) {
+        setSelectedMessageIndex(msgIdx)
+      }
+
       // Small delay to ensure DOM is rendered
       const timer = setTimeout(() => {
         const element = document.querySelector(
@@ -97,10 +115,15 @@ export function ConversationPage() {
       }, 100)
       return () => clearTimeout(timer)
     }
-  }, [highlightMessageId, conversation, isLoading, setSearchParams])
+  }, [highlightMessageId, conversation, isLoading, setSearchParams, setFocusArea, messages, setSelectedMessageIndex])
 
-  if (!uuid) {
-    return <EmptyState />
+  // When sidebar has focus and keyboard selection differs from displayed conversation,
+  // show a hint instead of the (stale) conversation content
+  const sidebarSelectedId = getSelectedId()
+  const sidebarSelectionDiffers = focusArea === 'list' && sidebarSelectedId && sidebarSelectedId !== uuid
+
+  if (!uuid || sidebarSelectionDiffers) {
+    return <HintState />
   }
 
   if (isLoading) {
@@ -146,7 +169,13 @@ export function ConversationPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      onClick={() => setFocusArea('detail')}
+      className={cn(
+        'flex h-full flex-col',
+        focusArea === 'detail' && 'ring-2 ring-inset ring-blue-500/50'
+      )}
+    >
       {/* Header */}
       <header className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
         <div className="flex-1 min-w-0">
@@ -278,8 +307,9 @@ export function ConversationPage() {
           onScroll={handleScroll}
         >
           <div className="mx-auto max-w-3xl space-y-6">
-            {conversation.messages.map((message, index) => {
-              const isSelected = focusArea === 'detail' && selectedMessageIndex === index
+            {conversation.messages.map((message) => {
+              const selectedId = getSelectedMessageId()
+              const isSelected = focusArea === 'detail' && message.uuid === selectedId
               return (
                 <div
                   key={message.uuid}
@@ -290,12 +320,8 @@ export function ConversationPage() {
                       messageRefs.current.delete(message.uuid)
                     }
                   }}
-                  className={cn(
-                    'transition-all duration-150',
-                    isSelected && 'ring-2 ring-blue-500 ring-offset-2 rounded-lg dark:ring-offset-zinc-900'
-                  )}
                 >
-                  <MessageBubble message={message} />
+                  <MessageBubble message={message} isKeyboardSelected={isSelected} />
                 </div>
               )
             })}
@@ -341,6 +367,18 @@ function EmptyState() {
         </h2>
         <p className="text-sm text-zinc-500">
           Choose a conversation from the sidebar to view it.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function HintState() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="text-center">
+        <p className="text-sm text-zinc-500">
+          Press <kbd className="mx-1 rounded border border-zinc-300 bg-zinc-100 px-1.5 py-0.5 font-mono text-xs dark:border-zinc-600 dark:bg-zinc-800">Enter</kbd> to open this conversation.
         </p>
       </div>
     </div>

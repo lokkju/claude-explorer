@@ -1,19 +1,31 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react'
 import type { SortField, SortOrder } from '@/lib/types'
 
+export type Theme = 'light' | 'dark' | 'system'
+export type KeyboardMode = 'emacs' | 'vim'
+
 interface SettingsContextType {
+  // Display settings
   showToolCalls: boolean
   setShowToolCalls: (show: boolean) => void
   expandAllTools: boolean
   setExpandAllTools: (expand: boolean) => void
   showPhantomSessions: boolean
   setShowPhantomSessions: (show: boolean) => void
+  // Sort and group settings
   sortField: SortField
   setSortField: (field: SortField) => void
   sortOrder: SortOrder
   setSortOrder: (order: SortOrder) => void
   groupByProject: boolean
   setGroupByProject: (group: boolean) => void
+  // Theme settings
+  theme: Theme
+  setTheme: (theme: Theme) => void
+  effectiveTheme: 'light' | 'dark'
+  // Keyboard settings
+  keyboardMode: KeyboardMode
+  setKeyboardMode: (mode: KeyboardMode) => void
 }
 
 const SettingsContext = createContext<SettingsContextType | null>(null)
@@ -46,7 +58,7 @@ function getDefaultSortOrder(field: SortField): SortOrder {
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [showToolCalls, setShowToolCalls] = useState(true)
+  const [showToolCalls, setShowToolCalls] = useState(false)
   const [expandAllTools, setExpandAllTools] = useState(false)
   const [showPhantomSessions, setShowPhantomSessions] = useState(false)
 
@@ -59,6 +71,35 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   )
   const [groupByProject, setGroupByProjectState] = useState<boolean>(() =>
     getStoredValue<boolean>('groupByProject', false)
+  )
+
+  // Theme settings
+  const [theme, setThemeState] = useState<Theme>(() =>
+    getStoredValue<Theme>('theme', 'system')
+  )
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
+  )
+
+  // Listen for system theme changes
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = (e: MediaQueryListEvent) => setSystemPrefersDark(e.matches)
+    mediaQuery.addEventListener('change', handler)
+    return () => mediaQuery.removeEventListener('change', handler)
+  }, [])
+
+  // Compute effective theme
+  const effectiveTheme = useMemo(() => {
+    if (theme === 'system') {
+      return systemPrefersDark ? 'dark' : 'light'
+    }
+    return theme
+  }, [theme, systemPrefersDark])
+
+  // Keyboard mode settings
+  const [keyboardMode, setKeyboardModeState] = useState<KeyboardMode>(() =>
+    getStoredValue<KeyboardMode>('keyboardMode', 'emacs')
   )
 
   // Persist to localStorage when values change
@@ -81,6 +122,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('groupByProject', JSON.stringify(group))
   }
 
+  const setTheme = (newTheme: Theme) => {
+    setThemeState(newTheme)
+    localStorage.setItem('theme', JSON.stringify(newTheme))
+  }
+
+  const setKeyboardMode = (mode: KeyboardMode) => {
+    setKeyboardModeState(mode)
+    localStorage.setItem('keyboardMode', JSON.stringify(mode))
+  }
+
   return (
     <SettingsContext.Provider value={{
       showToolCalls,
@@ -95,6 +146,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setSortOrder,
       groupByProject,
       setGroupByProject,
+      theme,
+      setTheme,
+      effectiveTheme,
+      keyboardMode,
+      setKeyboardMode,
     }}>
       {children}
     </SettingsContext.Provider>

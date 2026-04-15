@@ -41,6 +41,30 @@ export function formatFullDate(date: string | Date): string {
   return format(d, 'PPpp')
 }
 
+/**
+ * Check if a message has any visible content (considering tool call visibility).
+ */
+export function messageHasVisibleContent(message: Message, showToolCalls: boolean): boolean {
+  if (message.text && message.text.trim()) {
+    // Check if it's only tool placeholders
+    if (!showToolCalls) {
+      const filtered = message.text
+        .replace(/```\s*\n?\s*This block is not supported on your current device yet\.\s*\n?\s*```/g, '')
+        .trim()
+      if (!filtered) return false
+    }
+    return true
+  }
+  if (message.content && message.content.length > 0) {
+    return message.content.some((block) => {
+      if (block.type === 'text' && block.text?.trim()) return true
+      if ((block.type === 'tool_use' || block.type === 'tool_result') && showToolCalls) return true
+      return false
+    })
+  }
+  return false
+}
+
 export function sanitizeFilename(name: string): string {
   return name
     .replace(/[<>:"/\\|?*]/g, '-')
@@ -112,6 +136,7 @@ export function conversationToMarkdown(
 ): string {
   const header = `# ${title}\n\n`
   const body = messages
+    .filter((msg) => messageHasVisibleContent(msg, showToolCalls))
     .map((msg) => messageToMarkdown(msg, showToolCalls))
     .join('\n\n---\n\n')
   return header + body

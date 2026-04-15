@@ -73,6 +73,7 @@ const ARROW_SHORTCUTS: Shortcut[] = [
 
 const GLOBAL_SHORTCUTS: Shortcut[] = [
   { keys: ['⌘', 'K'], description: 'Search in all messages' },
+  { keys: ['⌘', 'R'], description: 'Refresh conversations' },
   { keys: ['?'], description: 'Show this help' },
 ]
 

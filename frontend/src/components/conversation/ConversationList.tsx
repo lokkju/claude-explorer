@@ -27,7 +27,7 @@ export function ConversationList({
   const { uuid: selectedUuid } = useParams()
   const navigate = useNavigate()
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const { selectedIndex, setConversationIds, focusArea } = useKeyboardNavigation()
+  const { selectedIndex, setSelectedIndex, setConversationIds, focusArea, setFocusArea } = useKeyboardNavigation()
   const filters = {
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
@@ -48,6 +48,22 @@ export function ConversationList({
       setConversationIds(ids)
     }
   }, [conversations, setConversationIds])
+
+  // Sync selectedIndex with the currently viewed conversation (from URL)
+  // Only runs when the URL or conversation list changes, NOT when selectedIndex changes
+  // (otherwise it would override keyboard navigation)
+  useEffect(() => {
+    if (selectedUuid && conversations) {
+      const starred = conversations.filter((c) => c.is_starred)
+      const unstarred = conversations.filter((c) => !c.is_starred)
+      const orderedConversations = [...starred, ...unstarred]
+      const index = orderedConversations.findIndex((c) => c.uuid === selectedUuid)
+      if (index !== -1) {
+        setSelectedIndex(index)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUuid, conversations, setSelectedIndex])
 
   if (isLoading) {
     return <ConversationListSkeleton />
@@ -251,7 +267,7 @@ function ConversationListItem({
         className={cn(
           'flex w-full cursor-pointer flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800',
           isSelected && 'bg-zinc-100 dark:bg-zinc-800',
-          isKeyboardSelected && !isSelected && 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500'
+          isKeyboardSelected && 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500'
         )}
       >
         <div className="flex items-start gap-2">

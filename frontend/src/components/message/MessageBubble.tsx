@@ -3,14 +3,15 @@ import { User, Bot, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/contexts/SettingsContext'
-import { cn, formatMessageTimestamp, messageToMarkdown } from '@/lib/utils'
+import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import type { Message, ContentBlock } from '@/lib/types'
 
 interface MessageBubbleProps {
   message: Message
+  isKeyboardSelected?: boolean
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, isKeyboardSelected = false }: MessageBubbleProps) {
   const isHuman = message.sender === 'human'
   const { showToolCalls, expandAllTools } = useSettings()
   const [copied, setCopied] = useState(false)
@@ -20,6 +21,13 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     await navigator.clipboard.writeText(markdown)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  const hasVisibleContent = messageHasVisibleContent(message, showToolCalls)
+
+  // Don't render empty bubbles
+  if (!hasVisibleContent) {
+    return null
   }
 
   return (
@@ -45,10 +53,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       {/* Content */}
       <div
         className={cn(
-          'relative flex max-w-[80%] flex-col gap-2 rounded-lg px-4 py-3',
+          'relative flex max-w-[80%] flex-col gap-2 rounded-lg px-4 py-3 transition-all duration-150',
           isHuman
             ? 'bg-blue-50 dark:bg-blue-950'
-            : 'bg-zinc-100 dark:bg-zinc-800'
+            : 'bg-zinc-100 dark:bg-zinc-800',
+          isKeyboardSelected && 'ring-2 ring-blue-500 ring-offset-2 dark:ring-offset-zinc-900'
         )}
       >
         {/* Copy button - appears on hover */}

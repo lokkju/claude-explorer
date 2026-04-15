@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree } from 'lucide-react'
+import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { queryKeys } from '@/lib/queryClient'
@@ -17,6 +17,7 @@ import { ConversationList } from '@/components/conversation/ConversationList'
 import { FetchDialog } from '@/components/fetch/FetchDialog'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSettings } from '@/contexts/SettingsContext'
+import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import { cn } from '@/lib/utils'
 import type { SourceFilter, SortField } from '@/lib/types'
 
@@ -37,6 +38,7 @@ export function Sidebar({ className }: SidebarProps) {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const queryClient = useQueryClient()
   const { sourceFilter, setSourceFilter } = useSourceFilter()
+  const { focusArea, setFocusArea } = useKeyboardNavigation()
   const {
     showPhantomSessions,
     setShowPhantomSessions,
@@ -46,7 +48,19 @@ export function Sidebar({ className }: SidebarProps) {
     setSortOrder,
     groupByProject,
     setGroupByProject,
+    theme,
+    setTheme,
+    effectiveTheme,
   } = useSettings()
+
+  const cycleTheme = () => {
+    const themes = ['light', 'dark', 'system'] as const
+    const currentIndex = themes.indexOf(theme)
+    const nextIndex = (currentIndex + 1) % themes.length
+    setTheme(themes[nextIndex])
+  }
+
+  const ThemeIcon = theme === 'system' ? Monitor : effectiveTheme === 'dark' ? Moon : Sun
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -56,8 +70,10 @@ export function Sidebar({ className }: SidebarProps) {
 
   return (
     <aside
+      onClick={() => setFocusArea('list')}
       className={cn(
         'flex h-full w-80 flex-col border-r border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900',
+        focusArea === 'list' && 'ring-2 ring-inset ring-blue-500/50',
         className
       )}
     >
@@ -186,12 +202,23 @@ export function Sidebar({ className }: SidebarProps) {
 
       {/* Footer */}
       <div className="flex items-center justify-between border-t border-zinc-200 p-4 dark:border-zinc-800">
-        <Button variant="ghost" size="sm" asChild>
-          <Link to="/settings">
-            <Settings className="h-4 w-4" />
-            <span className="ml-2">Settings</span>
-          </Link>
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/settings">
+              <Settings className="h-4 w-4" />
+              <span className="ml-2">Settings</span>
+            </Link>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={cycleTheme}
+            title={`Theme: ${theme} (click to change)`}
+            className="h-8 w-8"
+          >
+            <ThemeIcon className="h-4 w-4" />
+          </Button>
+        </div>
         <div className="flex gap-1">
           <Button
             variant="ghost"
