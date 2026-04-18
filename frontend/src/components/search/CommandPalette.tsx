@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState, useRef, useMemo } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useLocation } from 'react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
-import { Search, FileText, MessageSquare, X } from 'lucide-react'
+import { Search, FileText, MessageSquare, X, Loader2 } from 'lucide-react'
 import { useSearch } from '@/hooks/useConversations'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
+import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
+import { queryKeys } from '@/lib/queryClient'
+import { api } from '@/lib/api'
 import { cn, formatDate } from '@/lib/utils'
 import type { SearchResult, MessageSnippet } from '@/lib/types'
 
@@ -18,10 +22,21 @@ interface SearchMatch {
 export function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [matchCounterVisible, setMatchCounterVisible] = useState(false)
+  const [isNavigating, setIsNavigating] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
+  const queryClient = useQueryClient()
   const { sourceFilter } = useSourceFilter()
+  const { setFocusArea, setSelectedMessageIndex, messages } = useKeyboardNavigation()
   const matchIndexRef = useRef(-1)
   const lastQueryRef = useRef('')
+  const counterTimerRef = useRef<ReturnType<typeof setTimeout>>()
+
+  const currentUuid = useMemo(() => {
+    const match = location.pathname.match(/\/conversations\/(.+)/)
+    return match?.[1]
+  }, [location.pathname])
 
   const { data: results, isLoading } = useSearch(query, sourceFilter)
 
@@ -44,7 +59,6 @@ export function CommandPalette() {
           })
         }
       } else {
-        // Title-only match — navigate to conversation without message highlight
         matches.push({
           conversationUuid: result.conversation_uuid,
           conversationName: result.conversation_name,
@@ -61,15 +75,102 @@ export function CommandPalette() {
     }
   }, [query])
 
-  // Navigate to a match — ConversationPage handles focus + message selection via highlight param
+  // Prefetch first 5 unique conversations when search results arrive
+  useEffect(() => {
+    if (!results) return
+    const seen = new Set<string>()
+    for (const result of results.slice(0, 5)) {
+      if (seen.has(result.conversation_uuid)) continue
+      seen.add(result.conversation_uuid)
+      queryClient.prefetchQuery({
+        queryKey: queryKeys.conversations.detail(result.conversation_uuid),
+        queryFn: () => api.getConversation(result.conversation_uuid),
+        staleTime: Infinity,
+      })
+    }
+  }, [results, queryClient])
+
+  // Prefetch conversations near the current match position
+  const prefetchNearby = useCallback(
+    (currentIdx: number) => {
+      for (let offset = 1; offset <= 2; offset++) {
+        for (const idx of [currentIdx + offset, currentIdx - offset]) {
+          if (idx >= 0 && idx < flatMatches.length) {
+            const uuid = flatMatches[idx].conversationUuid
+            if (!queryClient.getQueryData(queryKeys.conversations.detail(uuid))) {
+              queryClient.prefetchQuery({
+                queryKey: queryKeys.conversations.detail(uuid),
+                queryFn: () => api.getConversation(uuid),
+                staleTime: Infinity,
+              })
+            }
+          }
+        }
+      }
+    },
+    [flatMatches, queryClient]
+  )
+
+  // Show match counter briefly
+  const flashMatchCounter = useCallback(() => {
+    setMatchCounterVisible(true)
+    if (counterTimerRef.current) clearTimeout(counterTimerRef.current)
+    counterTimerRef.current = setTimeout(() => setMatchCounterVisible(false), 3000)
+  }, [])
+
+  // Navigate to a match — fast path for same-conversation, full navigate for cross-conversation
   const navigateToMatch = useCallback(
     (match: SearchMatch) => {
+      const isSameConversation = match.conversationUuid === currentUuid
+
+      if (isSameConversation && match.messageUuid) {
+        // Fast path: just scroll to the message, no URL navigation needed
+        const msgIdx = messages.findIndex((m) => m.uuid === match.messageUuid)
+        if (msgIdx !== -1) {
+          setSelectedMessageIndex(msgIdx)
+          setFocusArea('detail')
+          // Scroll the message into view
+          const element = document.querySelector(
+            `[data-message-uuid="${match.messageUuid}"]`
+          )
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            // Flash highlight
+            element.classList.add('ring-2', 'ring-yellow-400', 'ring-offset-2')
+            setTimeout(() => {
+              element.classList.remove('ring-2', 'ring-yellow-400', 'ring-offset-2')
+            }, 2000)
+          }
+          return
+        }
+      }
+
+      // Cross-conversation: check if cached
+      const isCached = !!queryClient.getQueryData(
+        queryKeys.conversations.detail(match.conversationUuid)
+      )
+      if (!isCached) {
+        setIsNavigating(true)
+      }
+
       navigate(
         `/conversations/${match.conversationUuid}${match.messageUuid ? `?highlight=${match.messageUuid}` : ''}`
       )
     },
-    [navigate]
+    [currentUuid, messages, setSelectedMessageIndex, setFocusArea, queryClient, navigate]
   )
+
+  // Clear navigating state when conversation loads
+  useEffect(() => {
+    if (isNavigating) {
+      const cached = queryClient.getQueryData(
+        queryKeys.conversations.detail(currentUuid || '')
+      )
+      if (cached) {
+        setIsNavigating(false)
+      }
+    }
+  }, [isNavigating, currentUuid, queryClient])
 
   // Cmd+K or Cmd+F to open, Cmd+G / Cmd+Shift+G to navigate matches
   useEffect(() => {
@@ -89,6 +190,8 @@ export function CommandPalette() {
         if (flatMatches.length > 0) {
           matchIndexRef.current = (matchIndexRef.current + 1) % flatMatches.length
           navigateToMatch(flatMatches[matchIndexRef.current])
+          prefetchNearby(matchIndexRef.current)
+          flashMatchCounter()
           setOpen(false)
         } else if (lastQueryRef.current) {
           setQuery(lastQueryRef.current)
@@ -104,6 +207,8 @@ export function CommandPalette() {
           matchIndexRef.current =
             (matchIndexRef.current - 1 + flatMatches.length) % flatMatches.length
           navigateToMatch(flatMatches[matchIndexRef.current])
+          prefetchNearby(matchIndexRef.current)
+          flashMatchCounter()
           setOpen(false)
         } else if (lastQueryRef.current) {
           setQuery(lastQueryRef.current)
@@ -114,11 +219,10 @@ export function CommandPalette() {
     }
     document.addEventListener('keydown', down)
     return () => document.removeEventListener('keydown', down)
-  }, [flatMatches, navigateToMatch])
+  }, [flatMatches, navigateToMatch, prefetchNearby, flashMatchCounter])
 
   const handleSelect = useCallback(
     (conversationUuid: string, messageUuid?: string) => {
-      // Find this match's index so Cmd+G continues from here
       const idx = flatMatches.findIndex(
         (m) =>
           m.conversationUuid === conversationUuid &&
@@ -136,90 +240,109 @@ export function CommandPalette() {
     setOpen(false)
   }, [])
 
-  if (!open) return null
+  // Match counter overlay (shown briefly after Cmd+G even when palette is closed)
+  const matchCounter =
+    !open && matchCounterVisible && flatMatches.length > 0 ? (
+      <div className="fixed right-4 top-4 z-50 flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+        {isNavigating && (
+          <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+        )}
+        <span className="text-zinc-600 dark:text-zinc-300">
+          Match {matchIndexRef.current + 1} of {flatMatches.length}
+        </span>
+        <span className="text-xs text-zinc-400">
+          ⌘G / ⌘⇧G
+        </span>
+      </div>
+    ) : null
+
+  if (!open) return matchCounter
 
   return (
-    <div className="fixed inset-0 z-50">
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/50"
-        onClick={handleClose}
-        aria-hidden="true"
-      />
+    <>
+      {matchCounter}
+      <div className="fixed inset-0 z-50">
+        {/* Backdrop */}
+        <div
+          className="fixed inset-0 bg-black/50"
+          onClick={handleClose}
+          aria-hidden="true"
+        />
 
-      {/* Dialog */}
-      <div className="fixed left-1/2 top-[20%] w-full max-w-2xl -translate-x-1/2">
-        <Command
-          className="rounded-lg border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
-          shouldFilter={false}
-        >
-          <div className="flex items-center border-b border-zinc-200 px-3 dark:border-zinc-800">
-            <Search className="mr-2 h-4 w-4 shrink-0 text-zinc-500" />
-            <Command.Input
-              value={query}
-              onValueChange={setQuery}
-              placeholder="Search messages..."
-              className="flex h-12 w-full bg-transparent py-3 text-sm outline-none placeholder:text-zinc-500 dark:placeholder:text-zinc-400"
-              autoFocus
-            />
-            <button
-              onClick={handleClose}
-              className="ml-2 rounded p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-            >
-              <X className="h-4 w-4 text-zinc-500" />
-            </button>
-          </div>
-
-          <Command.List className="max-h-[400px] overflow-y-auto p-2">
-            {query.length < 2 && (
-              <Command.Empty className="py-6 text-center text-sm text-zinc-500">
-                Type at least 2 characters to search...
-              </Command.Empty>
-            )}
-
-            {query.length >= 2 && isLoading && (
-              <div className="py-6 text-center text-sm text-zinc-500">
-                Searching...
-              </div>
-            )}
-
-            {query.length >= 2 && !isLoading && results?.length === 0 && (
-              <Command.Empty className="py-6 text-center text-sm text-zinc-500">
-                No results found.
-              </Command.Empty>
-            )}
-
-            {results?.map((result) => (
-              <SearchResultItem
-                key={result.conversation_uuid}
-                result={result}
-                query={query}
-                onSelect={handleSelect}
+        {/* Dialog */}
+        <div className="fixed left-1/2 top-[20%] w-full max-w-2xl -translate-x-1/2">
+          <Command
+            className="rounded-lg border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+            shouldFilter={false}
+          >
+            <div className="flex items-center border-b border-zinc-200 px-3 dark:border-zinc-800">
+              <Search className="mr-2 h-4 w-4 shrink-0 text-zinc-500" />
+              <Command.Input
+                value={query}
+                onValueChange={setQuery}
+                placeholder="Search messages..."
+                className="flex h-12 w-full bg-transparent py-3 text-sm outline-none placeholder:text-zinc-500 dark:placeholder:text-zinc-400"
+                autoFocus
               />
-            ))}
-          </Command.List>
+              <button
+                onClick={handleClose}
+                className="ml-2 rounded p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                <X className="h-4 w-4 text-zinc-500" />
+              </button>
+            </div>
 
-          <div className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800">
-            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
-              Enter
-            </kbd>{' '}
-            to select{' · '}
-            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
-              ⌘G
-            </kbd>{' '}
-            next match{' · '}
-            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
-              ⌘⇧G
-            </kbd>{' '}
-            prev{' · '}
-            <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
-              Esc
-            </kbd>{' '}
-            to close
-          </div>
-        </Command>
+            <Command.List className="max-h-[400px] overflow-y-auto p-2">
+              {query.length < 2 && (
+                <Command.Empty className="py-6 text-center text-sm text-zinc-500">
+                  Type at least 2 characters to search...
+                </Command.Empty>
+              )}
+
+              {query.length >= 2 && isLoading && (
+                <div className="py-6 text-center text-sm text-zinc-500">
+                  Searching...
+                </div>
+              )}
+
+              {query.length >= 2 && !isLoading && results?.length === 0 && (
+                <Command.Empty className="py-6 text-center text-sm text-zinc-500">
+                  No results found.
+                </Command.Empty>
+              )}
+
+              {results?.map((result) => (
+                <SearchResultItem
+                  key={result.conversation_uuid}
+                  result={result}
+                  query={query}
+                  onSelect={handleSelect}
+                />
+              ))}
+            </Command.List>
+
+            <div className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800">
+              <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
+                Enter
+              </kbd>{' '}
+              to select{' · '}
+              <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
+                ⌘G
+              </kbd>{' '}
+              next match{' · '}
+              <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
+                ⌘⇧G
+              </kbd>{' '}
+              prev{' · '}
+              <kbd className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono dark:bg-zinc-800">
+                Esc
+              </kbd>{' '}
+              to close
+            </div>
+          </Command>
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 
@@ -237,7 +360,6 @@ function SearchResultItem({ result, query, onSelect }: SearchResultItemProps) {
     (m) => m.message_uuid !== 'title'
   )
 
-  // Get the first message match to use when clicking on the header
   const firstMessageUuid = messageMatches[0]?.message_uuid
 
   return (
@@ -246,7 +368,6 @@ function SearchResultItem({ result, query, onSelect }: SearchResultItemProps) {
       onSelect={() => onSelect(result.conversation_uuid, firstMessageUuid)}
       className="flex cursor-pointer flex-col gap-2 rounded-md px-3 py-2 hover:bg-zinc-100 aria-selected:bg-zinc-100 dark:hover:bg-zinc-800 dark:aria-selected:bg-zinc-800"
     >
-      {/* Conversation header */}
       <div className="flex items-center gap-2">
         <FileText className="h-4 w-4 text-zinc-400" />
         <span className="flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
@@ -261,7 +382,6 @@ function SearchResultItem({ result, query, onSelect }: SearchResultItemProps) {
         </span>
       </div>
 
-      {/* Message snippets */}
       {messageMatches.slice(0, 3).map((snippet, idx) => (
         <SnippetPreview
           key={idx}
