@@ -99,11 +99,20 @@ def _parse_message(raw: dict[str, Any]) -> Message:
 def resolve_active_branch(
     messages: list[dict[str, Any]], leaf_uuid: str
 ) -> list[dict[str, Any]]:
-    """Resolve the active branch by walking from leaf to root."""
+    """Resolve the active branch by walking from leaf to root.
+
+    Handles circular references in parent chain by tracking visited nodes.
+    """
     by_uuid = {m["uuid"]: m for m in messages}
     branch = []
+    visited: set[str] = set()
     current = by_uuid.get(leaf_uuid)
     while current:
+        uuid = current["uuid"]
+        if uuid in visited:
+            # Circular reference detected - stop here
+            break
+        visited.add(uuid)
         branch.append(current)
         parent_uuid = current.get("parent_message_uuid")
         current = by_uuid.get(parent_uuid) if parent_uuid else None
@@ -120,25 +129,66 @@ def has_branches(messages: list[dict[str, Any]]) -> bool:
 
 
 def build_message_tree(messages: list[dict[str, Any]]) -> list[MessageNode]:
-    """Build the full message tree from flat message list."""
-    children_map: dict[str | None, list[dict[str, Any]]] = {}
+    """Build the full message tree from flat message list.
+
+    Uses iterative BFS approach to handle conversations with thousands of messages
+    without hitting Python's recursion limit. Handles circular references safely.
+    """
+    if not messages:
+        return []
+
+    # Build parent->children map
+    children_map: dict[str | None, list[str]] = {}
+    msg_by_uuid: dict[str, dict[str, Any]] = {}
 
     for msg in messages:
+        uuid = msg["uuid"]
         parent = msg.get("parent_message_uuid")
+        msg_by_uuid[uuid] = msg
         if parent not in children_map:
             children_map[parent] = []
-        children_map[parent].append(msg)
+        children_map[parent].append(uuid)
 
-    def build_node(msg: dict[str, Any]) -> MessageNode:
-        child_msgs = children_map.get(msg["uuid"], [])
-        return MessageNode(
-            message=_parse_message(msg),
-            children=[build_node(c) for c in child_msgs],
+    # Track which nodes have been added to the tree to prevent cycles
+    in_tree: set[str] = set()
+    nodes: dict[str, MessageNode] = {}
+
+    # BFS from root nodes
+    root_uuids = children_map.get(None, [])
+    queue: list[str] = list(root_uuids)
+    root_nodes: list[MessageNode] = []
+
+    while queue:
+        uuid = queue.pop(0)
+        if uuid in in_tree:
+            # Skip - already processed (prevents cycles)
+            continue
+        if uuid not in msg_by_uuid:
+            continue
+
+        in_tree.add(uuid)
+
+        # Create node
+        node = MessageNode(
+            message=_parse_message(msg_by_uuid[uuid]),
+            children=[],
         )
+        nodes[uuid] = node
 
-    # Root messages are those with no parent
-    root_msgs = children_map.get(None, [])
-    return [build_node(m) for m in root_msgs]
+        # If this is a root node, add to root list
+        parent_uuid = msg_by_uuid[uuid].get("parent_message_uuid")
+        if parent_uuid is None:
+            root_nodes.append(node)
+        elif parent_uuid in nodes:
+            # Add as child of parent
+            nodes[parent_uuid].children.append(node)
+
+        # Queue children for processing
+        for child_uuid in children_map.get(uuid, []):
+            if child_uuid not in in_tree:
+                queue.append(child_uuid)
+
+    return root_nodes
 
 
 class ConversationStore:
@@ -162,7 +212,7 @@ class ConversationStore:
         except (json.JSONDecodeError, OSError):
             return None
 
-    def _make_summary(self, data: dict[str, Any]) -> ConversationSummary:
+    def _make_summary(self, data: dict[str, Any], include_subagents: bool = False) -> ConversationSummary:
         """Create a ConversationSummary from raw conversation data."""
         chat_messages = data.get("chat_messages", [])
         # Use pre-computed counts if available (from fast reader), else calculate
@@ -173,18 +223,19 @@ class ConversationStore:
             message_count = data.get("message_count", 0)
             human_count = data.get("human_message_count", 0)
 
-        # Parse subagents if present
+        # Parse subagents if requested
         subagents = []
-        for agent_data in data.get("subagents", []):
-            subagents.append(SubagentSummary(
-                uuid=agent_data.get("uuid", ""),
-                agent_id=agent_data.get("agent_id", ""),
-                name=agent_data.get("name", ""),
-                model=agent_data.get("model", ""),
-                created_at=_parse_datetime(agent_data.get("created_at")),
-                updated_at=_parse_datetime(agent_data.get("updated_at")),
-                message_count=agent_data.get("message_count", 0),
-            ))
+        if include_subagents:
+            for agent_data in data.get("subagents", []):
+                subagents.append(SubagentSummary(
+                    uuid=agent_data.get("uuid", ""),
+                    agent_id=agent_data.get("agent_id", ""),
+                    name=agent_data.get("name", ""),
+                    model=agent_data.get("model", ""),
+                    created_at=_parse_datetime(agent_data.get("created_at")),
+                    updated_at=_parse_datetime(agent_data.get("updated_at")),
+                    message_count=agent_data.get("message_count", 0),
+                ))
 
         return ConversationSummary(
             uuid=data.get("uuid", ""),
@@ -261,6 +312,7 @@ class ConversationStore:
         sort: str = "updated_at",
         sort_order: Literal["asc", "desc"] = "desc",
         include_phantom: bool = False,
+        include_subagents: bool = False,
     ) -> list[ConversationSummary]:
         """List all conversations with optional filtering."""
         conversations = []
@@ -279,7 +331,7 @@ class ConversationStore:
                 if not (name_match or summary_match or project_match):
                     continue
 
-            conversations.append(self._make_summary(data))
+            conversations.append(self._make_summary(data, include_subagents=include_subagents))
 
         # Sort
         reverse = sort_order == "desc"

@@ -2,6 +2,18 @@
 
 A tool to extract, browse, search, and export your Claude conversation history — even if you've lost access to the email address on your account.
 
+## Features
+
+- **Browse conversations** from both Claude Desktop and Claude Code
+- **Full-text search** across all messages with instant results
+- **Export** to Markdown or PDF
+- **Dark mode** with automatic system preference detection
+- **Keyboard navigation** with Emacs and Vim modes
+- **Message tree visualization** for branched conversations
+- **Command palette** (Cmd+K) for quick navigation
+- **Claude Code integration** with project grouping and subagent display
+- **MCP server** exposing your saved sessions to Claude Desktop and Claude Code
+
 ---
 
 ## Background
@@ -248,6 +260,182 @@ DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --reload
 cd frontend && npm run dev
 ```
 Then open `http://localhost:5173`.
+
+---
+
+## MCP Server
+
+The project ships with a built-in **Model Context Protocol** server that lets Claude Desktop or Claude Code query your saved conversations directly. Once configured, you can ask Claude things like *"find the session where I debugged the weasyprint install"* or *"export the ZFS conversation I had last week as markdown"* and Claude will use the tools below to answer.
+
+### Tools exposed
+
+| Tool | Purpose |
+|------|---------|
+| `list_sessions` | Full-text search / list conversation sessions, optionally filtered by source or project |
+| `list_projects` | List distinct projects with session counts |
+| `get_session_outline` | Lightweight per-message summaries (cached in SQLite) for a specific session |
+| `get_messages` | Full message content for specific positions or UUIDs, with optional tool calls/results |
+| `export_session` | Markdown export of a full or partial session |
+
+The server runs over **stdio** (no network port) and reads from the same `~/.claude-exporter/conversations/` directory the web UI uses.
+
+### Prerequisites
+
+Make sure the project is installed and conversations have been fetched at least once:
+
+```bash
+cd /path/to/claude-desktop-message-exporter
+uv sync
+uv run claude-exporter capture   # one-time
+uv run claude-exporter fetch
+```
+
+The MCP entry point is `claude-exporter mcp`. You can verify it works standalone:
+
+```bash
+uv run --directory /path/to/claude-desktop-message-exporter claude-exporter mcp
+# (prints nothing; it's waiting for MCP JSON-RPC on stdin — Ctrl+C to exit)
+```
+
+### Claude Code setup (all platforms)
+
+The simplest path is the `claude mcp add` CLI, which writes the config for you:
+
+```bash
+claude mcp add claude-sessions \
+  -- uv run --directory /absolute/path/to/claude-desktop-message-exporter claude-exporter mcp
+```
+
+Use `--scope user` to make it available in every project, or `--scope project` (default) to scope it to the current repo (writes to `.mcp.json`).
+
+Verify with:
+
+```bash
+claude mcp list
+```
+
+Or edit the config files directly:
+
+- **User scope:** `~/.claude.json` (key: `mcpServers`)
+- **Project scope:** `.mcp.json` in the project root
+
+```json
+{
+  "mcpServers": {
+    "claude-sessions": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/claude-desktop-message-exporter",
+        "claude-exporter",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+> **Note:** Use the **absolute path** to the repo. MCP clients do not inherit your shell's `cwd`. If `uv` is not on the default `PATH` the client sees, replace `"uv"` with the absolute path from `which uv` (typically `~/.local/bin/uv` or `/opt/homebrew/bin/uv`).
+
+### Claude Desktop setup
+
+Claude Desktop reads from a `claude_desktop_config.json` file whose location depends on the OS. Create or edit it and add the `claude-sessions` entry under `mcpServers`, then fully quit and relaunch Claude Desktop.
+
+#### macOS
+
+Config path:
+```
+~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+```json
+{
+  "mcpServers": {
+    "claude-sessions": {
+      "command": "/opt/homebrew/bin/uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/YOU/Source/claude-desktop-message-exporter",
+        "claude-exporter",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+If you installed `uv` via the standalone installer instead of Homebrew, it will be at `~/.local/bin/uv`. Use `which uv` to confirm.
+
+#### Windows
+
+Config path:
+```
+%APPDATA%\Claude\claude_desktop_config.json
+```
+(typically `C:\Users\YOU\AppData\Roaming\Claude\claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "claude-sessions": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "C:\\Users\\YOU\\Source\\claude-desktop-message-exporter",
+        "claude-exporter",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+Use double-backslashes (`\\`) in JSON string paths. If `uv` is not on the system `PATH` as seen by Claude Desktop, use its absolute path (e.g. `C:\\Users\\YOU\\.local\\bin\\uv.exe`).
+
+#### Linux
+
+Config path:
+```
+~/.config/Claude/claude_desktop_config.json
+```
+
+```json
+{
+  "mcpServers": {
+    "claude-sessions": {
+      "command": "/home/YOU/.local/bin/uv",
+      "args": [
+        "run",
+        "--directory",
+        "/home/YOU/Source/claude-desktop-message-exporter",
+        "claude-exporter",
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+### Verifying it works
+
+After restarting your client, ask it to search your history, e.g.:
+
+> *"Use the claude-sessions MCP server to list my 5 most recent sessions."*
+
+In Claude Code you can also run `/mcp` to see the server status and the list of tools it registered.
+
+### Troubleshooting
+
+- **"command not found: uv"** — the MCP client doesn't see your shell `PATH`. Use the absolute path to `uv` in `command`.
+- **"Session not found" / empty results** — run `uv run claude-exporter fetch` first; the MCP server reads from `~/.claude-exporter/conversations/`.
+- **Need to use a non-default data dir** — set `CLAUDE_EXPORTER_DATA_DIR` via an `env` block in the MCP config:
+  ```json
+  "env": { "CLAUDE_EXPORTER_DATA_DIR": "/path/to/conversations" }
+  ```
+- **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-exporter/cache.db`. Delete that file to force a full rebuild.
 
 ---
 

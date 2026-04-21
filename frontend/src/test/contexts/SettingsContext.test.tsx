@@ -139,13 +139,13 @@ describe('SettingsContext', () => {
     it('provides showToolCalls setting', () => {
       const { result } = renderHook(() => useSettings(), { wrapper });
 
-      expect(result.current.showToolCalls).toBe(true);
+      expect(result.current.showToolCalls).toBe(false);
 
       act(() => {
-        result.current.setShowToolCalls(false);
+        result.current.setShowToolCalls(true);
       });
 
-      expect(result.current.showToolCalls).toBe(false);
+      expect(result.current.showToolCalls).toBe(true);
     });
 
     it('provides sort field and order settings', () => {

@@ -236,6 +236,20 @@ def _capture_via_proxy(port: int):
 
 
 @main.command()
+def mcp():
+    """Start the MCP server (stdio transport).
+
+    Exposes conversation sessions as MCP tools for use with
+    Claude Desktop, Claude Code, or any MCP-compatible client.
+
+    Configure in claude_desktop_config.json or .claude.json.
+    """
+    from mcp_server.server import main as mcp_main
+
+    mcp_main()
+
+
+@main.command()
 @click.option("--host", default="127.0.0.1", help="Host to bind to")
 @click.option("--port", default=8000, help="Port to bind to")
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")

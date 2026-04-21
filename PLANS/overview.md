@@ -258,6 +258,32 @@ claude-desktop-message-exporter/
 
 ---
 
+## Known Gaps / Follow-up Work
+
+### Toast notifications — wire the call sites
+
+**Status:** infrastructure only. `sonner ^2.0.7` is installed, `<Toaster position="bottom-right" />` is mounted at `frontend/src/App.tsx:58`, but a grep for `toast\.` across `frontend/src` finds zero call sites. The library is loaded into the bundle but never fires.
+
+**Fix:** add `toast.success(...)` / `toast.error(...)` calls at the user-facing action points the Phase 4 plan already specified (see [frontend.md](./frontend.md) — "Toast Notifications" section and Phase 4b Polish):
+
+- **Success**
+  - [ ] Conversation exported to Markdown — `ExportMenu.tsx`
+  - [ ] Conversation exported to PDF — `ExportMenu.tsx`
+  - [ ] "Copy as Markdown" clipboard action — `ExportMenu.tsx`
+  - [ ] CMD-C copy-cell action in conversation pane
+  - [ ] Fetcher refresh finished — refresh button in `SidebarHeader`
+  - [ ] Bulk zip export finished — `ExportAllButton`
+- **Error**
+  - [ ] API failures from TanStack Query `onError` (global query client handler)
+  - [ ] Export failures (Markdown / PDF / zip)
+  - [ ] Fetcher failures surfaced from the refresh endpoint
+- **Info**
+  - [ ] Fetcher started (so the user knows the long-running action is live)
+
+**Acceptance:** every action on the Success and Error lists above fires a visible toast; an end-to-end Playwright test covers at least one Success and one Error path.
+
+---
+
 ## Key Open Questions
 
 1. **Session key auto-extraction**: The mitmproxy addon can watch for `Cookie` headers

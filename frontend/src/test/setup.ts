@@ -11,6 +11,24 @@ class ResizeObserverMock {
 }
 globalThis.ResizeObserver = ResizeObserverMock;
 
+// Mock matchMedia for theme detection
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }),
+});
+
+// Mock scrollIntoView for keyboard navigation
+Element.prototype.scrollIntoView = () => {};
+
 // Start MSW server before all tests
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 

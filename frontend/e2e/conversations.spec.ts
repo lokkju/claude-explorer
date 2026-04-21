@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { waitForConnection } from './test-utils';
 
 test.describe('Conversation Browser', () => {
   test('loads and displays conversation list', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Should show the app header
     await expect(page.getByText('Claude Explorer')).toBeVisible();
@@ -11,16 +13,18 @@ test.describe('Conversation Browser', () => {
     await expect(page.getByPlaceholder('Search titles...')).toBeVisible();
 
     // Should load and display conversations (may have "Starred" section)
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    // Look for conversation items containing message counts
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
   });
 
   test('displays starred conversations at top', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Wait for conversations to load
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
 
@@ -29,7 +33,7 @@ test.describe('Conversation Browser', () => {
     if (await starredSection.isVisible()) {
       // Starred section should be above regular conversations
       const starredY = await starredSection.boundingBox();
-      const firstConvButton = page.locator('button').filter({ hasText: /msgs$/ }).first();
+      const firstConvButton = page.getByRole('button', { name: /\d+ msgs/ }).first();
       const firstConvY = await firstConvButton.boundingBox();
 
       if (starredY && firstConvY) {
@@ -40,14 +44,15 @@ test.describe('Conversation Browser', () => {
 
   test('filters conversations with search', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Wait for conversations to load
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
 
     // Get initial count
-    const initialCount = await page.locator('button').filter({ hasText: /msgs$/ }).count();
+    const initialCount = await page.getByRole('button', { name: /\d+ msgs/ }).count();
 
     // Search for something specific
     const searchInput = page.getByPlaceholder('Search titles...');
@@ -57,7 +62,7 @@ test.describe('Conversation Browser', () => {
     await page.waitForTimeout(500);
 
     // Count should be different (filtered)
-    const filteredCount = await page.locator('button').filter({ hasText: /msgs$/ }).count();
+    const filteredCount = await page.getByRole('button', { name: /\d+ msgs/ }).count();
 
     // Either filtered count is less, or no results message appears
     const noResults = page.getByText('No conversations found');
@@ -70,14 +75,15 @@ test.describe('Conversation Browser', () => {
 
   test('selects and displays conversation detail', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Wait for conversations to load
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
 
     // Click on first conversation
-    const firstConversation = page.locator('button').filter({ hasText: /msgs$/ }).first();
+    const firstConversation = page.getByRole('button', { name: /\d+ msgs/ }).first();
     const conversationName = await firstConversation.locator('span.truncate').textContent();
     await firstConversation.click();
 
@@ -99,14 +105,15 @@ test.describe('Conversation Browser', () => {
 
   test('URL updates when selecting conversation', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Wait for conversations to load
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
 
     // Click on a conversation
-    await page.locator('button').filter({ hasText: /msgs$/ }).first().click();
+    await page.getByRole('button', { name: /\d+ msgs/ }).first().click();
 
     // URL should include /conversations/uuid
     await expect(page).toHaveURL(/\/conversations\/[a-f0-9-]+/);
@@ -114,6 +121,7 @@ test.describe('Conversation Browser', () => {
 
   test('shows empty state when no conversation selected', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Should show "Select a conversation" message
     await expect(page.getByText('Select a conversation')).toBeVisible();
@@ -123,12 +131,13 @@ test.describe('Conversation Browser', () => {
 test.describe('Conversation Detail', () => {
   test('displays human and assistant messages', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Wait and click on first conversation
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
-    await page.locator('button').filter({ hasText: /msgs$/ }).first().click();
+    await page.getByRole('button', { name: /\d+ msgs/ }).first().click();
 
     // Wait for conversation to load
     await page.waitForSelector('text=/^(You|Claude)$/');
@@ -140,12 +149,13 @@ test.describe('Conversation Detail', () => {
 
   test('renders markdown in messages', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Select a conversation
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
-    await page.locator('button').filter({ hasText: /msgs$/ }).first().click();
+    await page.getByRole('button', { name: /\d+ msgs/ }).first().click();
 
     // Wait for messages
     await page.waitForSelector('text=/^(You|Claude)$/');
@@ -157,14 +167,15 @@ test.describe('Conversation Detail', () => {
 
   test('tool blocks are collapsible', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Select a conversation that might have tool blocks
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
 
     // Find a conversation with tool blocks (look for one with more messages)
-    const conversations = page.locator('button').filter({ hasText: /msgs$/ });
+    const conversations = page.getByRole('button', { name: /\d+ msgs/ });
     const count = await conversations.count();
 
     for (let i = 0; i < Math.min(count, 5); i++) {
@@ -188,12 +199,13 @@ test.describe('Conversation Detail', () => {
 test.describe('Export Functionality', () => {
   test('can export conversation as Markdown', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Select a conversation
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
-    await page.locator('button').filter({ hasText: /msgs$/ }).first().click();
+    await page.getByRole('button', { name: /\d+ msgs/ }).first().click();
 
     // Wait for export button
     const markdownBtn = page.getByRole('button', { name: 'Markdown', exact: true });
@@ -214,12 +226,13 @@ test.describe('Export Functionality', () => {
 
   test('can export conversation as PDF', async ({ page }) => {
     await page.goto('/');
+    await waitForConnection(page);
 
     // Select a conversation
-    await expect(page.locator('button').filter({ hasText: /msgs$/ }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
-    await page.locator('button').filter({ hasText: /msgs$/ }).first().click();
+    await page.getByRole('button', { name: /\d+ msgs/ }).first().click();
 
     // Wait for export button
     const pdfBtn = page.getByRole('button', { name: 'PDF', exact: true });

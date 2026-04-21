@@ -32,6 +32,9 @@ async def list_conversations(
     include_phantom: bool = Query(
         False, description="Include phantom sessions (local command artifacts)"
     ),
+    include_subagents: bool = Query(
+        False, description="Include subagent session details in response"
+    ),
 ) -> list[ConversationSummary]:
     """List all conversations with optional filtering."""
     store = get_store()
@@ -43,6 +46,7 @@ async def list_conversations(
         sort=sort,
         sort_order=sort_order,
         include_phantom=include_phantom,
+        include_subagents=include_subagents,
     )
 
 
@@ -60,7 +64,13 @@ async def get_conversation(uuid: str) -> ConversationDetail:
 async def get_conversation_tree(uuid: str) -> ConversationTree:
     """Get the full message tree for a conversation."""
     store = get_store()
-    tree = store.get_conversation_tree(uuid)
-    if not tree:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return tree
+    try:
+        tree = store.get_conversation_tree(uuid)
+        if not tree:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return tree
+    except RecursionError:
+        raise HTTPException(
+            status_code=422,
+            detail="Conversation has too many messages for tree visualization"
+        )

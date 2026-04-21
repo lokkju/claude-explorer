@@ -13,13 +13,14 @@ dependencies = [
     "orjson>=3.10",
     "playwright>=1.40",
     "mitmproxy>=10.0",
+    "fastmcp>=3.0",
 ]
 
 [project.scripts]
 claude-exporter = "fetcher.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["fetcher*", "backend*"]
+include = ["fetcher*", "backend*", "mcp_server*"]
 
 [project.optional-dependencies]
 dev = [

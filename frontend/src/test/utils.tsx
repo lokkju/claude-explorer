@@ -3,6 +3,8 @@ import { render, type RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router';
 import { SettingsProvider } from '../contexts/SettingsContext';
+import { SourceFilterProvider } from '../contexts/SourceFilterContext';
+import { KeyboardNavigationProvider } from '../contexts/KeyboardNavigationContext';
 
 // Create a fresh QueryClient for each test
 function createTestQueryClient() {
@@ -27,7 +29,13 @@ function AllProviders({ children }: WrapperProps) {
   return (
     <QueryClientProvider client={queryClient}>
       <SettingsProvider>
-        <BrowserRouter>{children}</BrowserRouter>
+        <SourceFilterProvider>
+          <BrowserRouter>
+            <KeyboardNavigationProvider>
+              {children}
+            </KeyboardNavigationProvider>
+          </BrowserRouter>
+        </SourceFilterProvider>
       </SettingsProvider>
     </QueryClientProvider>
   );
