@@ -1,6 +1,10 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 
-export type FocusArea = 'list' | 'detail' | 'none'
+export type FocusArea = 'list' | 'detail' | 'search' | 'none'
+
+// Which pane initiated the most recent navigation into the detail view.
+// Used by the Escape handler to return focus to the correct sidebar.
+export type NavSource = 'list' | 'search'
 
 export interface MessageInfo {
   uuid: string
@@ -17,6 +21,9 @@ interface KeyboardNavigationContextType {
   // Which area has focus
   focusArea: FocusArea
   setFocusArea: (area: FocusArea) => void
+  // Source of the most recent navigation to the detail pane
+  navSource: NavSource
+  setNavSource: (source: NavSource) => void
   // Help modal visibility
   isHelpOpen: boolean
   setIsHelpOpen: (open: boolean) => void
@@ -56,6 +63,7 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [conversationIds, setConversationIds] = useState<string[]>([])
   const [focusArea, setFocusArea] = useState<FocusArea>('list')
+  const [navSource, setNavSource] = useState<NavSource>('list')
   const [isHelpOpen, setIsHelpOpen] = useState(false)
 
   // Message navigation state
@@ -167,6 +175,8 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
         setConversationIds,
         focusArea,
         setFocusArea,
+        navSource,
+        setNavSource,
         isHelpOpen,
         setIsHelpOpen,
         selectNext,

@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router'
 import { Sidebar } from './Sidebar'
+import { SearchPanel } from '@/components/search/SearchPanel'
 
 export function RootLayout() {
   return (
@@ -8,6 +9,7 @@ export function RootLayout() {
       <main className="flex-1 overflow-hidden">
         <Outlet />
       </main>
+      <SearchPanel />
     </div>
   )
 }

@@ -144,6 +144,13 @@ def build_message_tree(messages: list[dict[str, Any]]) -> list[MessageNode]:
     for msg in messages:
         uuid = msg["uuid"]
         parent = msg.get("parent_message_uuid")
+        # Detect and break self-referential parent links. A message that claims
+        # its own UUID as its parent would produce a MessageNode that contains
+        # itself in its children list, causing a Pydantic serialization cycle
+        # (PydanticSerializationError: Circular reference detected). Treat the
+        # node as a root instead.
+        if parent == uuid:
+            parent = None
         msg_by_uuid[uuid] = msg
         if parent not in children_map:
             children_map[parent] = []
@@ -177,7 +184,13 @@ def build_message_tree(messages: list[dict[str, Any]]) -> list[MessageNode]:
 
         # If this is a root node, add to root list
         parent_uuid = msg_by_uuid[uuid].get("parent_message_uuid")
-        if parent_uuid is None:
+        if parent_uuid is None or parent_uuid == uuid:
+            # parent_uuid == uuid: self-loop guard. This can occur when a later
+            # raw record for the same UUID overwrites msg_by_uuid after
+            # children_map was already built, restoring a self-referential
+            # parent link that the children_map construction pass already
+            # cleared. Treat as a root to avoid appending this node as its own
+            # child, which would create a Python object cycle.
             root_nodes.append(node)
         elif parent_uuid in nodes:
             # Add as child of parent

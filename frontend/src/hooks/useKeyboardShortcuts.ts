@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
+import { useSearchPanel } from '@/contexts/SearchPanelContext'
 import { queryKeys } from '@/lib/queryClient'
 import { messageToMarkdown } from '@/lib/utils'
 import type { ConversationDetail } from '@/lib/types'
@@ -16,6 +17,15 @@ function isInputElement(target: EventTarget | null): boolean {
     tagName === 'select' ||
     target.isContentEditable
   )
+}
+
+// Inputs that opt-in to letting specific global shortcuts (Cmd+K, Cmd+F,
+// Cmd+G, Cmd+Shift+G, Escape) still fire even while they hold focus.
+// The SearchPanel input sets this attribute so typing in it doesn't block
+// its own navigation shortcuts.
+function allowsShortcuts(target: EventTarget | null): boolean {
+  if (!target || !(target instanceof HTMLElement)) return false
+  return target.closest('[data-allow-shortcuts]') !== null
 }
 
 export function useKeyboardShortcuts() {
@@ -36,6 +46,8 @@ export function useKeyboardShortcuts() {
     setIsHelpOpen,
     focusArea,
     setFocusArea,
+    navSource,
+    setNavSource,
     selectNextMessage,
     selectPreviousMessage,
     selectFirstMessage,
@@ -49,6 +61,7 @@ export function useKeyboardShortcuts() {
     setSelectedMessageIndex,
     getSelectedMessageId,
   } = useKeyboardNavigation()
+  const searchPanel = useSearchPanel()
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -91,12 +104,71 @@ export function useKeyboardShortcuts() {
       }
 
       // Tab switches between panes (universal)
+      // Tab only rotates between 'list' and 'detail' — never selects 'search'
+      // (the search panel has its own Cmd+K trigger). If focusArea is 'search',
+      // Tab jumps to 'list'.
       if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         if (!isInputElement(e.target) && currentUuid) {
           e.preventDefault()
-          setFocusArea(focusArea === 'list' ? 'detail' : 'list')
+          if (focusArea === 'search' || focusArea === 'none') {
+            setFocusArea('list')
+          } else {
+            setFocusArea(focusArea === 'list' ? 'detail' : 'list')
+          }
           return
         }
+      }
+
+      // === SearchPanel shortcuts ===
+      // These run BEFORE the blanket isInputElement guard so they still work
+      // while the SearchPanel's own input is focused. The Cmd/Ctrl-modified
+      // shortcuts are safe in any input; Escape is allowed through only when
+      // the SearchPanel itself is open (or when the focused input opts in via
+      // data-allow-shortcuts).
+
+      // Cmd+K or Cmd+F: toggle the SearchPanel
+      if (cmdOrCtrl && (e.key === 'k' || e.key === 'f') && !e.altKey && !e.shiftKey) {
+        e.preventDefault()
+        searchPanel.toggle()
+        return
+      }
+
+      // Cmd+Shift+G: previous match (check before Cmd+G since both match 'g')
+      if (cmdOrCtrl && e.key === 'g' && e.shiftKey && !e.altKey) {
+        e.preventDefault()
+        if (!searchPanel.isOpen) {
+          searchPanel.open()
+        }
+        searchPanel.prevMatch()
+        return
+      }
+
+      // Cmd+G: next match
+      if (cmdOrCtrl && e.key === 'g' && !e.shiftKey && !e.altKey) {
+        e.preventDefault()
+        if (!searchPanel.isOpen) {
+          searchPanel.open()
+        }
+        searchPanel.nextMatch()
+        return
+      }
+
+      // Escape cascade: only intercept when the SearchPanel is open AND
+      // focus is either outside an input or inside one that opts in
+      // (the SearchPanel's own input). This preserves existing Escape
+      // behaviors (detail -> list, modal dismissal) when the panel is closed.
+      if (
+        e.key === 'Escape' &&
+        searchPanel.isOpen &&
+        (!isInputElement(e.target) || allowsShortcuts(e.target))
+      ) {
+        e.preventDefault()
+        if (searchPanel.query !== '') {
+          searchPanel.setQuery('')
+        } else {
+          searchPanel.close()
+        }
+        return
       }
 
       // Ignore events in input fields
@@ -121,6 +193,7 @@ export function useKeyboardShortcuts() {
         e.preventDefault()
         const id = getSelectedId()
         if (id) {
+          setNavSource('list')
           navigate(`/conversations/${id}`)
           setFocusArea('detail')
           setSelectedMessageIndex(0)
@@ -138,6 +211,7 @@ export function useKeyboardShortcuts() {
         e.preventDefault()
         const id = getSelectedId()
         if (id) {
+          setNavSource('list')
           navigate(`/conversations/${id}`)
           setFocusArea('detail')
           setSelectedMessageIndex(0)
@@ -145,10 +219,15 @@ export function useKeyboardShortcuts() {
         return
       }
 
-      // Escape: Return to sidebar (from detail)
+      // Escape: Return to whichever sidebar initiated this navigation
       if (e.key === 'Escape' && focusArea === 'detail') {
         e.preventDefault()
-        setFocusArea('list')
+        if (navSource === 'search') {
+          if (!searchPanel.isOpen) searchPanel.open()
+          setFocusArea('search')
+        } else {
+          setFocusArea('list')
+        }
         return
       }
 
@@ -305,13 +384,13 @@ export function useKeyboardShortcuts() {
         }
       }
     },
-    [keyboardMode, focusArea, currentUuid, queryClient, navigate, showToolCalls,
-     setFocusArea, setIsHelpOpen, setSelectedMessageIndex,
+    [keyboardMode, focusArea, navSource, currentUuid, queryClient, navigate, showToolCalls,
+     setFocusArea, setNavSource, setIsHelpOpen, setSelectedMessageIndex,
      selectNext, selectPrevious, selectFirst, selectLast, getSelectedId,
      selectNextMessage, selectPreviousMessage, selectFirstMessage, selectLastMessage,
      selectNextUserMessage, selectPreviousUserMessage,
      selectNextAssistantMessage, selectPreviousAssistantMessage,
-     pageDown, pageUp, getSelectedMessageId]
+     pageDown, pageUp, getSelectedMessageId, searchPanel]
   )
 
   useEffect(() => {

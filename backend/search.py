@@ -7,24 +7,32 @@ from .models import SearchResult, MessageSnippet
 from .store import ConversationStore, _parse_datetime
 
 
-SNIPPET_CONTEXT = 50  # Characters of context around match
+SNIPPET_CONTEXT = 150  # Characters of context on each side of the match (~3 lines total)
+WORD_BOUNDARY_SEARCH = 25  # Max chars to extend outward to avoid cutting mid-word
 
 
 def create_snippet(text: str, match_start: int, match_end: int) -> tuple[str, int, int]:
-    """Create a snippet with context around the match."""
-    # Calculate snippet boundaries
+    """Create a snippet with context around the match.
+
+    Extends outward to word boundaries (up to WORD_BOUNDARY_SEARCH chars)
+    so we don't cut mid-word. Falls back to the raw char boundary if no
+    whitespace is nearby — the ellipsis prefix/suffix signals the cut.
+    """
     snippet_start = max(0, match_start - SNIPPET_CONTEXT)
     snippet_end = min(len(text), match_end + SNIPPET_CONTEXT)
 
-    # Adjust to word boundaries if possible
+    # Extend snippet_start LEFTWARD to a word boundary (keeps the preceding word intact)
     if snippet_start > 0:
-        space_pos = text.rfind(" ", snippet_start, match_start)
-        if space_pos > 0:
+        extended = max(0, snippet_start - WORD_BOUNDARY_SEARCH)
+        space_pos = text.rfind(" ", extended, snippet_start + 1)
+        if space_pos >= 0:
             snippet_start = space_pos + 1
 
+    # Extend snippet_end RIGHTWARD to a word boundary (keeps the following word intact)
     if snippet_end < len(text):
-        space_pos = text.find(" ", match_end, snippet_end)
-        if space_pos > 0:
+        extended = min(len(text), snippet_end + WORD_BOUNDARY_SEARCH)
+        space_pos = text.find(" ", snippet_end - 1, extended)
+        if space_pos >= 0:
             snippet_end = space_pos
 
     snippet = text[snippet_start:snippet_end]
@@ -44,6 +52,7 @@ def search_conversations(
     store: ConversationStore,
     query: str,
     source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+    context_size: Literal["snippet", "full"] = "snippet",
 ) -> list[SearchResult]:
     """Search across all conversations for matching messages."""
     if not query or len(query.strip()) < 1:
@@ -59,7 +68,8 @@ def search_conversations(
         # Search in conversation name
         name = conv.get("name", "")
         if query_lower in name.lower():
-            # Add a pseudo-message for title match
+            # Add a pseudo-message for title match. Titles are short, so we
+            # always use the snippet helper here regardless of context_size.
             match = pattern.search(name)
             if match:
                 snippet, start, end = create_snippet(name, match.start(), match.end())
@@ -89,7 +99,14 @@ def search_conversations(
 
             # Search for matches
             for match in pattern.finditer(text):
-                snippet, start, end = create_snippet(text, match.start(), match.end())
+                if context_size == "full":
+                    snippet = text
+                    start = match.start()
+                    end = match.end()
+                else:
+                    snippet, start, end = create_snippet(
+                        text, match.start(), match.end()
+                    )
                 matching_messages.append(
                     MessageSnippet(
                         message_uuid=msg.get("uuid", ""),

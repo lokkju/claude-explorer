@@ -57,9 +57,14 @@ export const api = {
   getConversationTree: (uuid: string): Promise<ConversationTree> =>
     fetchJson<ConversationTree>(`/conversations/${uuid}/tree`),
 
-  search: (query: string, source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all'): Promise<SearchResult[]> => {
+  search: (
+    query: string,
+    source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all',
+    contextSize: 'snippet' | 'full' = 'snippet'
+  ): Promise<SearchResult[]> => {
     const params = new URLSearchParams({ q: query })
     if (source !== 'all') params.set('source', source)
+    if (contextSize !== 'snippet') params.set('context_size', contextSize)
     return fetchJson<SearchResult[]>(`/search?${params.toString()}`)
   },
 

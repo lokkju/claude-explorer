@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/queryClient'
 import type { ConversationFilters } from '@/lib/types'
@@ -46,7 +46,11 @@ export function useConversationTree(uuid: string) {
   })
 }
 
-export function useSearch(query: string, source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all') {
+export function useSearch(
+  query: string,
+  source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all',
+  contextSize: 'snippet' | 'full' = 'snippet'
+) {
   const [debouncedQuery, setDebouncedQuery] = useState(query)
 
   useEffect(() => {
@@ -55,10 +59,11 @@ export function useSearch(query: string, source: 'all' | 'CLAUDE_AI' | 'CLAUDE_C
   }, [query])
 
   return useQuery({
-    queryKey: queryKeys.search(debouncedQuery, source),
-    queryFn: () => api.search(debouncedQuery, source),
+    queryKey: queryKeys.search(debouncedQuery, source, contextSize),
+    queryFn: () => api.search(debouncedQuery, source, contextSize),
     enabled: debouncedQuery.length >= 2,
     staleTime: 60 * 1000, // 1 minute
+    placeholderData: keepPreviousData, // keep last results visible while narrowing query
   })
 }
 

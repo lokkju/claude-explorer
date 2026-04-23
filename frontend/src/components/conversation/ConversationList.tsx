@@ -27,7 +27,7 @@ export function ConversationList({
   const { uuid: selectedUuid } = useParams()
   const navigate = useNavigate()
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const { selectedIndex, setSelectedIndex, setConversationIds, focusArea, setFocusArea } = useKeyboardNavigation()
+  const { selectedIndex, setSelectedIndex, setConversationIds, focusArea, setNavSource } = useKeyboardNavigation()
   const filters = {
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
@@ -126,12 +126,8 @@ export function ConversationList({
       groups.get(groupKey)!.push(conv)
     }
 
-    // Sort groups: Claude Desktop first, then alphabetically
-    const sortedGroups = Array.from(groups.entries()).sort(([a], [b]) => {
-      if (a === 'Claude Desktop') return -1
-      if (b === 'Claude Desktop') return 1
-      return a.localeCompare(b)
-    })
+    // Groups inherit sort order from their first member (conversations is already sorted by sortField/sortOrder)
+    const sortedGroups = Array.from(groups.entries())
 
     return (
       <div className="flex flex-col">
@@ -168,7 +164,7 @@ export function ConversationList({
                       conversation={conv}
                       isSelected={conv.uuid === selectedUuid}
                       isKeyboardSelected={isKeyboardSelected(conv.uuid)}
-                      onClick={() => navigate(`/conversations/${conv.uuid}`)}
+                      onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
                       showProject={false}
                     />
                   ))}
@@ -178,7 +174,7 @@ export function ConversationList({
                       conversation={conv}
                       isSelected={conv.uuid === selectedUuid}
                       isKeyboardSelected={isKeyboardSelected(conv.uuid)}
-                      onClick={() => navigate(`/conversations/${conv.uuid}`)}
+                      onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
                       showProject={false}
                     />
                   ))}
@@ -205,7 +201,7 @@ export function ConversationList({
               conversation={conv}
               isSelected={conv.uuid === selectedUuid}
               isKeyboardSelected={isKeyboardSelected(conv.uuid)}
-              onClick={() => navigate(`/conversations/${conv.uuid}`)}
+              onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
             />
           ))}
           <div className="mx-4 my-2 border-t border-zinc-200 dark:border-zinc-800" />
@@ -217,7 +213,7 @@ export function ConversationList({
           conversation={conv}
           isSelected={conv.uuid === selectedUuid}
           isKeyboardSelected={isKeyboardSelected(conv.uuid)}
-          onClick={() => navigate(`/conversations/${conv.uuid}`)}
+          onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
         />
       ))}
     </div>
@@ -250,6 +246,14 @@ function ConversationListItem({
       itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
   }, [isKeyboardSelected])
+
+  // Also scroll URL-selected item into view (e.g., when Cmd+G navigates
+  // cross-conversation and focusArea is still 'search')
+  useEffect(() => {
+    if (isSelected && itemRef.current) {
+      itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [isSelected])
 
   return (
     <div>

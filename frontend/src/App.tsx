@@ -5,11 +5,11 @@ import { Toaster } from 'sonner'
 import { queryClient } from '@/lib/queryClient'
 import { SettingsProvider, useSettings } from '@/contexts/SettingsContext'
 import { SourceFilterProvider } from '@/contexts/SourceFilterContext'
+import { SearchPanelProvider } from '@/contexts/SearchPanelContext'
 import { KeyboardNavigationProvider } from '@/contexts/KeyboardNavigationContext'
 import { RootLayout } from '@/components/layout/RootLayout'
 import { ConversationPage } from '@/routes/ConversationPage'
 import { SettingsPage } from '@/routes/SettingsPage'
-import { CommandPalette } from '@/components/search/CommandPalette'
 import { ConnectionStatus } from '@/components/ConnectionStatus'
 import { KeyboardHelpModal } from '@/components/KeyboardHelpModal'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
@@ -40,23 +40,24 @@ function App() {
       <SettingsProvider>
         <ThemeApplier>
           <SourceFilterProvider>
-            <BrowserRouter>
-              <KeyboardNavigationProvider>
-                <KeyboardShortcutHandler />
-                <CommandPalette />
-                <KeyboardHelpModal />
-                <Routes>
-                <Route element={<RootLayout />}>
-                  <Route index element={<Navigate to="/conversations" replace />} />
-                  <Route path="conversations" element={<ConversationPage />} />
-                  <Route path="conversations/:uuid" element={<ConversationPage />} />
-                  <Route path="settings" element={<SettingsPage />} />
-                </Route>
-                </Routes>
-              </KeyboardNavigationProvider>
-            </BrowserRouter>
-            <Toaster position="bottom-right" />
-            <ConnectionStatus />
+            <SearchPanelProvider>
+              <BrowserRouter>
+                <KeyboardNavigationProvider>
+                  <KeyboardShortcutHandler />
+                  <KeyboardHelpModal />
+                  <Routes>
+                  <Route element={<RootLayout />}>
+                    <Route index element={<Navigate to="/conversations" replace />} />
+                    <Route path="conversations" element={<ConversationPage />} />
+                    <Route path="conversations/:uuid" element={<ConversationPage />} />
+                    <Route path="settings" element={<SettingsPage />} />
+                  </Route>
+                  </Routes>
+                </KeyboardNavigationProvider>
+              </BrowserRouter>
+              <Toaster position="bottom-right" />
+              <ConnectionStatus />
+            </SearchPanelProvider>
           </SourceFilterProvider>
         </ThemeApplier>
       </SettingsProvider>

@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Anchor to the script's own directory so the script works regardless of cwd
+cd "$(dirname "$0")"
+
 # Kill processes on backend and frontend ports (selective, not broad pkill)
 for port in 8000 5173; do
     pids=$(lsof -ti :$port 2>/dev/null) || true

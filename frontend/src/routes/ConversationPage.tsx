@@ -50,7 +50,7 @@ export function ConversationPage() {
   }, [])
 
   // Reset message index when a new conversation is opened
-  const prevUuidRef = useRef<string | undefined>()
+  const prevUuidRef = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (uuid && uuid !== prevUuidRef.current) {
       prevUuidRef.current = uuid
@@ -354,21 +354,6 @@ export function ConversationPage() {
           }}
         />
       )}
-    </div>
-  )
-}
-
-function EmptyState() {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <div className="text-center">
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-          Select a conversation
-        </h2>
-        <p className="text-sm text-zinc-500">
-          Choose a conversation from the sidebar to view it.
-        </p>
-      </div>
     </div>
   )
 }

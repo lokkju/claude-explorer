@@ -17,7 +17,10 @@ async def search(
     source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = Query(
         "all", description="Filter by source"
     ),
+    context_size: Literal["snippet", "full"] = Query(
+        "snippet", description="Amount of context per match"
+    ),
 ) -> list[SearchResult]:
     """Search across all conversations."""
     store = ConversationStore()
-    return search_conversations(store, q, source=source)
+    return search_conversations(store, q, source=source, context_size=context_size)
