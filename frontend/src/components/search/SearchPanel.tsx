@@ -1,8 +1,23 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Search, X, User, Bot, FileText } from 'lucide-react'
+import { Search, X, User, Bot, FileText, ArrowUpDown } from 'lucide-react'
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
 import { useNavigateToMatch } from '@/components/search/navigateToMatch'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn, formatDate } from '@/lib/utils'
+import type { SortField } from '@/lib/types'
+
+const SORT_OPTIONS: { value: SortField; label: string }[] = [
+  { value: 'updated_at', label: 'Last Activity' },
+  { value: 'created_at', label: 'Start Time' },
+  { value: 'name', label: 'Title' },
+  { value: 'project', label: 'Project' },
+]
 
 /**
  * Right-side search overlay panel. Always mounted; slides off-screen via
@@ -17,13 +32,16 @@ export function SearchPanel() {
     isOpen,
     query,
     contextSize,
+    sortField,
+    sortOrder,
     activeMatchIndex,
     flatMatches,
-    results,
     isLoading,
     close,
     setQuery,
     setContextSize,
+    setSortField,
+    setSortOrder,
     setActiveMatchIndex,
   } = useSearchPanel()
 
@@ -54,8 +72,6 @@ export function SearchPanel() {
     }
   }, [activeMatchIndex])
 
-  // Group flatMatches by conversationUuid while preserving order. We only need
-  // this for indexing back into the global flat position when clicking a card.
   const flatIndexByKey = useMemo(() => {
     const map = new Map<string, number>()
     flatMatches.forEach((m, i) => {
@@ -95,23 +111,6 @@ export function SearchPanel() {
       role="complementary"
       aria-label="Search panel"
       aria-hidden={!isOpen}
-      onKeyDownCapture={(e) => {
-        // Make Enter navigate to the active match from ANY focusable element
-        // inside the panel (input, toggle buttons, result cards). We intercept
-        // in the capture phase so toggle buttons don't re-activate themselves
-        // when they happen to hold focus.
-        if (e.key === 'Enter' && !e.defaultPrevented) {
-          const target = e.target as HTMLElement | null
-          // Result cards should open themselves via their own click handler
-          // (fired when focused + Enter pressed). Skip here to avoid double-fire.
-          if (target?.closest('[data-result-card]')) return
-          if (flatMatches.length > 0) {
-            e.preventDefault()
-            e.stopPropagation()
-            openActiveMatch()
-          }
-        }
-      }}
       className={cn(
         'fixed right-0 top-0 z-40 flex h-full w-96 flex-col border-l border-zinc-200 bg-white shadow-xl transition-transform duration-200 dark:border-zinc-800 dark:bg-zinc-900',
         !isOpen && 'translate-x-full'
@@ -150,11 +149,46 @@ export function SearchPanel() {
           </button>
         </div>
 
+        {/* Sort controls — mirror left sidebar; default updated_at + desc. */}
+        <div className="mt-3 flex items-center gap-1">
+          <Select
+            value={sortField}
+            onValueChange={(v: string) => {
+              setSortField(v as SortField)
+              // Restore focus so Enter still navigates after changing sort.
+              window.setTimeout(() => inputRef.current?.focus(), 0)
+            }}
+          >
+            <SelectTrigger className="flex-1 h-7 text-xs">
+              <ArrowUpDown className="h-3 w-3 mr-1 text-zinc-400" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <button
+            type="button"
+            onClick={() => {
+              setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+              inputRef.current?.focus()
+            }}
+            title={sortOrder === 'asc' ? 'Ascending' : 'Descending'}
+            className="h-7 rounded-md px-2 text-xs text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {sortOrder === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
+
         {/* Context size toggle (segmented control) */}
         <div
           role="radiogroup"
           aria-label="Search context size"
-          className="mt-3 inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-0.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+          className="mt-2 inline-flex rounded-md border border-zinc-200 bg-zinc-50 p-0.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
         >
           <button
             type="button"
@@ -248,84 +282,19 @@ export function SearchPanel() {
         )}
 
         {showResults && (
-          <div className="space-y-4">
-            {results.map((result) => {
-              // Determine which flat matches correspond to this conversation.
-              // Use the same flattening semantics as the context: if there are
-              // message matches, list them; otherwise synthesize a title-only
-              // match.
-              const messageMatches = result.matching_messages.filter(
-                (m) => m.message_uuid !== 'title'
-              )
-              const titleOnly =
-                messageMatches.length === 0
-                  ? result.matching_messages.find(
-                      (m) => m.message_uuid === 'title'
-                    )
-                  : null
-
-              const cardMatches: SearchMatch[] = (
-                messageMatches.length > 0
-                  ? messageMatches.map((msg) => ({
-                      conversationUuid: result.conversation_uuid,
-                      messageUuid: msg.message_uuid,
-                      conversationName: result.conversation_name,
-                      snippet: msg.snippet,
-                      matchStart: msg.match_start,
-                      matchEnd: msg.match_end,
-                      sender: msg.sender,
-                    }))
-                  : [
-                      {
-                        conversationUuid: result.conversation_uuid,
-                        messageUuid: 'title',
-                        conversationName: result.conversation_name,
-                        snippet: titleOnly?.snippet ?? result.conversation_name,
-                        matchStart: titleOnly?.match_start ?? 0,
-                        matchEnd: titleOnly?.match_end ?? 0,
-                        sender: titleOnly?.sender ?? '',
-                      },
-                    ]
-              )
-
+          <div className="space-y-1.5">
+            {flatMatches.map((match, idx) => {
+              const isActive = idx === activeMatchIndex
+              const key = `${match.conversationUuid}:${match.messageUuid}:${match.matchStart}`
               return (
-                <section
-                  key={result.conversation_uuid}
-                  className="space-y-1.5"
-                >
-                  {/* Section header */}
-                  <div className="flex items-baseline justify-between gap-2 px-1">
-                    <h3
-                      className="flex-1 truncate text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
-                      title={result.conversation_name}
-                    >
-                      {result.conversation_name}
-                    </h3>
-                    <span className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
-                      {formatDate(result.conversation_updated_at)}
-                    </span>
-                  </div>
-
-                  {/* Cards for this conversation */}
-                  <div className="space-y-1.5">
-                    {cardMatches.map((match) => {
-                      const key = `${match.conversationUuid}:${match.messageUuid}:${match.matchStart}`
-                      const flatIdx = flatIndexByKey.get(key) ?? -1
-                      const isActive =
-                        flatIdx !== -1 && flatIdx === activeMatchIndex
-                      return (
-                        <ResultCard
-                          key={key}
-                          ref={isActive ? activeCardRef : undefined}
-                          match={match}
-                          isActive={isActive}
-                          contextSize={contextSize}
-                          onClick={() => handleCardClick(match)}
-                        />
-                      )
-                    })}
-                  </div>
-                </section>
+                <ResultCard
+                  key={key}
+                  ref={isActive ? activeCardRef : undefined}
+                  match={match}
+                  isActive={isActive}
+                  contextSize={contextSize}
+                  onClick={() => handleCardClick(match)}
+                />
               )
             })}
           </div>
@@ -369,6 +338,19 @@ const ResultCard = ({
         isActive && 'ring-2 ring-inset ring-blue-500'
       )}
     >
+      <div className="mb-1 flex items-baseline justify-between gap-2">
+        <span
+          className="flex-1 truncate text-xs font-semibold text-zinc-700 dark:text-zinc-200"
+          title={match.conversationName}
+        >
+          {match.conversationName}
+        </span>
+        {match.createdAt && (
+          <span className="shrink-0 text-[11px] text-zinc-400 dark:text-zinc-500">
+            {formatDate(match.createdAt)}
+          </span>
+        )}
+      </div>
       <div className="mb-1 flex items-center gap-1.5 text-xs">
         <Icon
           className={cn(

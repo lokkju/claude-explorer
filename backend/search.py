@@ -48,11 +48,25 @@ def create_snippet(text: str, match_start: int, match_end: int) -> tuple[str, in
     return prefix + snippet + suffix, new_match_start, new_match_end
 
 
+def _derive_project_name(project_path: str | None) -> str | None:
+    """Mirror ConversationSummary.model_post_init project_name derivation."""
+    if not project_path:
+        return None
+    stripped = project_path.rstrip("/")
+    return stripped.split("/")[-1] if "/" in stripped else stripped
+
+
+SortField = Literal["updated_at", "created_at", "name", "project"]
+SortOrder = Literal["asc", "desc"]
+
+
 def search_conversations(
     store: ConversationStore,
     query: str,
     source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
     context_size: Literal["snippet", "full"] = "snippet",
+    sort: SortField = "updated_at",
+    sort_order: SortOrder = "desc",
 ) -> list[SearchResult]:
     """Search across all conversations for matching messages."""
     if not query or len(query.strip()) < 1:
@@ -97,6 +111,8 @@ def search_conversations(
             if not text:
                 continue
 
+            msg_created_at = _parse_datetime(msg.get("created_at"))
+
             # Search for matches
             for match in pattern.finditer(text):
                 if context_size == "full":
@@ -114,6 +130,7 @@ def search_conversations(
                         snippet=snippet,
                         match_start=start,
                         match_end=end,
+                        created_at=msg_created_at,
                     )
                 )
                 # Only include first match per message to avoid duplicates
@@ -125,11 +142,51 @@ def search_conversations(
                     conversation_uuid=conv.get("uuid", ""),
                     conversation_name=conv.get("name", "Untitled"),
                     conversation_updated_at=_parse_datetime(conv.get("updated_at")),
+                    conversation_created_at=_parse_datetime(conv.get("created_at")),
+                    project_name=_derive_project_name(conv.get("project_path")),
                     matching_messages=matching_messages,
                 )
             )
 
-    # Sort by most recently updated
-    results.sort(key=lambda r: r.conversation_updated_at, reverse=True)
+    reverse = sort_order == "desc"
+
+    # Match-level time key, with a conversation-level fallback for title-only
+    # matches (no per-message timestamp).
+    def _match_time(m: MessageSnippet, fallback):
+        return m.created_at if m.created_at is not None else fallback
+
+    # Sort matches within each conversation by message timestamp so the
+    # newest/oldest match (per order) is always on top of its group.
+    for r in results:
+        fallback = r.conversation_updated_at
+        r.matching_messages.sort(
+            key=lambda m, fb=fallback: _match_time(m, fb),
+            reverse=reverse,
+        )
+
+    if sort in ("updated_at", "created_at"):
+        # Rank each conversation by the most-recent (updated_at) or earliest
+        # (created_at) matching message inside it. For updated_at+desc this
+        # means the globally-latest matching message lands at the top.
+        def _conv_time_key(r: SearchResult):
+            times = [m.created_at for m in r.matching_messages if m.created_at]
+            if times:
+                return max(times) if sort == "updated_at" else min(times)
+            return (
+                r.conversation_updated_at
+                if sort == "updated_at"
+                else r.conversation_created_at
+            )
+
+        results.sort(key=_conv_time_key, reverse=reverse)
+    elif sort == "name":
+        results.sort(key=lambda r: (r.conversation_name or "").lower(), reverse=reverse)
+    elif sort == "project":
+        # None project_names last when ascending, first when descending — same
+        # behavior as store.py's list sort.
+        results.sort(
+            key=lambda r: (r.project_name is None, (r.project_name or "").lower()),
+            reverse=reverse,
+        )
 
     return results

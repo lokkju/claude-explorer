@@ -4,6 +4,8 @@ import type {
   ConversationTree,
   ConversationFilters,
   SearchResult,
+  SortField,
+  SortOrder,
   AppConfig,
   ApiError as ApiErrorType,
 } from './types'
@@ -60,11 +62,15 @@ export const api = {
   search: (
     query: string,
     source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all',
-    contextSize: 'snippet' | 'full' = 'snippet'
+    contextSize: 'snippet' | 'full' = 'snippet',
+    sort: SortField = 'updated_at',
+    sortOrder: SortOrder = 'desc'
   ): Promise<SearchResult[]> => {
     const params = new URLSearchParams({ q: query })
     if (source !== 'all') params.set('source', source)
     if (contextSize !== 'snippet') params.set('context_size', contextSize)
+    if (sort !== 'updated_at') params.set('sort', sort)
+    if (sortOrder !== 'desc') params.set('sort_order', sortOrder)
     return fetchJson<SearchResult[]>(`/search?${params.toString()}`)
   },
 

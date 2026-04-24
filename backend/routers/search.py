@@ -20,7 +20,20 @@ async def search(
     context_size: Literal["snippet", "full"] = Query(
         "snippet", description="Amount of context per match"
     ),
+    sort: Literal["updated_at", "created_at", "name", "project"] = Query(
+        "updated_at", description="Sort field"
+    ),
+    sort_order: Literal["asc", "desc"] = Query(
+        "desc", description="Sort order"
+    ),
 ) -> list[SearchResult]:
     """Search across all conversations."""
     store = ConversationStore()
-    return search_conversations(store, q, source=source, context_size=context_size)
+    return search_conversations(
+        store,
+        q,
+        source=source,
+        context_size=context_size,
+        sort=sort,
+        sort_order=sort_order,
+    )

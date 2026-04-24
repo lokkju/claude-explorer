@@ -77,12 +77,15 @@ export interface MessageSnippet {
   snippet: string
   match_start: number
   match_end: number
+  created_at: string | null
 }
 
 export interface SearchResult {
   conversation_uuid: string
   conversation_name: string
   conversation_updated_at: string
+  conversation_created_at: string
+  project_name: string | null
   matching_messages: MessageSnippet[]
 }
 

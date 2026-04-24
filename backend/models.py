@@ -103,6 +103,7 @@ class MessageSnippet(BaseModel):
     snippet: str
     match_start: int
     match_end: int
+    created_at: datetime | None = None
 
 
 class SearchResult(BaseModel):
@@ -111,6 +112,8 @@ class SearchResult(BaseModel):
     conversation_uuid: str
     conversation_name: str
     conversation_updated_at: datetime
+    conversation_created_at: datetime
+    project_name: str | None = None
     matching_messages: list[MessageSnippet] = Field(default_factory=list)
 
 

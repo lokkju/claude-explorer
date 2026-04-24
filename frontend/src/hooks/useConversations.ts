@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/queryClient'
-import type { ConversationFilters } from '@/lib/types'
+import type { ConversationFilters, SortField, SortOrder } from '@/lib/types'
 
 export function useConversations(filters?: ConversationFilters) {
   const { search, ...serverFilters } = filters ?? {}
@@ -49,7 +49,9 @@ export function useConversationTree(uuid: string) {
 export function useSearch(
   query: string,
   source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all',
-  contextSize: 'snippet' | 'full' = 'snippet'
+  contextSize: 'snippet' | 'full' = 'snippet',
+  sort: SortField = 'updated_at',
+  sortOrder: SortOrder = 'desc'
 ) {
   const [debouncedQuery, setDebouncedQuery] = useState(query)
 
@@ -59,8 +61,8 @@ export function useSearch(
   }, [query])
 
   return useQuery({
-    queryKey: queryKeys.search(debouncedQuery, source, contextSize),
-    queryFn: () => api.search(debouncedQuery, source, contextSize),
+    queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder),
+    queryFn: () => api.search(debouncedQuery, source, contextSize, sort, sortOrder),
     enabled: debouncedQuery.length >= 2,
     staleTime: 60 * 1000, // 1 minute
     placeholderData: keepPreviousData, // keep last results visible while narrowing query

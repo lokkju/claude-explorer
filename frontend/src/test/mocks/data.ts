@@ -159,6 +159,8 @@ export const mockSearchResults: SearchResult[] = [
     conversation_uuid: 'conv-1',
     conversation_name: 'Building a React App',
     conversation_updated_at: '2026-03-01T12:00:00Z',
+    conversation_created_at: '2026-03-01T10:00:00Z',
+    project_name: null,
     matching_messages: [
       {
         message_uuid: 'msg-1',
@@ -166,6 +168,7 @@ export const mockSearchResults: SearchResult[] = [
         snippet: 'How do I create a **React** component with TypeScript?',
         match_start: 20,
         match_end: 25,
+        created_at: '2026-03-01T11:50:00Z',
       },
     ],
   },
@@ -173,6 +176,8 @@ export const mockSearchResults: SearchResult[] = [
     conversation_uuid: 'conv-2',
     conversation_name: 'Python Data Analysis',
     conversation_updated_at: '2026-02-28T16:30:00Z',
+    conversation_created_at: '2026-02-28T15:00:00Z',
+    project_name: null,
     matching_messages: [
       {
         message_uuid: 'msg-5',
@@ -180,6 +185,7 @@ export const mockSearchResults: SearchResult[] = [
         snippet: 'You can also use **React** Query for data fetching...',
         match_start: 18,
         match_end: 23,
+        created_at: '2026-02-28T16:25:00Z',
       },
     ],
   },
