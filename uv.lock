@@ -532,7 +532,7 @@ wheels = [
 ]
 
 [[package]]
-name = "claude-desktop-message-exporter"
+name = "claude-explorer"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

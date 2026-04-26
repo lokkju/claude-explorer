@@ -75,7 +75,7 @@ async def fetch_conversations_stream(
         except Exception as e:
             yield send_event({
                 "type": "error",
-                "message": f"No credentials found. Run 'claude-exporter capture' first.",
+                "message": f"No credentials found. Run 'claude-explorer capture' first.",
             })
             return
 

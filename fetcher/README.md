@@ -6,13 +6,13 @@ This module handles credential capture and conversation downloading from claude.
 
 ```bash
 # Step 1: Capture credentials (opens browser for login)
-claude-exporter capture
+claude-explorer capture
 
 # Step 2: Download all conversations
-claude-exporter fetch
+claude-explorer fetch
 
 # Step 3: Start the web viewer
-claude-exporter serve
+claude-explorer serve
 ```
 
 ## Commands
@@ -26,7 +26,7 @@ There are two methods to capture your session cookie:
 Opens a Chromium browser where you log into Claude normally:
 
 ```bash
-claude-exporter capture
+claude-explorer capture
 ```
 
 Wait for the browser to open, log in to claude.ai, and credentials are automatically extracted.
@@ -40,7 +40,7 @@ Use this when you can't log into the web but Claude Desktop is still authenticat
 
 ```bash
 # Terminal 1 - Start the proxy
-claude-exporter capture --proxy
+claude-explorer capture --proxy
 
 # Terminal 2 - Launch Claude Desktop through the proxy
 open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
@@ -62,12 +62,12 @@ open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-err
 Downloads all conversations as JSON files:
 
 ```bash
-claude-exporter fetch
+claude-explorer fetch
 ```
 
 **Options:**
-- `--output-dir PATH` — Where to save JSON files (default: `~/.claude-exporter/conversations`)
-- `--credentials PATH` — Path to credentials file (default: `~/.claude-exporter/credentials.json`)
+- `--output-dir PATH` — Where to save JSON files (default: `~/.claude-explorer/conversations`)
+- `--credentials PATH` — Path to credentials file (default: `~/.claude-explorer/credentials.json`)
 - `--session-key TEXT` — Session key (overrides credentials file)
 - `--org-id TEXT` — Org ID (overrides credentials file)
 - `--incremental` / `--full-refresh` — Skip already-saved conversations (default: incremental)
@@ -79,16 +79,16 @@ claude-exporter fetch
 
 ```bash
 # Fetch only new conversations (default)
-claude-exporter fetch
+claude-explorer fetch
 
 # Re-download everything
-claude-exporter fetch --full-refresh
+claude-explorer fetch --full-refresh
 
 # Fetch 10 conversations with verbose output
-claude-exporter fetch --limit 10 --verbose
+claude-explorer fetch --limit 10 --verbose
 
 # Use custom credentials
-claude-exporter fetch --session-key "sk-ant-..." --org-id "uuid-..."
+claude-explorer fetch --session-key "sk-ant-..." --org-id "uuid-..."
 ```
 
 ### `serve` - Start Web Viewer
@@ -96,7 +96,7 @@ claude-exporter fetch --session-key "sk-ant-..." --org-id "uuid-..."
 Starts the FastAPI backend to browse and export conversations:
 
 ```bash
-claude-exporter serve
+claude-explorer serve
 ```
 
 **Options:**
@@ -139,7 +139,7 @@ Use Terminal.app, iTerm2, or another full-featured terminal.
 
 ## Credentials Storage
 
-Credentials are saved to `~/.claude-exporter/credentials.json`:
+Credentials are saved to `~/.claude-explorer/credentials.json`:
 
 ```json
 {
@@ -149,4 +149,4 @@ Credentials are saved to `~/.claude-exporter/credentials.json`:
 }
 ```
 
-Conversations are saved to `~/.claude-exporter/conversations/` as individual JSON files named by UUID.
+Conversations are saved to `~/.claude-explorer/conversations/` as individual JSON files named by UUID.

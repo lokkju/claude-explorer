@@ -8,7 +8,7 @@ Usage:
     uv run python -m fetcher.playwright_capture
 
 Or via CLI:
-    claude-exporter capture
+    claude-explorer capture
 """
 
 import json
@@ -245,7 +245,7 @@ def main(output: Path, timeout: int) -> None:
         click.echo(f"   Saved to: {output}")
         click.echo()
         click.echo("   You can now fetch conversations:")
-        click.echo("   claude-exporter fetch")
+        click.echo("   claude-explorer fetch")
         click.echo("=" * 60)
     else:
         click.echo()

@@ -1,4 +1,4 @@
-"""FastAPI application for Claude Desktop Message Exporter."""
+"""FastAPI application for Claude Explorer."""
 
 from contextlib import asynccontextmanager
 
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Claude Desktop Message Exporter",
+    title="Claude Explorer",
     description="API for browsing and exporting Claude Desktop conversations",
     version="0.1.0",
     lifespan=lifespan,
@@ -54,7 +54,7 @@ app.include_router(fetch.router, prefix="/api")
 async def root():
     """Root endpoint."""
     return {
-        "name": "Claude Desktop Message Exporter",
+        "name": "Claude Explorer",
         "version": "0.1.0",
         "docs": "/docs",
     }

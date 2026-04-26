@@ -1,4 +1,4 @@
-# Claude Desktop Message Exporter
+# Claude Explorer
 
 ## Project Structure
 
@@ -12,26 +12,26 @@
 
 ## CLI Usage
 
-After installing (`uv sync`), use the `claude-exporter` command:
+After installing (`uv sync`), use the `claude-explorer` command:
 
 ```bash
 # Step 1: Capture credentials from Claude Desktop
-claude-exporter capture
+claude-explorer capture
 
 # In another terminal, launch Claude Desktop through the proxy:
 open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 
 # Step 2: Fetch all conversations
-claude-exporter fetch
+claude-explorer fetch
 
 # Step 3: Start the web server to browse
-claude-exporter serve
+claude-explorer serve
 # Then open http://localhost:8000
 ```
 
 ### Command Reference
 
-#### `claude-exporter capture`
+#### `claude-explorer capture`
 
 Start mitmproxy to intercept Claude Desktop session credentials.
 
@@ -44,7 +44,7 @@ Options:
 1. Starts a local HTTPS proxy using mitmproxy
 2. You launch Claude Desktop through the proxy
 3. The addon extracts `sessionKey` and `org_id` from API requests
-4. Credentials are saved to `~/.claude-exporter/credentials.json`
+4. Credentials are saved to `~/.claude-explorer/credentials.json`
 
 **Platform-specific launch commands:**
 ```bash
@@ -58,16 +58,16 @@ open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-err
 claude --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 ```
 
-#### `claude-exporter fetch`
+#### `claude-explorer fetch`
 
 Download all conversations from Claude using captured credentials.
 
 ```
 Options:
   --output-dir PATH               Where to save JSON files
-                                  (default: ~/.claude-exporter/conversations)
+                                  (default: ~/.claude-explorer/conversations)
   --credentials PATH              Path to credentials file
-                                  (default: ~/.claude-exporter/credentials.json)
+                                  (default: ~/.claude-explorer/credentials.json)
   --session-key TEXT              Session key (overrides credentials file)
   --org-id TEXT                   Org ID (overrides credentials file)
   --incremental / --full-refresh  Skip already-saved conversations (default: incremental)
@@ -79,19 +79,19 @@ Options:
 **Examples:**
 ```bash
 # Fetch all new conversations
-claude-exporter fetch
+claude-explorer fetch
 
 # Re-fetch everything
-claude-exporter fetch --full-refresh
+claude-explorer fetch --full-refresh
 
 # Fetch only 10 conversations with verbose output
-claude-exporter fetch --limit 10 --verbose
+claude-explorer fetch --limit 10 --verbose
 
 # Use custom credentials
-claude-exporter fetch --session-key "sk-ant-..." --org-id "uuid-..."
+claude-explorer fetch --session-key "sk-ant-..." --org-id "uuid-..."
 ```
 
-#### `claude-exporter serve`
+#### `claude-explorer serve`
 
 Start the web server to browse and export conversations.
 
@@ -105,13 +105,13 @@ Options:
 **Examples:**
 ```bash
 # Start server
-claude-exporter serve
+claude-explorer serve
 
 # Start on different port
-claude-exporter serve --port 9000
+claude-explorer serve --port 9000
 
 # Development mode with auto-reload
-claude-exporter serve --reload
+claude-explorer serve --reload
 ```
 
 ## Development Setup
@@ -160,9 +160,9 @@ The frontend proxies `/api` requests to the backend.
 
 ## Data Directory
 
-Conversations are stored in `~/.claude-exporter/conversations/` as JSON files.
+Conversations are stored in `~/.claude-explorer/conversations/` as JSON files.
 
-Set `CLAUDE_EXPORTER_DATA_DIR` to override, or create `~/.claude-exporter/config.json`:
+Set `CLAUDE_EXPORTER_DATA_DIR` to override, or create `~/.claude-explorer/config.json`:
 ```json
 {"data_dir": "/path/to/conversations"}
 ```

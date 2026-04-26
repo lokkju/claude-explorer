@@ -45,7 +45,7 @@ Decision gate:
 | **≥ 2** (expected) | Proceed with Phases 1–4 below. Note the Cowork org's UUID + name for verification. |
 | **= 1** | Cowork is *not* a separate org. Stop and re-plan: investigate per-conversation fields (e.g. `project_uuid`) and/or alternate list endpoints. |
 
-Fallback if Cloudflare blocks the curl probe (401/403): add a one-line `print(json.dumps(data, indent=2))` after `data = await response.json()` at `fetcher/playwright_capture.py:90`, re-run `uv run claude-exporter capture`, read the printed list, then revert.
+Fallback if Cloudflare blocks the curl probe (401/403): add a one-line `print(json.dumps(data, indent=2))` after `data = await response.json()` at `fetcher/playwright_capture.py:90`, re-run `uv run claude-explorer capture`, read the printed list, then revert.
 
 ## Design decisions
 
@@ -72,8 +72,8 @@ Fallback if Cloudflare blocks the curl probe (401/403): add a one-line `print(js
 
 ## Verification
 
-1. `uv run claude-exporter capture` with an account that has both personal + Cowork → `credentials.json` shows `orgs` array length ≥ 2.
-2. `uv run claude-exporter fetch` → `_index.json` has an `orgs` array with separate counts; individual conversation JSONs contain `organization_id` + `organization_name`.
+1. `uv run claude-explorer capture` with an account that has both personal + Cowork → `credentials.json` shows `orgs` array length ≥ 2.
+2. `uv run claude-explorer fetch` → `_index.json` has an `orgs` array with separate counts; individual conversation JSONs contain `organization_id` + `organization_name`.
 3. `curl 'http://localhost:8000/api/conversations?organization_id=<cowork-uuid>'` returns only Cowork conversations.
 4. In the web UI, the new workspace `<Select>` appears (since two orgs exist) and filters correctly. With "Group by project" on, Claude Desktop conversations split into "Personal" / "Cowork" groups.
 5. Run `uv run pytest backend/tests` — existing tests still pass (optional fields default to None).
@@ -81,7 +81,7 @@ Fallback if Cloudflare blocks the curl probe (401/403): add a one-line `print(js
 
 ## Phase 5 — Re-fetch (post-implementation)
 
-After Phases 1-4 land, run `uv run claude-exporter capture` then `uv run claude-exporter fetch --full-refresh`. Existing on-disk JSONs lack the new fields and will appear under the legacy `'Claude Desktop'` group until re-fetched; `--full-refresh` re-tags them all in one pass.
+After Phases 1-4 land, run `uv run claude-explorer capture` then `uv run claude-explorer fetch --full-refresh`. Existing on-disk JSONs lack the new fields and will appear under the legacy `'Claude Desktop'` group until re-fetched; `--full-refresh` re-tags them all in one pass.
 
 ## Risks / open items
 

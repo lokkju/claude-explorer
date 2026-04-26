@@ -8,7 +8,7 @@ Provides 5 tools:
   - export_session: Markdown export of full or partial session
 
 Usage:
-  claude-exporter mcp          # via CLI
+  claude-explorer mcp          # via CLI
   python -m mcp_server.server  # direct
 """
 

@@ -1,10 +1,10 @@
 """
-CLI entry point for claude-exporter.
+CLI entry point for claude-explorer.
 
 Usage:
-    claude-exporter capture [OPTIONS]  Log into Claude and capture credentials
-    claude-exporter fetch [OPTIONS]    Fetch conversations from Claude Desktop API
-    claude-exporter serve [OPTIONS]    Start the web server
+    claude-explorer capture [OPTIONS]  Log into Claude and capture credentials
+    claude-explorer fetch [OPTIONS]    Fetch conversations from Claude Desktop API
+    claude-explorer serve [OPTIONS]    Start the web server
 
 Note: Claude Code sessions are read directly from ~/.claude/projects/
       at runtime - no import step needed.
@@ -19,7 +19,7 @@ import click
 @click.group()
 @click.version_option(version="0.1.0")
 def main():
-    """Claude Desktop Message Exporter - Export and browse your Claude conversations."""
+    """Claude Explorer - Export and browse your Claude conversations."""
     pass
 
 
@@ -72,7 +72,7 @@ def fetch(
     """Fetch all conversations from Claude Desktop.
 
     Requires credentials captured via the mitmproxy addon.
-    Run 'claude-exporter capture' first if you haven't yet.
+    Run 'claude-explorer capture' first if you haven't yet.
     """
     from fetcher.bulk_fetch import ClaudeFetcher, load_credentials
 
@@ -90,7 +90,7 @@ def fetch(
 
     if not session_key or not org_id:
         raise click.ClickException(
-            "Missing credentials. Run 'claude-exporter capture' first."
+            "Missing credentials. Run 'claude-explorer capture' first."
         )
 
     fetcher = ClaudeFetcher(
@@ -192,7 +192,7 @@ def _capture_via_browser(output: Path, timeout: int):
         click.echo(f"   Saved to: {output}")
         click.echo()
         click.echo("   You can now fetch conversations:")
-        click.echo("   claude-exporter fetch")
+        click.echo("   claude-explorer fetch")
         click.echo("=" * 60)
     else:
         click.echo()

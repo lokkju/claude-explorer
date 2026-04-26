@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This proposal outlines a comprehensive keyboard navigation scheme for the Claude Desktop Message Exporter that enables efficient navigation across both the conversation list (sidebar) and individual message turns (detail pane), supporting both Vim and Emacs keyboard modes.
+This proposal outlines a comprehensive keyboard navigation scheme for the Claude Explorer that enables efficient navigation across both the conversation list (sidebar) and individual message turns (detail pane), supporting both Vim and Emacs keyboard modes.
 
 ## Design Team Analysis
 

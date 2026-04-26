@@ -133,7 +133,7 @@ export function FetchDialog({ isOpen, onClose }: FetchDialogProps) {
                     Run this command to log in and capture credentials:
                   </p>
                   <pre className="mt-2 rounded bg-amber-200 px-2 py-1 text-xs font-mono dark:bg-amber-800">
-                    claude-exporter capture
+                    claude-explorer capture
                   </pre>
                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
                     This will open a browser where you can log into Claude normally.

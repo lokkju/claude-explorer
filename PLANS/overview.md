@@ -1,4 +1,4 @@
-# Claude Desktop Message Exporter — Project Plan
+# Claude Explorer — Project Plan
 
 This is the **master plan document**. For component-level details, see:
 
@@ -100,7 +100,7 @@ The `content` array contains typed blocks:
 ## Architecture
 
 ```
-claude-desktop-message-exporter/
+claude-explorer/
 ├── README.md
 ├── PLANS/
 │   ├── overview.md                  # This file (master plan)

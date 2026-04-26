@@ -1,5 +1,5 @@
 [project]
-name = "claude-desktop-message-exporter"
+name = "claude-explorer"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-claude-exporter = "fetcher.cli:main"
+claude-explorer = "fetcher.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["fetcher*", "backend*", "mcp_server*"]

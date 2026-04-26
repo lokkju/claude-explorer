@@ -1,4 +1,4 @@
-# Claude Desktop Message Exporter
+# Claude Explorer
 
 A tool to extract, browse, search, and export your Claude conversation history — even if you've lost access to the email address on your account.
 
@@ -130,7 +130,7 @@ The `content` array contains typed blocks:
 ## Project Structure
 
 ```
-claude-desktop-message-exporter/
+claude-explorer/
 ├── README.md
 ├── CLAUDE.md                 # Development guide
 ├── pyproject.toml            # Python dependencies + CLI entry point
@@ -140,7 +140,7 @@ claude-desktop-message-exporter/
 │   ├── backend.md            # Backend API design and test plan
 │   └── frontend.md           # Frontend design and test plan
 ├── fetcher/
-│   ├── cli.py                # CLI entry point (claude-exporter command)
+│   ├── cli.py                # CLI entry point (claude-explorer command)
 │   ├── playwright_capture.py # Browser-based credential capture (default)
 │   ├── mitmproxy_addon.py    # Proxy-based credential capture (--proxy)
 │   └── bulk_fetch.py         # Downloads all conversations to local JSON
@@ -166,8 +166,8 @@ claude-desktop-message-exporter/
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone and install
-git clone https://github.com/youruser/claude-desktop-message-exporter
-cd claude-desktop-message-exporter
+git clone https://github.com/youruser/claude-explorer
+cd claude-explorer
 uv sync
 
 # Install Playwright browsers (for browser-based credential capture)
@@ -183,10 +183,10 @@ There are two methods to capture credentials. Choose the one that fits your situ
 The simplest approach — opens a browser window where you log into Claude normally:
 
 ```bash
-uv run claude-exporter capture
+uv run claude-explorer capture
 ```
 
-This opens Chromium, navigates to claude.ai, and waits for you to log in. Once authenticated, credentials are automatically extracted and saved to `~/.claude-exporter/credentials.json`.
+This opens Chromium, navigates to claude.ai, and waits for you to log in. Once authenticated, credentials are automatically extracted and saved to `~/.claude-explorer/credentials.json`.
 
 **Options:**
 - `--timeout N` — Max seconds to wait for login (default: 300)
@@ -197,7 +197,7 @@ Use this method when you **can't log into the web UI** but Claude Desktop is sti
 
 ```bash
 # Terminal 1 — start the proxy (requires ANSI terminal)
-uv run claude-exporter capture --proxy
+uv run claude-explorer capture --proxy
 
 # Terminal 2 — launch Claude Desktop through the proxy
 open -a "Claude" --args --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
@@ -228,15 +228,15 @@ claude --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 
 ---
 
-Both methods save credentials to `~/.claude-exporter/credentials.json`.
+Both methods save credentials to `~/.claude-explorer/credentials.json`.
 
 ### Step 2: Download Your Conversations
 
 ```bash
-uv run claude-exporter fetch
+uv run claude-explorer fetch
 ```
 
-This downloads all your conversations as JSON files to `~/.claude-exporter/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded.
+This downloads all your conversations as JSON files to `~/.claude-explorer/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded.
 
 Options:
 - `--full-refresh` — Re-download all conversations
@@ -246,7 +246,7 @@ Options:
 ### Step 3: Browse and Export
 
 ```bash
-uv run claude-exporter serve
+uv run claude-explorer serve
 ```
 
 Opens the web app at `http://localhost:8000`.
@@ -277,23 +277,23 @@ The project ships with a built-in **Model Context Protocol** server that lets Cl
 | `get_messages` | Full message content for specific positions or UUIDs, with optional tool calls/results |
 | `export_session` | Markdown export of a full or partial session |
 
-The server runs over **stdio** (no network port) and reads from the same `~/.claude-exporter/conversations/` directory the web UI uses.
+The server runs over **stdio** (no network port) and reads from the same `~/.claude-explorer/conversations/` directory the web UI uses.
 
 ### Prerequisites
 
 Make sure the project is installed and conversations have been fetched at least once:
 
 ```bash
-cd /path/to/claude-desktop-message-exporter
+cd /path/to/claude-explorer
 uv sync
-uv run claude-exporter capture   # one-time
-uv run claude-exporter fetch
+uv run claude-explorer capture   # one-time
+uv run claude-explorer fetch
 ```
 
-The MCP entry point is `claude-exporter mcp`. You can verify it works standalone:
+The MCP entry point is `claude-explorer mcp`. You can verify it works standalone:
 
 ```bash
-uv run --directory /path/to/claude-desktop-message-exporter claude-exporter mcp
+uv run --directory /path/to/claude-explorer claude-explorer mcp
 # (prints nothing; it's waiting for MCP JSON-RPC on stdin — Ctrl+C to exit)
 ```
 
@@ -303,7 +303,7 @@ The simplest path is the `claude mcp add` CLI, which writes the config for you:
 
 ```bash
 claude mcp add claude-sessions \
-  -- uv run --directory /absolute/path/to/claude-desktop-message-exporter claude-exporter mcp
+  -- uv run --directory /absolute/path/to/claude-explorer claude-explorer mcp
 ```
 
 Use `--scope user` to make it available in every project, or `--scope project` (default) to scope it to the current repo (writes to `.mcp.json`).
@@ -327,8 +327,8 @@ Or edit the config files directly:
       "args": [
         "run",
         "--directory",
-        "/absolute/path/to/claude-desktop-message-exporter",
-        "claude-exporter",
+        "/absolute/path/to/claude-explorer",
+        "claude-explorer",
         "mcp"
       ]
     }
@@ -357,8 +357,8 @@ Config path:
       "args": [
         "run",
         "--directory",
-        "/Users/YOU/Source/claude-desktop-message-exporter",
-        "claude-exporter",
+        "/Users/YOU/Source/claude-explorer",
+        "claude-explorer",
         "mcp"
       ]
     }
@@ -384,8 +384,8 @@ Config path:
       "args": [
         "run",
         "--directory",
-        "C:\\Users\\YOU\\Source\\claude-desktop-message-exporter",
-        "claude-exporter",
+        "C:\\Users\\YOU\\Source\\claude-explorer",
+        "claude-explorer",
         "mcp"
       ]
     }
@@ -410,8 +410,8 @@ Config path:
       "args": [
         "run",
         "--directory",
-        "/home/YOU/Source/claude-desktop-message-exporter",
-        "claude-exporter",
+        "/home/YOU/Source/claude-explorer",
+        "claude-explorer",
         "mcp"
       ]
     }
@@ -430,12 +430,12 @@ In Claude Code you can also run `/mcp` to see the server status and the list of 
 ### Troubleshooting
 
 - **"command not found: uv"** — the MCP client doesn't see your shell `PATH`. Use the absolute path to `uv` in `command`.
-- **"Session not found" / empty results** — run `uv run claude-exporter fetch` first; the MCP server reads from `~/.claude-exporter/conversations/`.
+- **"Session not found" / empty results** — run `uv run claude-explorer fetch` first; the MCP server reads from `~/.claude-explorer/conversations/`.
 - **Need to use a non-default data dir** — set `CLAUDE_EXPORTER_DATA_DIR` via an `env` block in the MCP config:
   ```json
   "env": { "CLAUDE_EXPORTER_DATA_DIR": "/path/to/conversations" }
   ```
-- **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-exporter/cache.db`. Delete that file to force a full rebuild.
+- **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-explorer/cache.db`. Delete that file to force a full rebuild.
 
 ---
 

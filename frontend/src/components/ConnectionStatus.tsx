@@ -174,7 +174,7 @@ export function ConnectionStatus() {
                   </p>
                   <p>Make sure the server is running:</p>
                   <pre className="rounded bg-zinc-100 p-2 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                    claude-exporter serve
+                    claude-explorer serve
                   </pre>
                 </>
               )}

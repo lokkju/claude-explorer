@@ -77,7 +77,7 @@ test.describe('Connection Status', () => {
     await expect(page.getByText(/Unable to connect.*after 5 attempts/)).toBeVisible();
 
     // Should show the help text
-    await expect(page.getByText('claude-exporter serve')).toBeVisible();
+    await expect(page.getByText('claude-explorer serve')).toBeVisible();
 
     // Should have both Dismiss and Try Again buttons
     await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible();

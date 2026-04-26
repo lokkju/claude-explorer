@@ -166,7 +166,7 @@ export function SettingsPage() {
                 <strong className="text-zinc-900 dark:text-zinc-100">Claude Explorer</strong> - Browse and export your Claude conversations
               </p>
               <a
-                href="https://github.com/anthropics/claude-desktop-message-exporter"
+                href="https://github.com/anthropics/claude-explorer"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-blue-600 hover:underline dark:text-blue-400"
