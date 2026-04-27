@@ -81,14 +81,26 @@ Fallback if Cloudflare blocks the curl probe (401/403): add `print(json.dumps(da
 
 ## Design decisions
 
-### Migration timing and startup invisibility (NEW2-P0-α)
+### Migration timing and startup invisibility (NEW2-P0-α, NEW3-P0-A, NEW3-P0-B)
 
-A naive split — `migrate_to_v2()` only runs inside the Fetch button's SSE handler, while `store.py` globs only `by-org/*/*.json` — produces a fatal first-launch experience: after upgrade, the user opens the app, sees **zero conversations**, panics, files a bug. Two conditions must hold simultaneously to avoid this:
+A naive split — `migrate_to_v2()` only runs inside the Fetch button's SSE handler, while `store.py` globs only `by-org/*/*.json` — produces a fatal first-launch experience: after upgrade, the user opens the app, sees **zero conversations**, panics, files a bug. The fix is multi-layered:
 
-1. **`store.py` falls back to legacy globbing while the migration sentinel is absent.** When `by-org/.migrated_v2` does not exist, `_get_conversation_files()` returns `data_dir.glob("by-org/*/*.json") + [p for p in data_dir.glob("*.json") if re.fullmatch(r'[0-9a-f-]{36}\.json', p.name)]`. The latter set is excluded the moment the sentinel appears (the migration wrote them all into `by-org/`).
-2. **Migration runs at server startup, not just on Fetch.** `backend/main.py` lifespan handler calls `migrate_to_v2()` synchronously after the data-dir check. For huge data dirs (10k+ files), this can take seconds — that's still vastly preferable to "list shows nothing." A `--skip-migration` env override is provided for users who want to defer.
+1. **`store.py` falls back to legacy globbing while the migration sentinel is absent**, with **load-path dedup** (NEW3-P0-A). When `by-org/.migrated_v2` does not exist, `_get_conversation_files()` returns:
+   ```python
+   by_org = list(data_dir.glob("by-org/*/*.json"))
+   legacy = [p for p in data_dir.glob("*.json")
+             if re.fullmatch(r'[0-9a-f-]{36}\.json', p.name)]
+   # Dedup by UUID: prefer by-org copy when both exist
+   seen_uuids = {p.stem for p in by_org}
+   return by_org + [p for p in legacy if p.stem not in seen_uuids]
+   ```
+   Without this dedup, a window opens between Commits 3 and 4: bulk_fetch writes new conversation `X` to `by-org/<org>/X.json`, but the legacy `data_dir/X.json` still exists pre-migration → UI renders X twice. Dedup at the load layer eliminates the duplicate. The legacy set empties entirely the moment the sentinel appears (migration moved everything).
 
-Both conditions ship in the same commit (Commit 4 in the implementation sequence at the bottom of this doc). Either alone leaves a window where data appears lost.
+2. **Migration runs at server startup, not just on Fetch — but non-fatally** (NEW3-P0-B). `backend/main.py` lifespan handler calls `migrate_to_v2(timeout_seconds=10)`. If the lock is held (a long-running CLI fetch may hold it for minutes), the lifespan handler logs `"Migration deferred: .fetch.lock held by <metadata>"` and **starts the server anyway**. A FastAPI background task (or a 60s-interval scheduled retry) re-attempts migration until success. While migration is deferred, `store.py`'s legacy fallback continues to surface all data, so the user never sees zero conversations. The plan's prior implication that startup blocks on the lock is wrong — startup must always succeed; migration is best-effort. Skip entirely with `CLAUDE_EXPORTER_SKIP_MIGRATION=1`.
+
+3. **Migration runs explicitly via `claude-explorer migrate`** for users who prefer offline migration on huge data dirs.
+
+All three conditions ship in the same commit (Commit 4 in the implementation sequence at the bottom of this doc). Any one alone leaves a window where data appears lost or duplicated.
 
 ### Capture-path preserves user state (NEW2-P0-β, NEW2-P0-θ)
 
@@ -150,8 +162,9 @@ Real fix: extract a shared module.
   creds["schema_version"] = 2
   creds["orgs"] = [{"uuid": creds["org_id"], "name": None, "capabilities": []}]
   creds["primary_org_id"] = creds["org_id"]
+  creds["legacy_migration_target"] = creds["org_id"]   # NEW3-P0-C
   ```
-  and **returns the upgraded dict in memory only** — no automatic disk rewrite. The next legitimate write (next capture, next save_credentials call) persists the v2 shape.
+  The `legacy_migration_target` synthesis is critical: if a user upgrades their binary and starts `claude-explorer serve` *before* recapturing, the lifespan migration must still route legacy untagged files to the v1 `org_id` (definitionally Personal pre-multi-org) rather than dumping them all into `_unknown_source/`. The function **returns the upgraded dict in memory only** — no automatic disk rewrite. The next legitimate write (next capture, next `save_credentials` call) persists the v2 shape.
 - `save_credentials()` writes atomically (see Atomic writes below) and always emits `schema_version: 2`.
 
 ### Primary org selection (P1-4, NEW-P0-B)
@@ -172,20 +185,38 @@ The user sees demotions in the FetchDialog summary as a banner. They can overrid
 
 ### Atomic credentials writes (P0-5)
 
-All `credentials.json` writes go through `fetcher/credentials.py::save_credentials()`:
+All `credentials.json` writes go through `fetcher/credentials.py::save_credentials()` (precise pseudocode that matches the prose below — NEW3-P2-A):
 
 ```python
 def save_credentials(creds: CredentialsV2, path: Path) -> None:
     _validate(creds)                       # raise if shape is wrong
     tmp = path.with_suffix(".json.tmp")
     bak = path.with_suffix(".json.bak")
-    with open(tmp, "w") as f:
-        json.dump(creds, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    if path.exists():
-        os.replace(path, bak)              # last-known-good
-    os.replace(tmp, path)                  # atomic on POSIX
+    prev_bak = path.with_suffix(".json.bak.prev")
+    lock_path = path.with_suffix(".json.lock")
+    with portalocker.Lock(lock_path, timeout=10):
+        # Step 1: preserve the prior .bak under .bak.prev so we can
+        # delete it cleanly after the new write succeeds.
+        if bak.exists():
+            os.replace(bak, prev_bak)
+        # Step 2: write tmp + fsync, restrict perms (best-effort on Windows).
+        with open(tmp, "w") as f:
+            json.dump(creds, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp, 0o600)           # NEW2-P2-α: best-effort on POSIX
+        except OSError as e:
+            log.warning("chmod 0o600 failed (likely Windows): %s", e)
+        # Step 3: rotate current → .bak (last-known-good for crash recovery).
+        if path.exists():
+            os.replace(path, bak)
+        # Step 4: install new file.
+        os.replace(tmp, path)              # atomic on POSIX + Windows
+        # Step 5: atomicity is now guaranteed — drop the now-redundant .bak.prev
+        # to prevent stale session keys from leaking past the next rotation.
+        if prev_bak.exists():
+            prev_bak.unlink()
 ```
 
 `os.replace` guarantees *file-level* atomicity on both POSIX and Windows, but **not state-level atomicity** under read-modify-write. Pass-2 dropped `fcntl.flock` for Windows compat; Pass-3 must address the lost-update race that re-emerged (NEW-P0-A): if `playwright_capture` (terminal A) and `mitmproxy_addon` (terminal B) both load creds, each merges a different subset of orgs, last writer wins and the org list is silently truncated. Mitm's "save on every new org" pattern (line 172) makes this more frequent.
@@ -217,7 +248,7 @@ def save_credentials(creds: CredentialsV2, path: Path) -> None:
             prev_bak.unlink()
 ```
 
-`.bak` retention (NEW-P1-H): the prior implementation kept `.bak` indefinitely, leaking stale session keys after re-capture. New rule: at the start of each save, rename any existing `.bak` to `.bak.prev`; at the end, delete `.bak.prev`. This guarantees `.bak` exists only during the write window. Add a `claude-explorer wipe-creds` subcommand for explicit teardown that removes `credentials.json`, `.bak`, `.bak.prev`, `.lock`, and any tmp residue.
+`.bak` retention (NEW-P1-H, NEW3-P2-A): the prior implementation kept `.bak` indefinitely, leaking stale session keys after re-capture. New rule (precisely matching the pseudocode above): at the start of each save, rename any existing `.bak` to `.bak.prev`; rotate the current creds to a fresh `.bak` (the new last-known-good); install the new tmp as the live file; finally delete `.bak.prev`. After every successful save, exactly **one** backup copy exists (`.bak`, holding the *immediately prior* version, never anything older). A crash mid-rotation leaves either `.bak` or `.bak.prev` present — both are valid recovery sources. Add a `claude-explorer wipe-creds` subcommand for explicit teardown that removes `credentials.json`, `.bak`, `.bak.prev`, `.lock`, and any tmp residue.
 
 `_validate` rejects partial/malformed inputs before the tmp file is opened.
 
@@ -248,7 +279,13 @@ Replace blanket `try/except: log + continue` with explicit per-org status:
 
 **Concurrent fetch lock (NEW-P2-N).** A `data_dir/.fetch.lock` file (created via `portalocker`) prevents simultaneous CLI + UI fetches from racing on `_index.json`. Second attempt fails with `FetchInProgress` ("Another fetch is running. Wait or check `data_dir/.fetch.lock` if you believe this is stale.").
 
-### `_index.json` schema (P1-3)
+### `_index.json` schema across the rollout (P1-3, NEW3-P1-A, NEW3-P1-C)
+
+**Single shape from Commit 3 onward.** Every commit that writes `_index.json` writes the v2 schema below. The legacy single-org code path (`bulk_fetch.run()` shim) writes a v2 record with exactly one entry in `orgs`. `store.py`'s reader uses `schema_version` dispatch and tolerates both shapes for read-only consumers, but writers always emit v2 — no mid-rollout shape drift.
+
+**Failure does not erase prior counts (NEW3-P1-C).** When an org's run ends with `status: failed` or `status: skipped`, the writer **preserves** `last_successful_fetched_count` and `last_successful_fetched_at` from the prior `_index.json` (read just before writing). UI surfaces "Cowork: 800 conversations (last fetch failed at 2026-04-26 — retry?)" instead of "0 conversations." Filesystem remains the authoritative source for actual conversation counts (NEW2-P1-ζ); `_index.json` is the status ledger only.
+
+
 
 ```json
 {
@@ -260,6 +297,8 @@ Replace blanket `try/except: log + continue` with explicit per-org status:
       "name": "Personal",
       "status": "ok",
       "fetched_count": 87,
+      "last_successful_fetched_count": 87,
+      "last_successful_fetched_at": "2026-04-26T...Z",
       "skipped_count": 0,
       "error_code": null,
       "error_message": null,
@@ -270,6 +309,8 @@ Replace blanket `try/except: log + continue` with explicit per-org status:
       "name": "Cowork",
       "status": "skipped",
       "fetched_count": 0,
+      "last_successful_fetched_count": 800,
+      "last_successful_fetched_at": "2026-04-25T...Z",
       "skipped_count": 0,
       "error_code": "HTTP_403",
       "error_message": "Forbidden"
@@ -417,6 +458,13 @@ Tests are explicit, not implicit. Each Council finding gets a concrete test.
 | `test_conversations::test_untagged_visible_under_all_workspaces` | NEW2-P0-η. JSON with `organization_id=null` is visible when sidebar selects "All workspaces"; absent when a specific org is selected. |
 | `test_conversations::test_grouping_consistent_with_sidebar_fallback` | NEW2-P1-β. Mitm-only-captured org (real `organization_id`, null `organization_name`) groups under `Workspace (<prefix>)` matching the Sidebar selector entry, not "Untagged". |
 | `test_index_reconciliation::test_filesystem_authoritative_for_list` | NEW-P1-ζ-followup. After a crash where files exist on disk but `_index.json` lacks `status: ok`, conversation list still surfaces them; FetchDialog shows "Index possibly stale (count mismatch)" warning. |
+| `test_credentials::test_v1_load_synthesizes_legacy_migration_target_in_memory` | NEW3-P0-C. `load_credentials(v1_file)` returns a dict with `legacy_migration_target == old["org_id"]`, even though no disk write has occurred. |
+| `test_store::test_legacy_fallback_dedupes_by_uuid` | NEW3-P0-A. Top-level `X.json` and `by-org/<org>/X.json` both exist; sentinel absent; `_get_conversation_files()` returns the `by-org/` copy only (1 entry, not 2). |
+| `test_startup::test_lifespan_migration_non_fatal_on_lock_contention` | NEW3-P0-B. Hold `.fetch.lock` in another process; restart server; assert lifespan handler completes (server reachable) and a deferred-migration log line was emitted. |
+| `test_startup::test_lifespan_migration_retries_after_lock_release` | NEW3-P0-B. Continuation of above: release the lock; within retry interval, sentinel appears and conversations are migrated. |
+| `test_index::test_writes_v2_schema_from_commit3_onward` | NEW3-P1-A. After Commit 3 single-org `bulk_fetch.run()`, `_index.json` has `schema_version: 2` and `orgs: [<one entry>]`. |
+| `test_index::test_failed_run_preserves_last_successful_counts` | NEW3-P1-C. Run 1 succeeds for orgB with 800 conversations. Run 2 fails for orgB. `_index.json` shows `fetched_count: 0, last_successful_fetched_count: 800, last_successful_fetched_at: <run1 time>`. |
+| `test_credentials::test_bak_lifecycle_matches_pseudocode` | NEW3-P2-A. After two consecutive saves, exactly one `.bak` exists (holding the V1 contents); no `.bak.prev` survives; live file holds V2. Crash injection between Step 1 (rename to .bak.prev) and Step 4 (install new): both `.bak.prev` (V0) and the original live file (V1) survive — recovery is possible. |
 
 ## Verification
 
@@ -510,6 +558,18 @@ After Phases 1-4 land, run `uv run claude-explorer capture` then `uv run claude-
 | NEW2-P1-η Migration "stuck-as-Personal" via UUID dedup | Should-fix | `bulk_fetch.py` row mandates no global UUID-only dedup; `test_no_global_uuid_only_dedup` static check |
 | NEW2-P2-α `os.chmod` Windows / failure handling | Nice-to-have | "Atomic credentials writes" wraps chmod in try/except; skipped on Windows |
 
+### Pass-4 Council resolutions (Round 4 review of the post-Pass-3 plan)
+
+| Finding | Severity | Resolution location |
+|---|---|---|
+| NEW3-P0-A Commit 3 dual-glob produces duplicate-rendered conversations | Blocker | "Migration timing and startup invisibility" — `store.py` legacy fallback dedupes by UUID at load layer; `bulk_fetch.py` row in commit table mandates dedup |
+| NEW3-P0-B Lifespan migration crashes when CLI fetch holds lock | Blocker | "Migration timing and startup invisibility" — lifespan migration is non-fatal on lock contention; logs and retries via background task |
+| NEW3-P0-C `legacy_migration_target` `None` post-server-restart pre-recapture | Blocker | `load_credentials()` v1→v2 in-memory upgrade synthesizes `legacy_migration_target = creds["org_id"]`; new `test_v1_load_synthesizes_legacy_migration_target_in_memory` |
+| NEW3-P1-A `_index.json` schema undefined during Commits 3–5 | Should-fix | "`_index.json` schema across the rollout" — single v2 shape from Commit 3 onward; legacy single-org shim writes v2 with one-element `orgs` |
+| NEW3-P1-B Commit 5 ships UI selector before Commit 6 backs it | Should-fix | Implementation sequence reordered — multi-org fetch backend (formerly C6) ships as Commit 5; UI selector (formerly C5) ships as Commit 6 |
+| NEW3-P1-C Failed run erases prior `_index.json` org counts | Should-fix | "`_index.json` schema across the rollout" — preserves `last_successful_fetched_count` + `last_successful_fetched_at` across failure; UI surfaces "last successful: N at <date>" |
+| NEW3-P2-A Atomic-write pseudocode disagrees with prose on `.bak.prev` | Cleanup | "Atomic credentials writes" pseudocode rewritten with explicit Step 1 `.bak → .bak.prev` rename; prose updated to match |
+
 ## Implementation sequence (commit ordering, derived from Round 3 dependency analysis)
 
 The Edits table is **not** a flat list of independently-implementable rows. Round 3 surfaced these dependency cycles:
@@ -521,13 +581,13 @@ The Edits table is **not** a flat list of independently-implementable rows. Roun
 5. `Sidebar.tsx` + `useOrgs.ts` + `routers/orgs.py` are a frontend/backend pair — must ship together.
 6. The capture path's `legacy_migration_target` field (NEW2-P0-β) must land **before** `migrate_to_v2.py` so no production user can hit the misattribution race.
 
-**Recommended commit sequence:**
+**Recommended commit sequence (revised — NEW3-P1-A, NEW3-P1-B):**
 
 | # | Files | Verification |
 |---|---|---|
-| 1 | `pyproject.toml` (portalocker) + `fetcher/credentials.py` + credential tests | Unit tests green; manual: load v1 file in REPL, observe in-memory upgrade |
-| 2 | `playwright_capture.py` + `mitmproxy_addon.py` (with `legacy_migration_target` field) + capture tests | Recapture preserves `primary_org_id` and `legacy_migration_target`; `test_lost_update_race_prevented` passes |
-| 3 | Per-org subdir layout in `bulk_fetch.py`, `local_claude_code.py`, `store.py` simultaneously + tests. **No migration yet** — `store.py` falls back to globbing top level if `.migrated_v2` sentinel absent | Conversations stay visible whether stored at top level or in `by-org/`; new files written to `by-org/` during fetch |
-| 4 | `fetcher/migrate_to_v2.py` + `claude-explorer migrate` CLI + `backend/main.py` lifespan migration + SSE migration events | Drop legacy data → restart server → migration runs at startup → sentinel appears → conversations now under `by-org/` and remain visible throughout |
-| 5 | `routers/orgs.py` + `frontend/src/hooks/useOrgs.ts` + `Sidebar.tsx` (with "All workspaces") + `ConversationList.tsx` group key fallback | Sidebar selector renders correctly across all three `useOrgs` states; mitm-only-captured orgs display consistently |
-| 6 | `routers/fetch.py` SSE adaptation + `bulk_fetch.run_all_orgs()` (heartbeat + per-org-status + demotion persistence) + remaining CLI subcommands (`list-orgs`, `set-primary-org`, `wipe-creds`, `unlock-fetch`) | Full E2E: capture → fetch → primary 403 → auto-demote with banner → resume; long 429 wait does not drop EventSource |
+| 1 | `pyproject.toml` (portalocker) + `fetcher/credentials.py` + credential tests. **`load_credentials()` v1→v2 in-memory upgrade synthesizes `legacy_migration_target = old["org_id"]`** (NEW3-P0-C). | Unit tests green; manual: load v1 file in REPL, observe in-memory upgrade including `legacy_migration_target` |
+| 2 | `playwright_capture.py` + `mitmproxy_addon.py` (with `legacy_migration_target` written at capture time) + capture tests | Recapture preserves `primary_org_id` and `legacy_migration_target`; `test_lost_update_race_prevented` passes |
+| 3 | Per-org subdir layout in `bulk_fetch.py`, `local_claude_code.py`, `store.py` simultaneously + tests. **`store.py`'s legacy fallback dedupes by UUID at the load layer** (NEW3-P0-A). **`bulk_fetch._index.json` writer emits v2 schema with single-element `orgs` array** so Commits 3-5 don't write v1 shape (NEW3-P1-A). **No migration yet** — `store.py` falls back to globbing top level if `.migrated_v2` sentinel absent. | Conversations stay visible whether stored at top level or in `by-org/`; no duplicate rendering during the dual-glob window; new files written to `by-org/` during fetch; `_index.json` written in v2 shape |
+| 4 | `fetcher/migrate_to_v2.py` + `claude-explorer migrate` CLI + `backend/main.py` lifespan migration (**non-fatal on lock contention** per NEW3-P0-B) + SSE migration events | Drop legacy data → restart server → migration runs at startup → sentinel appears → conversations now under `by-org/` and remain visible throughout. Hold `.fetch.lock` from a CLI process during server restart — server still starts, migration retries when lock releases. |
+| 5 | `routers/fetch.py` SSE adaptation + `bulk_fetch.run_all_orgs()` (heartbeat + per-org-status + demotion persistence + `last_successful_fetched_*` preservation per NEW3-P1-C) + remaining CLI subcommands (`list-orgs`, `set-primary-org`, `wipe-creds`, `unlock-fetch`). **Multi-org fetch backend lands BEFORE the UI workspace selector** (NEW3-P1-B reordering — was Commit 6). | Full E2E: capture → fetch all orgs → primary 403 → auto-demote with banner → resume; long 429 wait does not drop EventSource; failed Cowork run preserves `last_successful_fetched_count` in `_index.json` |
+| 6 | `routers/orgs.py` + `frontend/src/hooks/useOrgs.ts` + `Sidebar.tsx` (with "All workspaces") + `ConversationList.tsx` group key fallback. By this point, multi-org fetch is fully wired, so the selector reflects real fetched data. | Sidebar selector renders correctly across all three `useOrgs` states; mitm-only-captured orgs display consistently; selecting Cowork actually returns Cowork conversations |
