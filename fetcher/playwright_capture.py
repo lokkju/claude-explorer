@@ -13,6 +13,7 @@ Or via CLI:
 
 import json
 import asyncio
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -195,11 +196,15 @@ async def capture_credentials(
 
 
 def save_credentials(credentials: dict, path: Path = DEFAULT_CREDENTIALS_PATH) -> None:
-    """Save credentials to file."""
+    """Save credentials to file with 0o600 perms; parent dir 0o700."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
 
-    with open(path, "w") as f:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(credentials, f, indent=2)
+
+    os.chmod(path, 0o600)
 
     click.echo(f"Credentials saved to {path}")
 
