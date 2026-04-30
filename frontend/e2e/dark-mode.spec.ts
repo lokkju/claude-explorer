@@ -22,16 +22,26 @@ test.describe('Dark mode runtime', () => {
 
     // Light mode first: capture body bg.
     await page.click('label:has-text("Light")');
-    const lightBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    // Sample the root layout's main wrapper which carries dark:bg-zinc-950.
+    const sampler = '#root > div';
+    const lightBg = await page.evaluate((sel) => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      return el ? getComputedStyle(el).backgroundColor : '';
+    }, sampler);
     await expect(page.locator('html')).not.toHaveClass(/dark/);
 
     // Switch to dark.
     await page.click('label:has-text("Dark")');
 
     await expect(page.locator('html')).toHaveClass(/dark/);
-    const darkBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    const darkBg = await page.evaluate((sel) => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      return el ? getComputedStyle(el).backgroundColor : '';
+    }, sampler);
 
-    // Dark mode must produce a different (and darker) background than light mode.
+    // Dark mode must produce a different background than light mode.
+    expect(lightBg).not.toBe('');
+    expect(darkBg).not.toBe('');
     expect(darkBg).not.toBe(lightBg);
   });
 });
