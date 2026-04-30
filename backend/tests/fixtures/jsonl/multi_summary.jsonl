@@ -1,0 +1,5 @@
+{"type":"summary","summary":"First Summary - Initial Topic","leafUuid":"leaf-1"}
+{"type":"summary","summary":"Middle Summary","leafUuid":"leaf-2"}
+{"type":"summary","summary":"Final Summary - Latest Topic","leafUuid":"leaf-3"}
+{"type":"user","uuid":"u1","sessionId":"sess-multi","timestamp":"2024-03-01T12:00:00Z","cwd":"/tmp/proj","message":{"role":"user","content":"What is the meaning of life?"}}
+{"type":"assistant","uuid":"a1","sessionId":"sess-multi","timestamp":"2024-03-01T12:00:10Z","message":{"id":"asst_1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"42."}]}}

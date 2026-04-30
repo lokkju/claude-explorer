@@ -154,7 +154,7 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
                     if ts and first_timestamp is None:
                         first_timestamp = ts
 
-                    if entry_type == "summary" and not summary_entry:
+                    if entry_type == "summary":
                         summary_entry = entry
                     elif entry_type == "user":
                         user_count += 1
@@ -237,8 +237,11 @@ def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:
 
 def _extract_conversation_metadata(entries: list[dict], jsonl_path: Path) -> dict:
     """Extract metadata from JSONL entries."""
-    # Find summary entry for name
-    summary_entry = next((e for e in entries if e.get("type") == "summary"), None)
+    # Title rule: last summary entry wins (validated in Inv-2). Multiple summaries
+    # accumulate as the session compacts; the most recent one reflects the active
+    # branch's current topic.
+    summary_entries = [e for e in entries if e.get("type") == "summary"]
+    summary_entry = summary_entries[-1] if summary_entries else None
     name = summary_entry.get("summary") if summary_entry else None
 
     # Get user and assistant messages
