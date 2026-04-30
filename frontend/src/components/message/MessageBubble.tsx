@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { User, Bot, ChevronDown, ChevronRight, Copy, Check, Star } from 'lucide-react'
+import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/contexts/SettingsContext'
@@ -40,6 +40,8 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
   }
 
   const hasVisibleContent = messageHasVisibleContent(message, showToolCalls)
+  const hasToolBlocks = message.content.some((b) => b.type === 'tool_use' || b.type === 'tool_result')
+  const [bubbleToolsCollapsed, setBubbleToolsCollapsed] = useState(false)
 
   // Don't render empty bubbles
   if (!hasVisibleContent) {
@@ -49,6 +51,7 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
   return (
     <div
       data-message-uuid={message.uuid}
+      {...(bubbleToolsCollapsed ? { 'data-collapsed': '' } : {})}
       className={cn(
         'group flex gap-3',
         isHuman ? 'flex-row-reverse' : 'flex-row'
@@ -77,6 +80,18 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
         )}
       >
         <div className="absolute -right-2 -top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          {hasToolBlocks && showToolCalls && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 shadow-sm"
+              onClick={() => setBubbleToolsCollapsed((v) => !v)}
+              title={bubbleToolsCollapsed ? 'Expand tool blocks' : 'Collapse tool blocks'}
+              aria-label={bubbleToolsCollapsed ? 'Expand tools' : 'Collapse tools'}
+            >
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            </Button>
+          )}
           {conversationId && (
             <Button
               variant="ghost"
@@ -130,12 +145,12 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
               <ContentBlockRenderer
                 key={index}
                 block={block}
-                showToolCalls={showToolCalls}
+                showToolCalls={showToolCalls && !bubbleToolsCollapsed}
                 expandAll={expandAllTools}
               />
             ))
           ) : (
-            <MarkdownRenderer content={message.text} showToolCalls={showToolCalls} />
+            <MarkdownRenderer content={message.text} showToolCalls={showToolCalls && !bubbleToolsCollapsed} />
           )}
         </div>
       </div>
