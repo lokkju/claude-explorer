@@ -51,10 +51,13 @@ async def list_conversations(
 
 
 @router.get("/{uuid}", response_model=ConversationDetail)
-async def get_conversation(uuid: str) -> ConversationDetail:
-    """Get a single conversation by UUID."""
+async def get_conversation(
+    uuid: str,
+    leaf: str | None = Query(None, description="Override active branch leaf UUID"),
+) -> ConversationDetail:
+    """Get a single conversation by UUID, optionally on a specific branch."""
     store = get_store()
-    conversation = store.get_conversation(uuid)
+    conversation = store.get_conversation(uuid, leaf_override=leaf)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation

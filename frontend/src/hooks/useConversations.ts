@@ -28,10 +28,12 @@ export function useConversations(filters?: ConversationFilters) {
   return { ...query, data }
 }
 
-export function useConversation(uuid: string) {
+export function useConversation(uuid: string, leaf?: string) {
   return useQuery({
-    queryKey: queryKeys.conversations.detail(uuid),
-    queryFn: () => api.getConversation(uuid),
+    queryKey: leaf
+      ? [...queryKeys.conversations.detail(uuid), 'leaf', leaf]
+      : queryKeys.conversations.detail(uuid),
+    queryFn: () => api.getConversation(uuid, leaf),
     enabled: !!uuid,
     staleTime: Infinity, // Conversation content doesn't change
   })

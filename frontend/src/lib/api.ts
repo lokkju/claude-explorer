@@ -45,7 +45,7 @@ export const api = {
     return fetchJson<ConversationSummary[]>(`/conversations${query ? `?${query}` : ''}`)
   },
 
-  getConversation: async (uuid: string): Promise<ConversationDetail> => {
+  getConversation: async (uuid: string, leaf?: string): Promise<ConversationDetail> => {
     if (USE_MOCK_DATA) {
       await new Promise((resolve) => setTimeout(resolve, 200))
       const detail = mockConversationDetails[uuid]
@@ -54,7 +54,8 @@ export const api = {
       }
       return detail
     }
-    return fetchJson<ConversationDetail>(`/conversations/${uuid}`)
+    const qs = leaf ? `?leaf=${encodeURIComponent(leaf)}` : ''
+    return fetchJson<ConversationDetail>(`/conversations/${uuid}${qs}`)
   },
 
   getConversationTree: (uuid: string): Promise<ConversationTree> =>

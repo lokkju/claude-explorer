@@ -18,7 +18,8 @@ export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const highlightMessageId = searchParams.get('highlight') || searchParams.get('m')
-  const { data: conversation, isLoading, error } = useConversation(uuid || '')
+  const branchLeaf = searchParams.get('leaf') || undefined
+  const { data: conversation, isLoading, error } = useConversation(uuid || '', branchLeaf)
   const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools, hideCompactMarkers, setHideCompactMarkers } = useSettings()
   const { toggleBookmark } = useBookmarks()
   const { isOpen: isSearchPanelOpen } = useSearchPanel()
@@ -503,9 +504,13 @@ export function ConversationPage() {
           isOpen={isTreeOpen}
           onClose={() => setIsTreeOpen(false)}
           onSelectPath={(path) => {
-            // TODO: Implement branch switching by updating the view
-            // For now, just close the modal
-            console.log('Selected path:', path)
+            const leaf = path[path.length - 1]
+            if (!leaf) return
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev)
+              next.set('leaf', leaf)
+              return next
+            })
           }}
         />
       )}

@@ -383,14 +383,25 @@ class ConversationStore:
 
         return None, None
 
-    def get_conversation(self, uuid: str) -> ConversationDetail | None:
-        """Get a single conversation by UUID with resolved active branch."""
+    def get_conversation(self, uuid: str, leaf_override: str | None = None) -> ConversationDetail | None:
+        """Get a single conversation by UUID with resolved active branch.
+
+        Args:
+            uuid: Conversation UUID.
+            leaf_override: If provided, render the branch ending at this message
+                UUID instead of the conversation's stored current leaf.
+        """
         data, file_path = self._find_conversation_data(uuid)
         if not data:
             return None
 
         chat_messages = data.get("chat_messages", [])
-        leaf_uuid = data.get("current_leaf_message_uuid", "")
+        stored_leaf = data.get("current_leaf_message_uuid", "")
+        leaf_uuid = leaf_override or stored_leaf
+        # Validate leaf_override actually exists in this conversation; fall back
+        # to the stored leaf if the caller passed something stale.
+        if leaf_override and not any(m.get("uuid") == leaf_override for m in chat_messages):
+            leaf_uuid = stored_leaf
 
         # Resolve active branch
         if leaf_uuid and chat_messages:
