@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useSearchParams } from 'react-router'
-import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp } from 'lucide-react'
+import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors } from 'lucide-react'
 import { useConversation } from '@/hooks/useConversations'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation, type MessageInfo } from '@/contexts/KeyboardNavigationContext'
@@ -8,6 +8,7 @@ import { useSearchPanel } from '@/contexts/SearchPanelContext'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
+import { CompactMarker } from '@/components/conversation/CompactMarker'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
 import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -15,9 +16,9 @@ import { api } from '@/lib/api'
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
-  const highlightMessageId = searchParams.get('highlight')
+  const highlightMessageId = searchParams.get('highlight') || searchParams.get('m')
   const { data: conversation, isLoading, error } = useConversation(uuid || '')
-  const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools } = useSettings()
+  const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools, hideCompactMarkers, setHideCompactMarkers } = useSettings()
   const { isOpen: isSearchPanelOpen } = useSearchPanel()
   const {
     setMessages,
@@ -35,9 +36,38 @@ export function ConversationPage() {
   const [copiedPath, setCopiedPath] = useState(false)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [showTopButton, setShowTopButton] = useState(false)
+  const [activeCompactIdx, setActiveCompactIdx] = useState<number | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+
+  const compactMarkers = useMemo(
+    () => (hideCompactMarkers ? [] : conversation?.compact_markers ?? []),
+    [conversation?.compact_markers, hideCompactMarkers]
+  )
+
+  const compactMarkerByUuid = useMemo(() => {
+    const map = new Map<string, { marker: typeof compactMarkers[number]; index: number }>()
+    compactMarkers.forEach((marker, index) => {
+      map.set(marker.message_uuid, { marker, index })
+    })
+    return map
+  }, [compactMarkers])
+
+  const isCC = conversation?.source === 'CLAUDE_CODE'
+  const hasCompactMarkers = (conversation?.compact_markers ?? []).length > 0
+
+  const focusCompactMarker = useCallback((index: number) => {
+    if (compactMarkers.length === 0) return
+    const clamped = Math.max(0, Math.min(index, compactMarkers.length - 1))
+    setActiveCompactIdx(clamped)
+    const target = compactMarkers[clamped]
+    if (!target) return
+    const el = document.querySelector(`[data-compact-marker="${target.message_uuid}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [compactMarkers])
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement
@@ -94,6 +124,27 @@ export function ConversationPage() {
     }
   }, [selectedMessageIndex, focusArea, conversation?.messages, getSelectedMessageId])
 
+  // Keyboard: '[' / ']' navigate compact markers within the open conversation.
+  useEffect(() => {
+    if (compactMarkers.length === 0) return
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === ']') {
+        e.preventDefault()
+        focusCompactMarker(activeCompactIdx === null ? 0 : activeCompactIdx + 1)
+      } else if (e.key === '[') {
+        e.preventDefault()
+        focusCompactMarker(activeCompactIdx === null ? compactMarkers.length - 1 : activeCompactIdx - 1)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [compactMarkers, activeCompactIdx, focusCompactMarker])
+
   // Scroll to highlighted message, select it, and focus detail pane
   useEffect(() => {
     if (highlightMessageId && conversation && !isLoading) {
@@ -115,8 +166,13 @@ export function ConversationPage() {
           element.classList.add('ring-2', 'ring-yellow-400', 'ring-offset-2')
           setTimeout(() => {
             element.classList.remove('ring-2', 'ring-yellow-400', 'ring-offset-2')
-            // Clear the highlight param from URL
-            setSearchParams({}, { replace: true })
+            // Clear highlight/m params from URL but preserve everything else.
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev)
+              next.delete('highlight')
+              next.delete('m')
+              return next
+            }, { replace: true })
           }, 2000)
         }
       }, 100)
@@ -282,6 +338,18 @@ export function ConversationPage() {
               <span className="ml-2">{expandAllTools ? 'Collapse' : 'Expand'}</span>
             </Button>
           )}
+          {isCC && hasCompactMarkers && (
+            <Button
+              variant={hideCompactMarkers ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setHideCompactMarkers(!hideCompactMarkers)}
+              title={hideCompactMarkers ? 'Show compact markers' : 'Hide compact markers'}
+              aria-label={hideCompactMarkers ? 'Show compact markers' : 'Hide compact markers'}
+            >
+              <Scissors className="h-4 w-4" />
+              <span className="ml-2">{hideCompactMarkers ? 'Show compact markers' : 'Hide compact markers'}</span>
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -319,6 +387,31 @@ export function ConversationPage() {
             {conversation.messages.map((message) => {
               const selectedId = getSelectedMessageId()
               const isSelected = focusArea === 'detail' && message.uuid === selectedId
+              const compactEntry = compactMarkerByUuid.get(message.uuid)
+              if (compactEntry) {
+                const { marker, index } = compactEntry
+                return (
+                  <div
+                    key={message.uuid}
+                    ref={(el) => {
+                      if (el) {
+                        messageRefs.current.set(message.uuid, el)
+                      } else {
+                        messageRefs.current.delete(message.uuid)
+                      }
+                    }}
+                  >
+                    <CompactMarker
+                      marker={marker}
+                      index={index}
+                      total={compactMarkers.length}
+                      isActive={activeCompactIdx === index}
+                      onPrev={() => focusCompactMarker(index - 1)}
+                      onNext={() => focusCompactMarker(index + 1)}
+                    />
+                  </div>
+                )
+              }
               return (
                 <div
                   key={message.uuid}

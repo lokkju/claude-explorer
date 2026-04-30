@@ -12,6 +12,8 @@ interface SettingsContextType {
   setExpandAllTools: (expand: boolean) => void
   showPhantomSessions: boolean
   setShowPhantomSessions: (show: boolean) => void
+  hideCompactMarkers: boolean
+  setHideCompactMarkers: (hide: boolean) => void
   // Sort and group settings
   sortField: SortField
   setSortField: (field: SortField) => void
@@ -26,6 +28,9 @@ interface SettingsContextType {
   // Keyboard settings
   keyboardMode: KeyboardMode
   setKeyboardMode: (mode: KeyboardMode) => void
+  // Right-pane tab
+  rightPaneTab: 'search' | 'bookmarks'
+  setRightPaneTab: (tab: 'search' | 'bookmarks') => void
 }
 
 const SettingsContext = createContext<SettingsContextType | null>(null)
@@ -61,6 +66,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showToolCalls, setShowToolCalls] = useState(false)
   const [expandAllTools, setExpandAllTools] = useState(false)
   const [showPhantomSessions, setShowPhantomSessions] = useState(false)
+  const [hideCompactMarkers, setHideCompactMarkersState] = useState<boolean>(() =>
+    getStoredValue<boolean>('hideCompactMarkers', false)
+  )
+  const [rightPaneTab, setRightPaneTabState] = useState<'search' | 'bookmarks'>(() =>
+    getStoredValue<'search' | 'bookmarks'>('rightPaneTab', 'search')
+  )
 
   // Sort and group settings with localStorage persistence
   const [sortField, setSortFieldState] = useState<SortField>(() =>
@@ -132,6 +143,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('keyboardMode', JSON.stringify(mode))
   }
 
+  const setHideCompactMarkers = (hide: boolean) => {
+    setHideCompactMarkersState(hide)
+    localStorage.setItem('hideCompactMarkers', JSON.stringify(hide))
+  }
+
+  const setRightPaneTab = (tab: 'search' | 'bookmarks') => {
+    setRightPaneTabState(tab)
+    localStorage.setItem('rightPaneTab', JSON.stringify(tab))
+  }
+
   return (
     <SettingsContext.Provider value={{
       showToolCalls,
@@ -140,6 +161,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setExpandAllTools,
       showPhantomSessions,
       setShowPhantomSessions,
+      hideCompactMarkers,
+      setHideCompactMarkers,
       sortField,
       setSortField,
       sortOrder,
@@ -151,6 +174,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       effectiveTheme,
       keyboardMode,
       setKeyboardMode,
+      rightPaneTab,
+      setRightPaneTab,
     }}>
       {children}
     </SettingsContext.Provider>
