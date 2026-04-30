@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select'
 import { ConversationList } from '@/components/conversation/ConversationList'
 import { FetchDialog } from '@/components/fetch/FetchDialog'
+import { useFetchToast } from '@/components/fetch/FetchToast'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
@@ -36,6 +37,9 @@ export function Sidebar({ className }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [fetchDialogOpen, setFetchDialogOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const { startFetch } = useFetchToast({
+    onOpenDetails: () => setFetchDialogOpen(true),
+  })
   const queryClient = useQueryClient()
   const { sourceFilter, setSourceFilter } = useSourceFilter()
   const { focusArea, setFocusArea } = useKeyboardNavigation()
@@ -224,7 +228,8 @@ export function Sidebar({ className }: SidebarProps) {
             variant="ghost"
             size="icon"
             title="Fetch Claude Desktop conversations"
-            onClick={() => setFetchDialogOpen(true)}
+            aria-label="Fetch Claude Desktop conversations"
+            onClick={() => startFetch(true)}
           >
             <RefreshCw className="h-4 w-4" />
           </Button>

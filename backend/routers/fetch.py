@@ -2,6 +2,7 @@
 
 import json
 import asyncio
+import time
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -18,12 +19,35 @@ from fetcher.bulk_fetch import ClaudeFetcher, load_credentials, DEFAULT_CREDENTI
 router = APIRouter(tags=["fetch"])
 
 
+SESSION_EXPIRED_MESSAGE = (
+    "Session expired or Cloudflare-blocked. "
+    "Re-run claude-explorer capture to refresh credentials."
+)
+
+
+def classify_fetch_error(error_msg: str) -> str:
+    """Map a raw fetch error into a user-actionable message.
+
+    Returns SESSION_EXPIRED_MESSAGE for any 401, any 403 (which Anthropic and
+    Cloudflare both return on auth failures), or any 'cf-mitigated' marker.
+    Otherwise returns the original message prefixed with 'Fetch failed: '.
+    """
+    if not error_msg:
+        return "Fetch failed: unknown error"
+
+    lowered = error_msg.lower()
+    if "401" in error_msg or "403" in error_msg or "cf-mitigated" in lowered:
+        return SESSION_EXPIRED_MESSAGE
+    return f"Fetch failed: {error_msg}"
+
+
 class FetchStatus(BaseModel):
     """Status response for fetch operations."""
     has_credentials: bool
     credentials_path: str
     output_dir: str
     existing_count: int
+    credentials_age_days: int | None = None
 
 
 class FetchProgress(BaseModel):
@@ -43,7 +67,14 @@ async def get_fetch_status() -> FetchStatus:
 
     has_credentials = credentials_path.exists()
 
-    # Count existing conversations
+    credentials_age_days: int | None = None
+    if has_credentials:
+        try:
+            mtime = credentials_path.stat().st_mtime
+            credentials_age_days = int((time.time() - mtime) // 86400)
+        except OSError:
+            credentials_age_days = None
+
     existing_count = 0
     if output_dir.exists():
         existing_count = len([
@@ -56,6 +87,7 @@ async def get_fetch_status() -> FetchStatus:
         credentials_path=str(credentials_path),
         output_dir=str(output_dir),
         existing_count=existing_count,
+        credentials_age_days=credentials_age_days,
     )
 
 
@@ -184,13 +216,14 @@ async def fetch_conversations_stream(
                     fetched_count += 1
             except Exception as e:
                 error_msg = str(e)
-                if "401" in error_msg:
+                lowered = error_msg.lower()
+                if "401" in error_msg or "403" in error_msg or "cf-mitigated" in lowered:
                     yield send_event({
                         "type": "error",
-                        "message": "Session expired. Please re-capture credentials.",
+                        "message": SESSION_EXPIRED_MESSAGE,
                     })
                     return
-                # Continue on other errors
+                # Continue on other per-conversation errors
                 yield send_event({
                     "type": "progress",
                     "message": f"Error fetching {name}: {error_msg}",
@@ -217,7 +250,7 @@ async def fetch_conversations_stream(
     except Exception as e:
         yield send_event({
             "type": "error",
-            "message": f"Fetch failed: {str(e)}",
+            "message": classify_fetch_error(str(e)),
         })
 
 

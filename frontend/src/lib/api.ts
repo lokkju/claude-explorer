@@ -91,6 +91,7 @@ export const api = {
     credentials_path: string
     output_dir: string
     existing_count: number
+    credentials_age_days: number | null
   }> => fetchJson('/fetch/status'),
 
   // Returns EventSource for SSE streaming
