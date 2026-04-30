@@ -24,25 +24,15 @@ async function mockBackend(page: import('@playwright/test').Page) {
   });
 }
 
-async function clearFilters(page: import('@playwright/test').Page) {
-  await page.evaluate(() => {
-    localStorage.removeItem('savedFilters');
-    localStorage.removeItem('activeFilterIds');
-  });
-}
-
 test.describe('Sidebar filters (Build-5)', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
     await mockBackend(page);
-    await page.addInitScript(() => {
-      localStorage.removeItem('savedFilters');
-      localStorage.removeItem('activeFilterIds');
-    });
+    await context.clearCookies();
   });
 
   test('Manage filters button opens the modal', async ({ page }) => {
     await page.goto('/');
-    await clearFilters(page);
+    await page.evaluate(() => { localStorage.removeItem('savedFilters'); localStorage.removeItem('activeFilterIds'); });
     const manage = page.getByRole('button', { name: /manage filters/i });
     await expect(manage).toBeVisible();
     await manage.click();
@@ -51,6 +41,7 @@ test.describe('Sidebar filters (Build-5)', () => {
 
   test('creating an include-glob filter narrows the list and pinning persists', async ({ page }) => {
     await page.goto('/');
+    await page.evaluate(() => { localStorage.removeItem('savedFilters'); localStorage.removeItem('activeFilterIds'); });
     await page.getByRole('button', { name: /manage filters/i }).click();
     await page.getByRole('button', { name: /add filter/i }).click();
 
@@ -67,8 +58,9 @@ test.describe('Sidebar filters (Build-5)', () => {
 
     // Modal closes; chip appears.
     await expect(page.getByRole('dialog', { name: /manage filters/i })).toHaveCount(0);
-    const chip = page.getByRole('button', { name: /MCP work/i });
+    const chip = page.locator('[data-filter-chip]');
     await expect(chip).toBeVisible();
+    await expect(chip).toContainText('MCP work');
 
     // Sidebar list should show only MCP* conversations.
     await expect(page.getByText('MCP server bootstrap')).toBeVisible();
@@ -77,7 +69,8 @@ test.describe('Sidebar filters (Build-5)', () => {
 
     // Pinning persists across reload.
     await page.reload();
-    await expect(page.getByRole('button', { name: /MCP work/i })).toBeVisible();
+    await expect(page.locator('[data-filter-chip]')).toBeVisible();
+    await expect(page.locator('[data-filter-chip]')).toContainText('MCP work');
     await expect(page.getByText('React refactor')).toHaveCount(0);
   });
 
@@ -96,7 +89,7 @@ test.describe('Sidebar filters (Build-5)', () => {
     await expect(page.getByText('React refactor')).toHaveCount(0);
 
     // Click chip to deactivate -> all show.
-    await page.getByRole('button', { name: /^MCP/i }).click();
+    await page.locator('[data-filter-chip][data-filter-active]').click();
     await expect(page.getByText('React refactor')).toBeVisible();
   });
 

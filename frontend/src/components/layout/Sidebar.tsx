@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
+import { useFilters } from '@/contexts/FilterContext'
+import { FilterChipRail } from '@/components/filters/FilterChipRail'
 import { useQueryClient } from '@tanstack/react-query'
 import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor } from 'lucide-react'
 import { Input } from '@/components/ui/input'
@@ -36,6 +38,7 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
 
 export function Sidebar({ className }: SidebarProps) {
   const urlFilters = useUrlFilters()
+  const { activeFilters } = useFilters()
   const [searchQuery, setSearchQuery] = useState(urlFilters.q)
 
   // Keep the search box synced with the URL so deep-links and back/forward both work.
@@ -199,6 +202,11 @@ export function Sidebar({ className }: SidebarProps) {
         </div>
       </div>
 
+      {/* Filter chip rail */}
+      <div className="px-4 pb-2">
+        <FilterChipRail />
+      </div>
+
       {/* Conversation List */}
       <ScrollArea className="flex-1">
         <ConversationList
@@ -211,6 +219,7 @@ export function Sidebar({ className }: SidebarProps) {
           projectSlug={urlFilters.project || undefined}
           titleFilter={urlFilters.title || undefined}
           titleFilterMode={urlFilters.filterMode}
+          activeFilters={activeFilters}
         />
       </ScrollArea>
 

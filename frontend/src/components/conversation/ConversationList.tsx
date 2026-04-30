@@ -5,7 +5,8 @@ import { useConversations } from '@/hooks/useConversations'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import { Badge } from '@/components/ui/badge'
 import { cn, formatDate } from '@/lib/utils'
-import { patternMatches, type FilterMode } from '@/lib/filterEngine'
+import { applyFilters, patternMatches, type Filter, type FilterMode } from '@/lib/filterEngine'
+import { useFilters } from '@/contexts/FilterContext'
 import type { ConversationSummary, SubagentSummary, SourceFilter, SortField, SortOrder } from '@/lib/types'
 
 interface ConversationListProps {
@@ -18,6 +19,7 @@ interface ConversationListProps {
   projectSlug?: string
   titleFilter?: string
   titleFilterMode?: FilterMode
+  activeFilters?: Filter[]
 }
 
 export function ConversationList({
@@ -30,11 +32,13 @@ export function ConversationList({
   projectSlug,
   titleFilter,
   titleFilterMode = 'glob',
+  activeFilters,
 }: ConversationListProps) {
   const { uuid: selectedUuid } = useParams()
   const navigate = useNavigate()
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const { selectedIndex, setSelectedIndex, setConversationIds, focusArea, setNavSource } = useKeyboardNavigation()
+  const { clearAllActive } = useFilters()
   const filters = {
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
@@ -53,8 +57,11 @@ export function ConversationList({
     if (titleFilter) {
       list = list.filter((c) => patternMatches(c.name, titleFilter, titleFilterMode))
     }
+    if (activeFilters && activeFilters.length > 0) {
+      list = applyFilters(list, activeFilters)
+    }
     return list
-  }, [rawConversations, projectSlug, titleFilter, titleFilterMode])
+  }, [rawConversations, projectSlug, titleFilter, titleFilterMode, activeFilters])
 
   // Register conversation IDs with navigation context (in display order: starred first)
   useEffect(() => {
@@ -97,6 +104,28 @@ export function ConversationList({
   }
 
   if (!conversations || conversations.length === 0) {
+    const totalLoaded = rawConversations?.length ?? 0
+    const activeCount = activeFilters?.length ?? 0
+    const hidByFilters = totalLoaded > 0 && (activeCount > 0 || !!titleFilter || !!projectSlug)
+    if (hidByFilters) {
+      return (
+        <div className="p-4 text-sm text-zinc-600 dark:text-zinc-400">
+          <div className="mb-2">
+            All {totalLoaded} conversations hidden by {activeCount} active filter{activeCount === 1 ? '' : 's'}
+            {titleFilter && ' and a URL title filter'}
+            {projectSlug && ` and project=${projectSlug}`}
+            .
+          </div>
+          <button
+            type="button"
+            onClick={clearAllActive}
+            className="rounded border border-zinc-300 bg-white px-3 py-1 text-xs hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+          >
+            Clear all filters
+          </button>
+        </div>
+      )
+    }
     return (
       <div className="p-4 text-sm text-zinc-500">
         {searchQuery ? 'No conversations found' : 'No conversations yet'}

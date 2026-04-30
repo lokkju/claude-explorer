@@ -7,6 +7,7 @@ import { SettingsProvider, useSettings } from '@/contexts/SettingsContext'
 import { SourceFilterProvider } from '@/contexts/SourceFilterContext'
 import { SearchPanelProvider } from '@/contexts/SearchPanelContext'
 import { KeyboardNavigationProvider } from '@/contexts/KeyboardNavigationContext'
+import { FilterProvider } from '@/contexts/FilterContext'
 import { RootLayout } from '@/components/layout/RootLayout'
 import { ConversationPage } from '@/routes/ConversationPage'
 import { SettingsPage } from '@/routes/SettingsPage'
@@ -40,6 +41,7 @@ function App() {
       <SettingsProvider>
         <ThemeApplier>
           <SourceFilterProvider>
+            <FilterProvider>
             <SearchPanelProvider>
               <BrowserRouter>
                 <KeyboardNavigationProvider>
@@ -59,6 +61,7 @@ function App() {
               <Toaster position="bottom-right" />
               <ConnectionStatus />
             </SearchPanelProvider>
+            </FilterProvider>
           </SourceFilterProvider>
         </ThemeApplier>
       </SettingsProvider>

@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router';
 import { SettingsProvider } from '../contexts/SettingsContext';
 import { SourceFilterProvider } from '../contexts/SourceFilterContext';
 import { KeyboardNavigationProvider } from '../contexts/KeyboardNavigationContext';
+import { FilterProvider } from '../contexts/FilterContext';
 
 // Create a fresh QueryClient for each test
 function createTestQueryClient() {
@@ -30,11 +31,13 @@ function AllProviders({ children }: WrapperProps) {
     <QueryClientProvider client={queryClient}>
       <SettingsProvider>
         <SourceFilterProvider>
-          <BrowserRouter>
-            <KeyboardNavigationProvider>
-              {children}
-            </KeyboardNavigationProvider>
-          </BrowserRouter>
+          <FilterProvider>
+            <BrowserRouter>
+              <KeyboardNavigationProvider>
+                {children}
+              </KeyboardNavigationProvider>
+            </BrowserRouter>
+          </FilterProvider>
         </SourceFilterProvider>
       </SettingsProvider>
     </QueryClientProvider>
