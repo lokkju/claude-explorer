@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
+import { useUrlFilters } from '@/hooks/useUrlFilters'
 import { useQueryClient } from '@tanstack/react-query'
 import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor } from 'lucide-react'
 import { Input } from '@/components/ui/input'
@@ -34,7 +35,13 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
 ]
 
 export function Sidebar({ className }: SidebarProps) {
-  const [searchQuery, setSearchQuery] = useState('')
+  const urlFilters = useUrlFilters()
+  const [searchQuery, setSearchQuery] = useState(urlFilters.q)
+
+  // Keep the search box synced with the URL so deep-links and back/forward both work.
+  useEffect(() => {
+    setSearchQuery(urlFilters.q)
+  }, [urlFilters.q])
   const [fetchDialogOpen, setFetchDialogOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const { startFetch } = useFetchToast({
@@ -201,6 +208,9 @@ export function Sidebar({ className }: SidebarProps) {
           sortField={sortField}
           sortOrder={sortOrder}
           groupByProject={groupByProject}
+          projectSlug={urlFilters.project || undefined}
+          titleFilter={urlFilters.title || undefined}
+          titleFilterMode={urlFilters.filterMode}
         />
       </ScrollArea>
 

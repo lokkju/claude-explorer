@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { Star, GitBranch, Terminal, MessageSquare, ChevronRight, Bot, FolderCode, ChevronDown } from 'lucide-react'
 import { useConversations } from '@/hooks/useConversations'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import { Badge } from '@/components/ui/badge'
 import { cn, formatDate } from '@/lib/utils'
+import { patternMatches, type FilterMode } from '@/lib/filterEngine'
 import type { ConversationSummary, SubagentSummary, SourceFilter, SortField, SortOrder } from '@/lib/types'
 
 interface ConversationListProps {
@@ -14,6 +15,9 @@ interface ConversationListProps {
   sortField?: SortField
   sortOrder?: SortOrder
   groupByProject?: boolean
+  projectSlug?: string
+  titleFilter?: string
+  titleFilterMode?: FilterMode
 }
 
 export function ConversationList({
@@ -23,6 +27,9 @@ export function ConversationList({
   sortField = 'updated_at',
   sortOrder = 'desc',
   groupByProject = false,
+  projectSlug,
+  titleFilter,
+  titleFilterMode = 'glob',
 }: ConversationListProps) {
   const { uuid: selectedUuid } = useParams()
   const navigate = useNavigate()
@@ -35,7 +42,19 @@ export function ConversationList({
     sort: sortField,
     sortOrder: sortOrder,
   }
-  const { data: conversations, isLoading, error } = useConversations(filters)
+  const { data: rawConversations, isLoading, error } = useConversations(filters)
+
+  const conversations = useMemo(() => {
+    if (!rawConversations) return rawConversations
+    let list = rawConversations
+    if (projectSlug) {
+      list = list.filter((c) => (c.project_name ?? '').toLowerCase() === projectSlug.toLowerCase())
+    }
+    if (titleFilter) {
+      list = list.filter((c) => patternMatches(c.name, titleFilter, titleFilterMode))
+    }
+    return list
+  }, [rawConversations, projectSlug, titleFilter, titleFilterMode])
 
   // Register conversation IDs with navigation context (in display order: starred first)
   useEffect(() => {
