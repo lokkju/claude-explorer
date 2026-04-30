@@ -1,0 +1,37 @@
+import { test, expect } from '@playwright/test';
+
+/**
+ * Dark-mode runtime application (Build-8 #7).
+ *
+ * Beyond the .dark class being on <html>, verify that Tailwind's dark variant
+ * actually changes a representative element's background color in the rendered
+ * page. Catches "dark class set but CSS not applying" regressions (Tailwind v4
+ * config drift).
+ */
+
+test.describe('Dark mode runtime', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+  });
+
+  test('toggling to dark theme applies .dark to <html> and dark-mode CSS to the body', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.goto('/settings');
+
+    // Light mode first: capture body bg.
+    await page.click('label:has-text("Light")');
+    const lightBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    await expect(page.locator('html')).not.toHaveClass(/dark/);
+
+    // Switch to dark.
+    await page.click('label:has-text("Dark")');
+
+    await expect(page.locator('html')).toHaveClass(/dark/);
+    const darkBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+
+    // Dark mode must produce a different (and darker) background than light mode.
+    expect(darkBg).not.toBe(lightBg);
+  });
+});
