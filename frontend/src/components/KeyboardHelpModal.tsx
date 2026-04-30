@@ -71,11 +71,23 @@ const ARROW_SHORTCUTS: Shortcut[] = [
   { keys: ['←'], description: 'Back to sidebar' },
 ]
 
-const GLOBAL_SHORTCUTS: Shortcut[] = [
-  { keys: ['⌘', 'K'], description: 'Search in all messages' },
-  { keys: ['⌘', 'R'], description: 'Refresh conversations' },
-  { keys: ['?'], description: 'Show this help' },
-]
+function isMacPlatform(): boolean {
+  if (typeof navigator === 'undefined') return true
+  return navigator.platform.toLowerCase().startsWith('mac')
+}
+
+function modifierKey(): string {
+  return isMacPlatform() ? '⌘' : 'Ctrl'
+}
+
+function buildGlobalShortcuts(): Shortcut[] {
+  const mod = modifierKey()
+  return [
+    { keys: [mod, 'K'], description: 'Search in all messages' },
+    { keys: [mod, 'R'], description: 'Refresh conversations' },
+    { keys: ['?'], description: 'Show this help' },
+  ]
+}
 
 function ShortcutRow({ shortcut }: { shortcut: Shortcut }) {
   return (
@@ -103,6 +115,7 @@ export function KeyboardHelpModal() {
 
   const listShortcuts = keyboardMode === 'vim' ? VIM_LIST_SHORTCUTS : EMACS_LIST_SHORTCUTS
   const detailShortcuts = keyboardMode === 'vim' ? VIM_DETAIL_SHORTCUTS : EMACS_DETAIL_SHORTCUTS
+  const globalShortcuts = buildGlobalShortcuts()
 
   return (
     <Dialog open={isHelpOpen} onOpenChange={setIsHelpOpen}>
@@ -186,7 +199,7 @@ export function KeyboardHelpModal() {
               Global
             </h3>
             <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {GLOBAL_SHORTCUTS.map((shortcut, i) => (
+              {globalShortcuts.map((shortcut, i) => (
                 <ShortcutRow key={i} shortcut={shortcut} />
               ))}
             </div>
