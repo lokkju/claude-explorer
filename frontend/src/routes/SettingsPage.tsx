@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router'
 import { Sun, Moon, Monitor, Settings, Keyboard, Database, Info, ExternalLink } from 'lucide-react'
 import { useSettings, type Theme, type KeyboardMode } from '@/contexts/SettingsContext'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
@@ -6,6 +8,18 @@ import { api } from '@/lib/api'
 
 export function SettingsPage() {
   const { theme, setTheme, keyboardMode, setKeyboardMode } = useSettings()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        navigate(-1)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [navigate])
   const { data: config } = useQuery({
     queryKey: ['config'],
     queryFn: () => api.getConfig(),
