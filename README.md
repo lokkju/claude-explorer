@@ -189,7 +189,7 @@ The simplest approach — opens a browser window where you log into Claude norma
 uv run claude-explorer capture
 ```
 
-This opens Chromium, navigates to claude.ai, and waits for you to log in. Once authenticated, credentials are automatically extracted and saved to `~/.claude-explorer/credentials.json`.
+This opens Chromium, navigates to claude.ai, and waits for you to log in. Once authenticated, credentials are automatically extracted and saved to `~/.claude-exporter/credentials.json`.
 
 **Options:**
 - `--timeout N` — Max seconds to wait for login (default: 300)
@@ -231,7 +231,7 @@ claude --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 
 ---
 
-Both methods save credentials to `~/.claude-explorer/credentials.json`.
+Both methods save credentials to `~/.claude-exporter/credentials.json`.
 
 ### Step 2: Download Your Conversations
 
@@ -239,7 +239,7 @@ Both methods save credentials to `~/.claude-explorer/credentials.json`.
 uv run claude-explorer fetch
 ```
 
-This downloads all your conversations as JSON files to `~/.claude-explorer/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded.
+This downloads all your conversations as JSON files to `~/.claude-exporter/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded.
 
 Options:
 - `--full-refresh` — Re-download all conversations
@@ -280,7 +280,7 @@ The project ships with a built-in **Model Context Protocol** server that lets Cl
 | `get_messages` | Full message content for specific positions or UUIDs, with optional tool calls/results |
 | `export_session` | Markdown export of a full or partial session |
 
-The server runs over **stdio** (no network port) and reads from the same `~/.claude-explorer/conversations/` directory the web UI uses.
+The server runs over **stdio** (no network port) and reads from the same `~/.claude-exporter/conversations/` directory the web UI uses.
 
 ### Prerequisites
 
@@ -433,12 +433,12 @@ In Claude Code you can also run `/mcp` to see the server status and the list of 
 ### Troubleshooting
 
 - **"command not found: uv"** — the MCP client doesn't see your shell `PATH`. Use the absolute path to `uv` in `command`.
-- **"Session not found" / empty results** — run `uv run claude-explorer fetch` first; the MCP server reads from `~/.claude-explorer/conversations/`.
+- **"Session not found" / empty results** — run `uv run claude-explorer fetch` first; the MCP server reads from `~/.claude-exporter/conversations/`.
 - **Need to use a non-default data dir** — set `CLAUDE_EXPORTER_DATA_DIR` via an `env` block in the MCP config:
   ```json
   "env": { "CLAUDE_EXPORTER_DATA_DIR": "/path/to/conversations" }
   ```
-- **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-explorer/cache.db`. Delete that file to force a full rebuild.
+- **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-exporter/cache.db`. Delete that file to force a full rebuild.
 
 ---
 

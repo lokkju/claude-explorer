@@ -44,7 +44,7 @@ Options:
 1. Starts a local HTTPS proxy using mitmproxy
 2. You launch Claude Desktop through the proxy
 3. The addon extracts `sessionKey` and `org_id` from API requests
-4. Credentials are saved to `~/.claude-explorer/credentials.json`
+4. Credentials are saved to `~/.claude-exporter/credentials.json`
 
 **Platform-specific launch commands:**
 ```bash
@@ -65,9 +65,9 @@ Download all conversations from Claude using captured credentials.
 ```
 Options:
   --output-dir PATH               Where to save JSON files
-                                  (default: ~/.claude-explorer/conversations)
+                                  (default: ~/.claude-exporter/conversations)
   --credentials PATH              Path to credentials file
-                                  (default: ~/.claude-explorer/credentials.json)
+                                  (default: ~/.claude-exporter/credentials.json)
   --session-key TEXT              Session key (overrides credentials file)
   --org-id TEXT                   Org ID (overrides credentials file)
   --incremental / --full-refresh  Skip already-saved conversations (default: incremental)
@@ -160,9 +160,9 @@ The frontend proxies `/api` requests to the backend.
 
 ## Data Directory
 
-Conversations are stored in `~/.claude-explorer/conversations/` as JSON files.
+Conversations are stored in `~/.claude-exporter/conversations/` as JSON files.
 
-Set `CLAUDE_EXPORTER_DATA_DIR` to override, or create `~/.claude-explorer/config.json`:
+Set `CLAUDE_EXPORTER_DATA_DIR` to override, or create `~/.claude-exporter/config.json`:
 ```json
 {"data_dir": "/path/to/conversations"}
 ```
