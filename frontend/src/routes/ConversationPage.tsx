@@ -287,13 +287,14 @@ export function ConversationPage() {
             size="sm"
             onClick={handleCopyAll}
             title="Copy conversation as Markdown"
+            aria-label="Copy as Markdown"
           >
             {copiedAll ? (
               <Check className="h-4 w-4 text-green-500" />
             ) : (
               <Copy className="h-4 w-4" />
             )}
-            <span className="ml-2">Copy</span>
+            <span className="ml-2">Copy as Markdown</span>
           </Button>
           <Button variant="outline" size="sm" onClick={handleExportMarkdown}>
             <FileText className="h-4 w-4" />
