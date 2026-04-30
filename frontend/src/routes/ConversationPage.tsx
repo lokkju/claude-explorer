@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useSearchParams } from 'react-router'
-import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown } from 'lucide-react'
+import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp } from 'lucide-react'
 import { useConversation } from '@/hooks/useConversations'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation, type MessageInfo } from '@/contexts/KeyboardNavigationContext'
+import { useSearchPanel } from '@/contexts/SearchPanelContext'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
@@ -17,6 +18,7 @@ export function ConversationPage() {
   const highlightMessageId = searchParams.get('highlight')
   const { data: conversation, isLoading, error } = useConversation(uuid || '')
   const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools } = useSettings()
+  const { isOpen: isSearchPanelOpen } = useSearchPanel()
   const {
     setMessages,
     messages,
@@ -32,21 +34,26 @@ export function ConversationPage() {
   const [copiedUuid, setCopiedUuid] = useState(false)
   const [copiedPath, setCopiedPath] = useState(false)
   const [showScrollButton, setShowScrollButton] = useState(false)
+  const [showTopButton, setShowTopButton] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
-  // Track scroll position to show/hide jump-to-bottom button
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement
     const { scrollTop, scrollHeight, clientHeight } = target
-    // Show button when not near bottom (more than 200px from bottom)
     const isNearBottom = scrollHeight - scrollTop - clientHeight < 200
+    const isNearTop = scrollTop < 200
     setShowScrollButton(!isNearBottom)
+    setShowTopButton(!isNearTop)
   }, [])
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [])
+
+  const scrollToTop = useCallback(() => {
+    scrollAreaRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
   // Reset message index when a new conversation is opened
@@ -303,6 +310,7 @@ export function ConversationPage() {
       <div className="relative flex-1 overflow-hidden">
         <div
           ref={scrollAreaRef}
+          data-testid="message-stream"
           className="h-full overflow-y-auto p-6"
           onScroll={handleScroll}
         >
@@ -329,16 +337,31 @@ export function ConversationPage() {
           </div>
         </div>
 
-        {/* Jump to bottom button */}
-        {showScrollButton && (
-          <button
-            onClick={scrollToBottom}
-            className="absolute bottom-6 right-6 flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900/80 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-zinc-900 dark:bg-zinc-100/80 dark:text-zinc-900 dark:hover:bg-zinc-100"
-            title="Jump to bottom"
-          >
-            <ChevronDown className="h-5 w-5" />
-          </button>
-        )}
+        <div
+          className="absolute bottom-6 flex flex-col gap-2 transition-[right] duration-200"
+          style={{ right: isSearchPanelOpen ? '25rem' : '1.5rem' }}
+        >
+          {showTopButton && (
+            <button
+              onClick={scrollToTop}
+              aria-label="Jump to top"
+              title="Jump to top"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900/80 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-zinc-900 dark:bg-zinc-100/80 dark:text-zinc-900 dark:hover:bg-zinc-100"
+            >
+              <ChevronUp className="h-5 w-5" />
+            </button>
+          )}
+          {showScrollButton && (
+            <button
+              onClick={scrollToBottom}
+              aria-label="Jump to bottom"
+              title="Jump to bottom"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900/80 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-zinc-900 dark:bg-zinc-100/80 dark:text-zinc-900 dark:hover:bg-zinc-100"
+            >
+              <ChevronDown className="h-5 w-5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tree View Modal */}
