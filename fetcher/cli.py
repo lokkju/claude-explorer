@@ -264,12 +264,23 @@ def serve(host: str, port: int, reload: bool):
     click.echo(f"Starting server on http://{host}:{port}")
     click.echo("Press Ctrl+C to stop.")
 
-    uvicorn.run(
-        "backend.main:app",
-        host=host,
-        port=port,
-        reload=reload,
-    )
+    try:
+        uvicorn.run(
+            "backend.main:app",
+            host=host,
+            port=port,
+            reload=reload,
+        )
+    except OSError as e:
+        if e.errno == 48 or "address already in use" in str(e).lower():
+            click.echo(
+                f"\nError: port {port} is already in use.\n"
+                f"Another process is bound to {host}:{port}. "
+                f"Either stop it, or pick a different port with --port <N>.",
+                err=True,
+            )
+            raise SystemExit(1) from None
+        raise
 
 
 if __name__ == "__main__":
