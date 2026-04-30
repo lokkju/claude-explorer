@@ -1,10 +1,81 @@
 """Full-text search implementation."""
 
+import json
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from .models import SearchResult, MessageSnippet
 from .store import ConversationStore, _parse_datetime
+
+
+def _extract_searchable_text(message: dict[str, Any]) -> str:
+    """Flatten every searchable surface of a message into one string.
+
+    Covers: message['text'] (Desktop API plain text), and all content blocks —
+    text, tool_use input dicts (Bash command, file paths, prompt args), and
+    tool_result content (which can be a string OR a list of text blocks).
+    """
+    parts: list[str] = []
+
+    text = message.get("text") or ""
+    if text:
+        parts.append(text)
+
+    for block in message.get("content") or []:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+
+        if btype == "text":
+            t = block.get("text") or ""
+            if t:
+                parts.append(t)
+
+        elif btype == "tool_use":
+            name = block.get("name") or ""
+            if name:
+                parts.append(name)
+            tool_input = block.get("input")
+            if isinstance(tool_input, dict):
+                parts.append(_stringify_tool_input(tool_input))
+            elif isinstance(tool_input, str):
+                parts.append(tool_input)
+
+        elif btype == "tool_result":
+            tr_content = block.get("content")
+            if isinstance(tr_content, str):
+                parts.append(tr_content)
+            elif isinstance(tr_content, list):
+                for sub in tr_content:
+                    if isinstance(sub, dict) and sub.get("type") == "text":
+                        t = sub.get("text") or ""
+                        if t:
+                            parts.append(t)
+
+        elif btype == "thinking":
+            t = block.get("thinking") or block.get("text") or ""
+            if t:
+                parts.append(t)
+
+    return "\n".join(parts)
+
+
+def _stringify_tool_input(tool_input: dict[str, Any]) -> str:
+    """Render a tool_use input dict so its string-valued fields are searchable.
+
+    JSON-dumps the whole dict (so nested values are reachable) and also
+    appends each top-level string value verbatim so a user search like
+    "echo foo" matches without quoting concerns.
+    """
+    parts: list[str] = []
+    try:
+        parts.append(json.dumps(tool_input, ensure_ascii=False))
+    except (TypeError, ValueError):
+        pass
+    for v in tool_input.values():
+        if isinstance(v, str):
+            parts.append(v)
+    return "\n".join(parts)
 
 
 SNIPPET_CONTEXT = 150  # Characters of context on each side of the match (~3 lines total)
@@ -99,14 +170,7 @@ def search_conversations(
 
         # Search in messages
         for msg in conv.get("chat_messages", []):
-            # Get message text
-            text = msg.get("text", "")
-            if not text:
-                # Extract from content blocks
-                for block in msg.get("content", []):
-                    if block.get("type") == "text" and block.get("text"):
-                        text = block["text"]
-                        break
+            text = _extract_searchable_text(msg)
 
             if not text:
                 continue
