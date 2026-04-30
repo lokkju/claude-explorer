@@ -52,10 +52,19 @@ export interface Message {
   files: unknown[]
 }
 
+export interface CompactMarker {
+  message_uuid: string
+  summary_text: string
+  timestamp: string
+  kind: 'auto' | 'manual'
+  user_prompt: string | null
+}
+
 export interface ConversationDetail extends ConversationSummary {
   messages: Message[]
   current_leaf_message_uuid: string
   file_path?: string | null
+  compact_markers?: CompactMarker[]
 }
 
 export interface MessageNode {

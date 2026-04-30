@@ -419,6 +419,7 @@ class ConversationStore:
             messages=messages,
             current_leaf_message_uuid=leaf_uuid,
             file_path=str(file_path) if file_path else None,
+            compact_markers=data.get("compact_markers", []),
         )
 
     def get_conversation_tree(self, uuid: str) -> ConversationTree | None:

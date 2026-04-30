@@ -72,12 +72,23 @@ class ConversationSummary(BaseModel):
             self.project_name = path.split("/")[-1] if "/" in path else path
 
 
+class CompactMarker(BaseModel):
+    """A /compact event extracted from a Claude Code conversation."""
+
+    message_uuid: str
+    summary_text: str
+    timestamp: str
+    kind: Literal["auto", "manual"]
+    user_prompt: str | None = None
+
+
 class ConversationDetail(ConversationSummary):
     """Full conversation detail including messages."""
 
     messages: list[Message] = Field(default_factory=list)
     current_leaf_message_uuid: str = ""
     file_path: str | None = None  # Path to the source file (JSON or JSONL)
+    compact_markers: list[CompactMarker] = Field(default_factory=list)
 
 
 class MessageNode(BaseModel):

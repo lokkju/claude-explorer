@@ -12,6 +12,7 @@ Features:
 """
 
 import orjson
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -61,6 +62,49 @@ def _get_message_text(entry: dict) -> str:
     return ""
 
 
+_COMPACT_LOOKAHEAD = 8
+_COMPACT_COMMAND_NAME = "<command-name>/compact</command-name>"
+_COMPACT_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
+
+
+def extract_compact_markers(entries: list[dict]) -> list[dict]:
+    """Extract compact markers from a Claude Code JSONL entry list.
+
+    Each marker is the synthetic user message with `isCompactSummary: true` that
+    Claude Code injects when it compacts the conversation. Auto vs manual is
+    determined by scanning the small window AFTER the marker for a replayed
+    `<command-name>/compact</command-name>` user record; manual markers also
+    surface the `<command-args>` text so the UI can render the user's prompt.
+
+    Returns a list of dicts: `{message_uuid, summary_text, timestamp, kind, user_prompt}`.
+    """
+    markers: list[dict] = []
+    for idx, entry in enumerate(entries):
+        if entry.get("isCompactSummary") is not True:
+            continue
+        kind = "auto"
+        user_prompt: str | None = None
+        end = min(len(entries), idx + 1 + _COMPACT_LOOKAHEAD)
+        for j in range(idx + 1, end):
+            other = entries[j]
+            if other.get("isCompactSummary") is True:
+                break
+            text = _get_message_text(other)
+            if _COMPACT_COMMAND_NAME in text:
+                kind = "manual"
+                m = _COMPACT_ARGS_RE.search(text)
+                user_prompt = m.group(1).strip() if m else ""
+                break
+        markers.append({
+            "message_uuid": entry.get("uuid", ""),
+            "summary_text": _get_message_text(entry),
+            "timestamp": entry.get("timestamp", ""),
+            "kind": kind,
+            "user_prompt": user_prompt,
+        })
+    return markers
+
+
 def _is_system_message(entry: dict) -> bool:
     """Check if a user entry is a system message (Caveat, bash I/O, tool results, commands)."""
     msg = entry.get("message", {})
@@ -89,8 +133,6 @@ def _is_system_message(entry: dict) -> bool:
 
 def _extract_title_from_message(entry: dict) -> str | None:
     """Extract a clean title from a message, handling XML tags and special formats."""
-    import re
-
     text = _get_message_text(entry)
     if not text:
         return None
@@ -487,6 +529,7 @@ def read_claude_code_conversation(jsonl_path: Path) -> dict[str, Any] | None:
         "source": "CLAUDE_CODE",
         "chat_messages": messages,
         "current_leaf_message_uuid": messages[-1]["uuid"] if messages else "",
+        "compact_markers": extract_compact_markers(entries),
     }
 
 
