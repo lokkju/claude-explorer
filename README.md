@@ -151,8 +151,11 @@ claude-explorer/
 │   ├── search.py             # Full-text search
 │   ├── export.py             # Markdown + PDF export
 │   └── routers/              # conversations, search, export endpoints
-└── frontend/
-    └── src/                  # React 18 + TypeScript + Tailwind + shadcn/ui
+├── frontend/
+│   └── src/                  # React 18 + TypeScript + Tailwind + shadcn/ui
+└── scripts/
+    ├── check-cleanup-period.py        # Inspect/fix Claude Code's cleanupPeriodDays
+    └── macos-restore-claude-projects.py  # Recover deleted projects from Time Machine
 ```
 
 ---
@@ -436,6 +439,49 @@ In Claude Code you can also run `/mcp` to see the server status and the list of 
   "env": { "CLAUDE_EXPORTER_DATA_DIR": "/path/to/conversations" }
   ```
 - **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-explorer/cache.db`. Delete that file to force a full rebuild.
+
+---
+
+## Companion Utilities (macOS)
+
+The `scripts/` directory ships two standalone utilities that address a Claude Code gotcha you may have hit while using this tool: **Claude Code silently auto-deletes** session files in `~/.claude/projects/` older than `cleanupPeriodDays` (default: 30). When a project subdirectory becomes empty, it is removed entirely.
+
+### `scripts/check-cleanup-period.py` — inspect/fix the auto-cleanup
+
+Reports the current `cleanupPeriodDays` value in `~/.claude/settings.json` and (with `--set N`) atomically updates it while preserving every other key.
+
+```bash
+# Report only
+python3 scripts/check-cleanup-period.py
+
+# Effectively disable auto-cleanup (~10 years)
+python3 scripts/check-cleanup-period.py --set 3650
+```
+
+Refuses to set `0` (which silently disables conversation persistence — Claude Code [issue #23710](https://github.com/anthropics/claude-code/issues/23710)). Warns if you set anything shorter than 30 or 365 days.
+
+### `scripts/macos-restore-claude-projects.py` — recover deleted projects from Time Machine
+
+Walks every Time Machine snapshot under `/Volumes/.timemachine/<UUID>/`, collects the union of every `~/.claude/projects/<name>/` ever seen, diffs against the live directory, and copies the **newest backup** of each missing dir to `~/.claude/projects-recovered/`. Never overwrites anything.
+
+```bash
+# Preview what's recoverable across ALL backups
+sudo python3 scripts/macos-restore-claude-projects.py --dry-run
+
+# Recover all missing projects (default)
+sudo python3 scripts/macos-restore-claude-projects.py
+
+# Limit how far back to scan
+sudo python3 scripts/macos-restore-claude-projects.py --since 2026-01-01
+sudo python3 scripts/macos-restore-claude-projects.py --days 60
+
+# Recover AND auto-move into ~/.claude/projects/ (skips any that already exist)
+sudo python3 scripts/macos-restore-claude-projects.py --apply
+```
+
+**Requires:** Terminal must have **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access → add Terminal). Without FDA, macOS returns "Operation not permitted" when reading TM snapshot directories. The script detects this and tells you what to do.
+
+After recovery, **set a high `cleanupPeriodDays`** with the checker above so this doesn't happen again.
 
 ---
 
