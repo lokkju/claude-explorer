@@ -6,6 +6,7 @@ import { SettingsProvider } from '../contexts/SettingsContext';
 import { SourceFilterProvider } from '../contexts/SourceFilterContext';
 import { KeyboardNavigationProvider } from '../contexts/KeyboardNavigationContext';
 import { FilterProvider } from '../contexts/FilterContext';
+import { BookmarkProvider } from '../contexts/BookmarkContext';
 
 // Create a fresh QueryClient for each test
 function createTestQueryClient() {
@@ -32,11 +33,13 @@ function AllProviders({ children }: WrapperProps) {
       <SettingsProvider>
         <SourceFilterProvider>
           <FilterProvider>
-            <BrowserRouter>
-              <KeyboardNavigationProvider>
-                {children}
-              </KeyboardNavigationProvider>
-            </BrowserRouter>
+            <BookmarkProvider>
+              <BrowserRouter>
+                <KeyboardNavigationProvider>
+                  {children}
+                </KeyboardNavigationProvider>
+              </BrowserRouter>
+            </BookmarkProvider>
           </FilterProvider>
         </SourceFilterProvider>
       </SettingsProvider>

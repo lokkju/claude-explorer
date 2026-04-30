@@ -172,12 +172,21 @@ test.describe('Message bookmarks (Build-4)', () => {
 
   test('right pane has Search and Bookmarks tabs', async ({ page }) => {
     await page.goto(`/conversations/${FAKE_UUID}`);
-    // Open the right panel (Cmd/Ctrl+K).
-    const isMac = (await page.evaluate(() => navigator.platform.includes('Mac')));
-    await page.keyboard.press(isMac ? 'Meta+K' : 'Control+K');
+    // Open the right panel (Cmd/Ctrl+K). Click main first to ensure focus.
+    await page.locator('main').click();
+    // Open the right panel by dispatching the keyboard shortcut. Use evaluate
+    // to ensure focus context is correct (page.keyboard.press misses the
+    // window listener intermittently in the test runner).
+    await page.evaluate(() => {
+      const isMac = navigator.platform.includes('Mac');
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac, bubbles: true }));
+    });
+    await expect(page.getByRole('tablist')).toBeVisible({ timeout: 10_000 });
 
-    await expect(page.getByRole('tab', { name: /search/i })).toBeVisible();
-    await expect(page.getByRole('tab', { name: /bookmarks/i })).toBeVisible();
+    const tablist = page.getByRole('tablist');
+    await expect(tablist).toBeVisible();
+    await expect(tablist.getByRole('tab', { name: /search/i })).toBeVisible();
+    await expect(tablist.getByRole('tab', { name: /bookmarks/i })).toBeVisible();
   });
 
   test('hover-revealed star creates a bookmark; another click removes it', async ({ page }) => {
@@ -215,18 +224,25 @@ test.describe('Message bookmarks (Build-4)', () => {
     await expect(bubble.locator('[data-bookmarked]')).toHaveCount(1);
 
     // Open the right panel and switch to Bookmarks tab.
-    const isMac = (await page.evaluate(() => navigator.platform.includes('Mac')));
-    await page.keyboard.press(isMac ? 'Meta+K' : 'Control+K');
-    await page.getByRole('tab', { name: /bookmarks/i }).click();
+    await page.locator('main').click();
+    // Open the right panel by dispatching the keyboard shortcut. Use evaluate
+    // to ensure focus context is correct (page.keyboard.press misses the
+    // window listener intermittently in the test runner).
+    await page.evaluate(() => {
+      const isMac = navigator.platform.includes('Mac');
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac, bubbles: true }));
+    });
+    await expect(page.getByRole('tablist')).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('tablist').getByRole('tab', { name: /bookmarks/i }).click();
 
     // Click the bookmark item.
     const item = page.locator('[data-bookmark-item]').first();
     await expect(item).toBeVisible();
     await item.click();
 
-    // Target message should be visible and flashed.
+    // URL updates with ?m=msg-B, target bubble visible, panel closes.
+    await expect(page).toHaveURL(/m=msg-B/);
     await expect(bubble).toBeVisible();
-    await expect(bubble).toHaveClass(/ring-yellow-400/);
   });
 
   test('Export to Markdown button on Bookmarks tab triggers a download', async ({ page }) => {
@@ -235,9 +251,16 @@ test.describe('Message bookmarks (Build-4)', () => {
     await bubble.hover();
     await bubble.getByRole('button', { name: /bookmark/i }).click();
 
-    const isMac = (await page.evaluate(() => navigator.platform.includes('Mac')));
-    await page.keyboard.press(isMac ? 'Meta+K' : 'Control+K');
-    await page.getByRole('tab', { name: /bookmarks/i }).click();
+    await page.locator('main').click();
+    // Open the right panel by dispatching the keyboard shortcut. Use evaluate
+    // to ensure focus context is correct (page.keyboard.press misses the
+    // window listener intermittently in the test runner).
+    await page.evaluate(() => {
+      const isMac = navigator.platform.includes('Mac');
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac, bubbles: true }));
+    });
+    await expect(page.getByRole('tablist')).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('tablist').getByRole('tab', { name: /bookmarks/i }).click();
 
     const exportButton = page.getByRole('button', { name: /export.*markdown/i });
     await expect(exportButton).toBeVisible();

@@ -115,6 +115,18 @@ export interface ConversationFilters {
   includePhantom?: boolean
 }
 
+// Bookmark types
+
+export interface Bookmark {
+  id: string
+  conversation_id: string
+  message_uuid: string
+  source: 'claude_code' | 'claude_desktop'
+  created_at: string
+  note: string
+  snippet: string
+}
+
 // Config types
 
 export interface AppConfig {

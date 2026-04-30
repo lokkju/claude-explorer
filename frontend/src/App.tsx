@@ -8,6 +8,7 @@ import { SourceFilterProvider } from '@/contexts/SourceFilterContext'
 import { SearchPanelProvider } from '@/contexts/SearchPanelContext'
 import { KeyboardNavigationProvider } from '@/contexts/KeyboardNavigationContext'
 import { FilterProvider } from '@/contexts/FilterContext'
+import { BookmarkProvider } from '@/contexts/BookmarkContext'
 import { RootLayout } from '@/components/layout/RootLayout'
 import { ConversationPage } from '@/routes/ConversationPage'
 import { SettingsPage } from '@/routes/SettingsPage'
@@ -42,6 +43,7 @@ function App() {
         <ThemeApplier>
           <SourceFilterProvider>
             <FilterProvider>
+            <BookmarkProvider>
             <SearchPanelProvider>
               <BrowserRouter>
                 <KeyboardNavigationProvider>
@@ -61,6 +63,7 @@ function App() {
               <Toaster position="bottom-right" />
               <ConnectionStatus />
             </SearchPanelProvider>
+            </BookmarkProvider>
             </FilterProvider>
           </SourceFilterProvider>
         </ThemeApplier>

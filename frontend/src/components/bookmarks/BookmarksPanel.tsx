@@ -1,0 +1,177 @@
+import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router'
+import { Bookmark as BookmarkIcon, Trash2, ExternalLink, Edit3, Download } from 'lucide-react'
+import { useBookmarks } from '@/contexts/BookmarkContext'
+import { useSearchPanel } from '@/contexts/SearchPanelContext'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { downloadBlob, formatDate } from '@/lib/utils'
+import type { Bookmark } from '@/lib/types'
+
+function bookmarksToMarkdown(bookmarks: Bookmark[]): string {
+  const lines: string[] = ['# Bookmarks', '']
+  const byConv = new Map<string, Bookmark[]>()
+  for (const b of bookmarks) {
+    if (!byConv.has(b.conversation_id)) byConv.set(b.conversation_id, [])
+    byConv.get(b.conversation_id)!.push(b)
+  }
+  for (const [convId, bms] of byConv.entries()) {
+    lines.push(`## Conversation ${convId}`, '')
+    for (const b of bms) {
+      lines.push(`- **[${b.message_uuid.slice(0, 8)}](/conversations/${convId}?m=${b.message_uuid})**`)
+      if (b.note) lines.push(`  - Note: ${b.note}`)
+      if (b.snippet) lines.push(`  - > ${b.snippet}`)
+      lines.push('')
+    }
+  }
+  return lines.join('\n')
+}
+
+export function BookmarksPanel() {
+  const { bookmarks, deleteBookmark, updateBookmarkNote } = useBookmarks()
+  const { close } = useSearchPanel()
+  const navigate = useNavigate()
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftNote, setDraftNote] = useState('')
+
+  const grouped = useMemo(() => {
+    const byConv = new Map<string, Bookmark[]>()
+    for (const b of bookmarks) {
+      if (!byConv.has(b.conversation_id)) byConv.set(b.conversation_id, [])
+      byConv.get(b.conversation_id)!.push(b)
+    }
+    return Array.from(byConv.entries())
+  }, [bookmarks])
+
+  const handleOpen = (b: Bookmark) => {
+    close()
+    navigate(`/conversations/${b.conversation_id}?m=${b.message_uuid}`)
+  }
+
+  const handleExport = () => {
+    const md = bookmarksToMarkdown(bookmarks)
+    const blob = new Blob([md], { type: 'text/markdown' })
+    downloadBlob(blob, `bookmarks-${new Date().toISOString().slice(0, 10)}.md`)
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-zinc-200 p-3 dark:border-zinc-800">
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">
+            {bookmarks.length} bookmark{bookmarks.length === 1 ? '' : 's'}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExport}
+            disabled={bookmarks.length === 0}
+            aria-label="Export to Markdown"
+          >
+            <Download className="h-3 w-3 mr-1" />
+            Export to Markdown
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3">
+        {bookmarks.length === 0 && (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-zinc-500 dark:text-zinc-400">
+            <BookmarkIcon className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
+            <p>No bookmarks yet</p>
+            <p className="text-xs">Hover over any message and click the star to add one.</p>
+          </div>
+        )}
+        {grouped.map(([convId, bms]) => (
+          <div key={convId} className="mb-4">
+            <div className="mb-1 truncate text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+              Conversation {convId.slice(0, 8)}…
+            </div>
+            <div className="space-y-1.5">
+              {bms.map((b) => (
+                <div
+                  key={b.id}
+                  data-bookmark-item
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest('button, input')) return
+                    handleOpen(b)
+                  }}
+                  className="cursor-pointer rounded-md border border-zinc-200 bg-white p-2.5 text-xs shadow-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleOpen(b)}
+                      className="flex-1 truncate text-left text-zinc-900 dark:text-zinc-100"
+                      title="Open message"
+                    >
+                      {b.snippet || `Message ${b.message_uuid.slice(0, 8)}`}
+                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleOpen(b)}
+                        aria-label="Open"
+                        className="p-1 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(b.id)
+                          setDraftNote(b.note)
+                        }}
+                        aria-label="Edit note"
+                        className="p-1 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+                      >
+                        <Edit3 className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteBookmark(b.id)}
+                        aria-label="Delete bookmark"
+                        className="p-1 text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  {editingId === b.id ? (
+                    <div className="mt-2 flex gap-1">
+                      <Input
+                        value={draftNote}
+                        onChange={(e) => setDraftNote(e.target.value)}
+                        placeholder="Note…"
+                        className="h-7 text-xs"
+                      />
+                      <Button
+                        size="sm"
+                        className="h-7"
+                        onClick={async () => {
+                          await updateBookmarkNote(b.id, draftNote)
+                          setEditingId(null)
+                        }}
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {b.note && (
+                        <div className="mt-1 text-zinc-700 dark:text-zinc-300">{b.note}</div>
+                      )}
+                      <div className="mt-1 text-[10px] text-zinc-400">
+                        {formatDate(b.created_at)}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}

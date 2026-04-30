@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Search, X, User, Bot, FileText, ArrowUpDown } from 'lucide-react'
+import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon } from 'lucide-react'
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
 import { useNavigateToMatch } from '@/components/search/navigateToMatch'
+import { useSettings } from '@/contexts/SettingsContext'
+import { BookmarksPanel } from '@/components/bookmarks/BookmarksPanel'
 import {
   Select,
   SelectContent,
@@ -46,6 +48,7 @@ export function SearchPanel() {
   } = useSearchPanel()
 
   const navigateToMatch = useNavigateToMatch()
+  const { rightPaneTab, setRightPaneTab } = useSettings()
 
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -116,7 +119,55 @@ export function SearchPanel() {
         !isOpen && 'translate-x-full'
       )}
     >
-      {/* Header: input + close + context toggle */}
+      {/* Tabs */}
+      <div className="flex items-center gap-1 border-b border-zinc-200 px-2 pt-2 dark:border-zinc-800" role="tablist" aria-label="Right pane tabs">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={rightPaneTab === 'search'}
+          onClick={() => setRightPaneTab('search')}
+          className={cn(
+            'flex items-center gap-1 rounded-t-md border border-b-0 px-3 py-1 text-xs',
+            rightPaneTab === 'search'
+              ? 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100'
+              : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'
+          )}
+        >
+          <Search className="h-3 w-3" />
+          Search
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={rightPaneTab === 'bookmarks'}
+          onClick={() => setRightPaneTab('bookmarks')}
+          className={cn(
+            'flex items-center gap-1 rounded-t-md border border-b-0 px-3 py-1 text-xs',
+            rightPaneTab === 'bookmarks'
+              ? 'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100'
+              : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'
+          )}
+        >
+          <BookmarkIcon className="h-3 w-3" />
+          Bookmarks
+        </button>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={close}
+          className="rounded p-1 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          aria-label="Close panel"
+          title="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {rightPaneTab === 'bookmarks' && <BookmarksPanel />}
+
+      {rightPaneTab === 'search' && (
+      <>
+      {/* Header: input + context toggle */}
       <div className="border-b border-zinc-200 p-3 dark:border-zinc-800">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -138,15 +189,6 @@ export function SearchPanel() {
               data-allow-shortcuts
             />
           </div>
-          <button
-            type="button"
-            onClick={close}
-            className="rounded p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-            aria-label="Close search panel"
-            title="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
         </div>
 
         {/* Sort controls — mirror left sidebar; default updated_at + desc. */}
@@ -300,6 +342,8 @@ export function SearchPanel() {
           </div>
         )}
       </div>
+      </>
+      )}
     </aside>
   )
 }

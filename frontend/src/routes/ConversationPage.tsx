@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
 import { CompactMarker } from '@/components/conversation/CompactMarker'
+import { useBookmarks } from '@/contexts/BookmarkContext'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
 import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -19,6 +20,7 @@ export function ConversationPage() {
   const highlightMessageId = searchParams.get('highlight') || searchParams.get('m')
   const { data: conversation, isLoading, error } = useConversation(uuid || '')
   const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools, hideCompactMarkers, setHideCompactMarkers } = useSettings()
+  const { toggleBookmark } = useBookmarks()
   const { isOpen: isSearchPanelOpen } = useSearchPanel()
   const {
     setMessages,
@@ -123,6 +125,33 @@ export function ConversationPage() {
       }
     }
   }, [selectedMessageIndex, focusArea, conversation?.messages, getSelectedMessageId])
+
+  // Keyboard: 'b' toggles bookmark on the focused message.
+  useEffect(() => {
+    if (!conversation) return
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key !== 'b' && e.key !== 'B') return
+      const selectedId = getSelectedMessageId()
+      if (!selectedId) return
+      const msg = conversation.messages.find((m) => m.uuid === selectedId)
+      if (!msg) return
+      e.preventDefault()
+      toggleBookmark({
+        conversation_id: conversation.uuid,
+        message_uuid: msg.uuid,
+        source: conversation.source === 'CLAUDE_AI' ? 'claude_desktop' : 'claude_code',
+        note: '',
+        snippet: (msg.text || '').slice(0, 140),
+      })
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [conversation, getSelectedMessageId, toggleBookmark])
 
   // Keyboard: '[' / ']' navigate compact markers within the open conversation.
   useEffect(() => {
@@ -422,8 +451,17 @@ export function ConversationPage() {
                       messageRefs.current.delete(message.uuid)
                     }
                   }}
+                  onClick={() => {
+                    const idx = messages.findIndex((m) => m.uuid === message.uuid)
+                    if (idx !== -1) setSelectedMessageIndex(idx)
+                  }}
                 >
-                  <MessageBubble message={message} isKeyboardSelected={isSelected} />
+                  <MessageBubble
+                    message={message}
+                    isKeyboardSelected={isSelected}
+                    conversationId={conversation.uuid}
+                    conversationSource={conversation.source}
+                  />
                 </div>
               )
             })}

@@ -1,20 +1,36 @@
 import { useState } from 'react'
-import { User, Bot, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
+import { User, Bot, ChevronDown, ChevronRight, Copy, Check, Star } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/contexts/SettingsContext'
+import { useBookmarks } from '@/contexts/BookmarkContext'
 import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import type { Message, ContentBlock } from '@/lib/types'
 
 interface MessageBubbleProps {
   message: Message
   isKeyboardSelected?: boolean
+  conversationId?: string
+  conversationSource?: 'CLAUDE_AI' | 'CLAUDE_CODE'
 }
 
-export function MessageBubble({ message, isKeyboardSelected = false }: MessageBubbleProps) {
+export function MessageBubble({ message, isKeyboardSelected = false, conversationId, conversationSource }: MessageBubbleProps) {
   const isHuman = message.sender === 'human'
   const { showToolCalls, expandAllTools } = useSettings()
+  const { isBookmarked, toggleBookmark } = useBookmarks()
   const [copied, setCopied] = useState(false)
+  const bookmarked = conversationId ? isBookmarked(conversationId, message.uuid) : false
+
+  const handleToggleBookmark = async () => {
+    if (!conversationId) return
+    await toggleBookmark({
+      conversation_id: conversationId,
+      message_uuid: message.uuid,
+      source: conversationSource === 'CLAUDE_AI' ? 'claude_desktop' : 'claude_code',
+      note: '',
+      snippet: (message.text || '').slice(0, 140),
+    })
+  }
 
   const handleCopyMessage = async () => {
     const markdown = messageToMarkdown(message, showToolCalls)
@@ -60,20 +76,39 @@ export function MessageBubble({ message, isKeyboardSelected = false }: MessageBu
           isKeyboardSelected && 'ring-2 ring-blue-500 ring-offset-2 dark:ring-offset-zinc-900'
         )}
       >
-        {/* Copy button - appears on hover */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute -right-2 -top-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100 bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 shadow-sm"
-          onClick={handleCopyMessage}
-          title="Copy message as Markdown"
-        >
-          {copied ? (
-            <Check className="h-3.5 w-3.5 text-green-500" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
+        <div className="absolute -right-2 -top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          {conversationId && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                'h-7 w-7 border bg-white shadow-sm dark:bg-zinc-700',
+                bookmarked
+                  ? 'border-amber-300 text-amber-500 dark:border-amber-700'
+                  : 'border-zinc-200 dark:border-zinc-600'
+              )}
+              onClick={handleToggleBookmark}
+              title={bookmarked ? 'Remove bookmark' : 'Bookmark this message'}
+              aria-label={bookmarked ? 'Remove bookmark' : 'Bookmark message'}
+            >
+              <Star className={cn('h-3.5 w-3.5', bookmarked && 'fill-amber-500')} />
+            </Button>
           )}
-        </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 shadow-sm"
+            onClick={handleCopyMessage}
+            title="Copy message as Markdown"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-green-500" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </div>
+        {bookmarked && <span data-bookmarked aria-hidden className="hidden" />}
 
         {/* Header */}
         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">

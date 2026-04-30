@@ -7,6 +7,7 @@ import type {
   SortField,
   SortOrder,
   AppConfig,
+  Bookmark,
   ApiError as ApiErrorType,
 } from './types'
 import { ApiError } from './types'
@@ -99,6 +100,39 @@ export const api = {
     const params = new URLSearchParams()
     if (!incremental) params.set('incremental', 'false')
     return new EventSource(`${BASE_URL}/fetch/start?${params.toString()}`)
+  },
+
+  // Bookmarks (Build-4)
+  listBookmarks: async (): Promise<Bookmark[]> => {
+    const r = await fetch(`${BASE_URL}/bookmarks`)
+    if (!r.ok) throw new ApiError(r.status, await r.text())
+    const body = (await r.json()) as { bookmarks: Bookmark[] }
+    return body.bookmarks
+  },
+
+  createBookmark: async (input: Omit<Bookmark, 'id' | 'created_at'>): Promise<Bookmark> => {
+    const r = await fetch(`${BASE_URL}/bookmarks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    if (!r.ok) throw new ApiError(r.status, await r.text())
+    return r.json()
+  },
+
+  updateBookmark: async (id: string, partial: Partial<Pick<Bookmark, 'note' | 'snippet'>>): Promise<Bookmark> => {
+    const r = await fetch(`${BASE_URL}/bookmarks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(partial),
+    })
+    if (!r.ok) throw new ApiError(r.status, await r.text())
+    return r.json()
+  },
+
+  deleteBookmark: async (id: string): Promise<void> => {
+    const r = await fetch(`${BASE_URL}/bookmarks/${id}`, { method: 'DELETE' })
+    if (!r.ok) throw new ApiError(r.status, await r.text())
   },
 }
 
