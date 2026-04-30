@@ -42,6 +42,7 @@ test.describe('Mobile responsive layout', () => {
 
     // Click hamburger; sidebar slides in.
     await hamburger.click();
+    await page.waitForTimeout(300);
 
     const sidebarVisible = await page.evaluate(() => {
       const aside = document.querySelector('aside');
@@ -54,6 +55,7 @@ test.describe('Mobile responsive layout', () => {
     // After clicking outside (or close button), drawer closes.
     const closeBtn = page.getByRole('button', { name: /close sidebar/i });
     await closeBtn.click();
+    await page.waitForTimeout(300);
 
     const stillOffScreen = await page.evaluate(() => {
       const aside = document.querySelector('aside');
