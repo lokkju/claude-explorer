@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","sessionId":"sess-manual","timestamp":"2026-04-01T10:00:00Z","cwd":"/tmp/proj","message":{"role":"user","content":"Start a long task."}}
+{"type":"assistant","uuid":"a1","sessionId":"sess-manual","timestamp":"2026-04-01T10:00:05Z","message":{"id":"asst_1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"OK, working on it."}]}}
+{"type":"user","uuid":"u2","sessionId":"sess-manual","timestamp":"2026-04-01T11:00:00Z","cwd":"/tmp/proj","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"Manual compact summary: focus on tests and refactor the auth module."}}
+{"type":"user","uuid":"u3","sessionId":"sess-manual","timestamp":"2026-04-01T11:00:01Z","cwd":"/tmp/proj","message":{"role":"user","content":"<command-message>compact</command-message>\n<command-name>/compact</command-name>\n<command-args>focus on tests and refactor the auth module</command-args>"}}
+{"type":"user","uuid":"u4","sessionId":"sess-manual","timestamp":"2026-04-01T11:01:00Z","cwd":"/tmp/proj","message":{"role":"user","content":"Continue please."}}
+{"type":"assistant","uuid":"a2","sessionId":"sess-manual","timestamp":"2026-04-01T11:01:05Z","message":{"id":"asst_2","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"Continuing."}]}}

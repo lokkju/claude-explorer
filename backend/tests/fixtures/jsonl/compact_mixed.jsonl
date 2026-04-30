@@ -1,0 +1,9 @@
+{"type":"user","uuid":"u1","sessionId":"sess-mixed","timestamp":"2026-04-01T10:00:00Z","cwd":"/tmp/proj","message":{"role":"user","content":"Begin."}}
+{"type":"assistant","uuid":"a1","sessionId":"sess-mixed","timestamp":"2026-04-01T10:00:05Z","message":{"id":"asst_1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"OK."}]}}
+{"type":"user","uuid":"u2","sessionId":"sess-mixed","timestamp":"2026-04-01T11:00:00Z","cwd":"/tmp/proj","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"First auto-compact summary."}}
+{"type":"user","uuid":"u3","sessionId":"sess-mixed","timestamp":"2026-04-01T11:01:00Z","cwd":"/tmp/proj","message":{"role":"user","content":"More work please."}}
+{"type":"assistant","uuid":"a2","sessionId":"sess-mixed","timestamp":"2026-04-01T11:01:05Z","message":{"id":"asst_2","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"Sure."}]}}
+{"type":"user","uuid":"u4","sessionId":"sess-mixed","timestamp":"2026-04-01T12:00:00Z","cwd":"/tmp/proj","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"Manual compact summary preserving context for the build phase."}}
+{"type":"user","uuid":"u5","sessionId":"sess-mixed","timestamp":"2026-04-01T12:00:01Z","cwd":"/tmp/proj","message":{"role":"user","content":"<command-message>compact</command-message>\n<command-name>/compact</command-name>\n<command-args>preserve context for the build phase</command-args>"}}
+{"type":"user","uuid":"u6","sessionId":"sess-mixed","timestamp":"2026-04-01T12:01:00Z","cwd":"/tmp/proj","message":{"role":"user","content":"Now continue."}}
+{"type":"assistant","uuid":"a3","sessionId":"sess-mixed","timestamp":"2026-04-01T12:01:05Z","message":{"id":"asst_3","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"Continuing."}]}}
