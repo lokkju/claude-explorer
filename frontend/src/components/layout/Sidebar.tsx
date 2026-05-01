@@ -3,11 +3,9 @@ import { Link } from 'react-router'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
 import { useFilters } from '@/contexts/FilterContext'
 import { FilterChipRail } from '@/components/filters/FilterChipRail'
-import { useQueryClient } from '@tanstack/react-query'
 import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { queryKeys } from '@/lib/queryClient'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -46,13 +44,11 @@ export function Sidebar({ className }: SidebarProps) {
     setSearchQuery(urlFilters.q)
   }, [urlFilters.q])
   const [fetchDialogOpen, setFetchDialogOpen] = useState(false)
-  const [isRefreshing, setIsRefreshing] = useState(false)
   // Build-9: Refresh button owns the full capture+fetch pipeline. The
   // hook tracks isRunning so the button stays disabled while in flight.
   const { startRefresh, isRunning: isPipelineRunning } = useRefreshPipeline({
     onOpenDetails: () => setFetchDialogOpen(true),
   })
-  const queryClient = useQueryClient()
   const { sourceFilter, setSourceFilter } = useSourceFilter()
   const { focusArea, setFocusArea } = useKeyboardNavigation()
   const {
@@ -78,10 +74,8 @@ export function Sidebar({ className }: SidebarProps) {
 
   const ThemeIcon = theme === 'system' ? Monitor : effectiveTheme === 'dark' ? Moon : Sun
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true)
-    await queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all })
-    setIsRefreshing(false)
+  const handleRefresh = () => {
+    startRefresh(true)
   }
 
   return (
@@ -104,10 +98,10 @@ export function Sidebar({ className }: SidebarProps) {
           size="icon"
           className="h-8 w-8"
           onClick={handleRefresh}
-          disabled={isRefreshing}
+          disabled={isPipelineRunning}
           title="Refresh conversation list"
         >
-          <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+          <RefreshCw className={cn("h-4 w-4", isPipelineRunning && "animate-spin")} />
         </Button>
       </div>
 
@@ -245,18 +239,6 @@ export function Sidebar({ className }: SidebarProps) {
           </Button>
         </div>
         <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            title="Fetch Claude Desktop conversations"
-            aria-label="Fetch Claude Desktop conversations"
-            onClick={() => startRefresh(true)}
-            disabled={isPipelineRunning}
-          >
-            <RefreshCw
-              className={cn('h-4 w-4', isPipelineRunning && 'animate-spin')}
-            />
-          </Button>
           <Button variant="ghost" size="icon" title="Export All">
             <Download className="h-4 w-4" />
           </Button>
