@@ -68,7 +68,9 @@ REQUEST_TIMEOUT = 30.0
 #   52 CURLE_GOT_NOTHING
 #   55 CURLE_SEND_ERROR
 #   56 CURLE_RECV_ERROR
-TRANSIENT_CURL_CODES: frozenset[int] = frozenset({7, 28, 35, 52, 55, 56})
+#   5  CURLE_COULDNT_RESOLVE_PROXY (DNS / proxy failure during transient outage)
+#   6  CURLE_COULDNT_RESOLVE_HOST  (network down during fetch)
+TRANSIENT_CURL_CODES: frozenset[int] = frozenset({5, 6, 7, 28, 35, 52, 55, 56})
 
 # HTTP statuses we treat as transient (will retry).
 TRANSIENT_HTTP_STATUSES: frozenset[int] = frozenset({502, 503, 504})

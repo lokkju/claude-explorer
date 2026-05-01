@@ -60,7 +60,7 @@ function App() {
                   </Routes>
                 </KeyboardNavigationProvider>
               </BrowserRouter>
-              <Toaster position="bottom-right" />
+              <Toaster position="top-center" richColors closeButton />
               <ConnectionStatus />
             </SearchPanelProvider>
             </BookmarkProvider>
