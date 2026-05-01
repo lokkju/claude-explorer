@@ -9,7 +9,7 @@ import { errorToast } from '@/lib/errorToast'
 // whether to show a Retry button vs. a sticky Details toast.
 type ErrorKind = 'AUTH' | 'TRANSIENT' | 'TERMINAL'
 
-interface FetchProgress {
+export interface FetchProgress {
   type:
     | 'start'
     | 'progress'
@@ -26,6 +26,37 @@ interface FetchProgress {
   // Bug B: present on `type:"error"` events.
   kind?: ErrorKind
   retryable?: boolean
+}
+
+// Build-9 Bug 2: maximum visible chars for the per-conversation name suffix
+// in the toast. Sonner's body text wraps but a long name pushes the action
+// button off screen on a typical 1280px viewport; 40 chars is the sweet spot.
+const TOAST_NAME_MAX_CHARS = 40
+
+function truncateName(name: string, max: number = TOAST_NAME_MAX_CHARS): string {
+  if (name.length <= max) return name
+  // Reserve one char for the ellipsis so total length stays at `max`.
+  return name.slice(0, Math.max(0, max - 1)) + '…'
+}
+
+/**
+ * Build the loading-toast text for a `start`/`progress` SSE event.
+ *
+ * Shape: "Fetching N/M: <truncated conversation_name>" when both are present;
+ * "Fetching N/M…" when only counts are available; the raw message string
+ * (or "Fetching…") otherwise. Exported for unit testing in isolation.
+ */
+export function formatProgressText(data: FetchProgress): string {
+  const total = data.total ?? 0
+  const current = data.current ?? 0
+  const name = data.conversation_name?.trim()
+  if (total > 0 && name) {
+    return `Fetching ${current}/${total}: ${truncateName(name)}`
+  }
+  if (total > 0) {
+    return `Fetching ${current}/${total}…`
+  }
+  return data.message || 'Fetching…'
 }
 
 interface UseFetchToastOptions {
@@ -89,9 +120,7 @@ export function useFetchToast({ onOpenDetails }: UseFetchToastOptions) {
           eventSource.close()
           sourceRef.current = null
         } else if (data.type === 'progress' || data.type === 'start') {
-          const text = data.total
-            ? `Fetching ${data.current}/${data.total}…`
-            : data.message || 'Fetching…'
+          const text = formatProgressText(data)
           toast.loading(text, {
             id: toastId,
             duration: Infinity,
@@ -230,9 +259,10 @@ export function useRefreshPipeline({ onOpenDetails }: UseRefreshPipelineOptions)
             break
           case 'start':
           case 'progress': {
-            const text = data.total
-              ? `Fetching ${data.current ?? 0}/${data.total}…`
-              : data.message || 'Fetching…'
+            // Build-9 Bug 2: per-conversation feedback. Without the
+            // conversation_name suffix, the user stares at a static
+            // "Fetching N/M…" with no sense of progress for long fetches.
+            const text = formatProgressText(data)
             toast.loading(text, {
               id: toastId,
               duration: Infinity,
