@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/select'
 import { ConversationList } from '@/components/conversation/ConversationList'
 import { FetchDialog } from '@/components/fetch/FetchDialog'
-import { useFetchToast } from '@/components/fetch/FetchToast'
+import { useRefreshPipeline } from '@/components/fetch/FetchToast'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
@@ -47,7 +47,9 @@ export function Sidebar({ className }: SidebarProps) {
   }, [urlFilters.q])
   const [fetchDialogOpen, setFetchDialogOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const { startFetch } = useFetchToast({
+  // Build-9: Refresh button owns the full capture+fetch pipeline. The
+  // hook tracks isRunning so the button stays disabled while in flight.
+  const { startRefresh, isRunning: isPipelineRunning } = useRefreshPipeline({
     onOpenDetails: () => setFetchDialogOpen(true),
   })
   const queryClient = useQueryClient()
@@ -248,9 +250,12 @@ export function Sidebar({ className }: SidebarProps) {
             size="icon"
             title="Fetch Claude Desktop conversations"
             aria-label="Fetch Claude Desktop conversations"
-            onClick={() => startFetch(true)}
+            onClick={() => startRefresh(true)}
+            disabled={isPipelineRunning}
           >
-            <RefreshCw className="h-4 w-4" />
+            <RefreshCw
+              className={cn('h-4 w-4', isPipelineRunning && 'animate-spin')}
+            />
           </Button>
           <Button variant="ghost" size="icon" title="Export All">
             <Download className="h-4 w-4" />

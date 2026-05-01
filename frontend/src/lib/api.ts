@@ -109,6 +109,13 @@ export const api = {
     return new EventSource(`${BASE_URL}/fetch/start?${params.toString()}`)
   },
 
+  // Build-9: combined capture + fetch pipeline (the Refresh button's owner).
+  startRefresh: (incremental: boolean = true): EventSource => {
+    const params = new URLSearchParams()
+    if (!incremental) params.set('incremental', 'false')
+    return new EventSource(`${BASE_URL}/fetch/refresh?${params.toString()}`)
+  },
+
   // Bookmarks (Build-4)
   listBookmarks: async (): Promise<Bookmark[]> => {
     const r = await fetch(`${BASE_URL}/bookmarks`)
