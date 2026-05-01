@@ -9,6 +9,7 @@ import { SearchPanelProvider } from '@/contexts/SearchPanelContext'
 import { KeyboardNavigationProvider } from '@/contexts/KeyboardNavigationContext'
 import { FilterProvider } from '@/contexts/FilterContext'
 import { BookmarkProvider } from '@/contexts/BookmarkContext'
+import { FetchPipelineProvider } from '@/contexts/FetchPipelineContext'
 import { RootLayout } from '@/components/layout/RootLayout'
 import { ConversationPage } from '@/routes/ConversationPage'
 import { SettingsPage } from '@/routes/SettingsPage'
@@ -45,6 +46,7 @@ function App() {
             <FilterProvider>
             <BookmarkProvider>
             <SearchPanelProvider>
+            <FetchPipelineProvider>
               <BrowserRouter>
                 <KeyboardNavigationProvider>
                   <KeyboardShortcutHandler />
@@ -62,6 +64,7 @@ function App() {
               </BrowserRouter>
               <Toaster position="top-center" richColors closeButton />
               <ConnectionStatus />
+            </FetchPipelineProvider>
             </SearchPanelProvider>
             </BookmarkProvider>
             </FilterProvider>

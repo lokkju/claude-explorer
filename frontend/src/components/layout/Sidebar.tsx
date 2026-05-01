@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/select'
 import { ConversationList } from '@/components/conversation/ConversationList'
 import { FetchDialog } from '@/components/fetch/FetchDialog'
-import { useRefreshPipeline } from '@/components/fetch/FetchToast'
+import { useFetchPipeline } from '@/contexts/FetchPipelineContext'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
@@ -43,12 +43,16 @@ export function Sidebar({ className }: SidebarProps) {
   useEffect(() => {
     setSearchQuery(urlFilters.q)
   }, [urlFilters.q])
-  const [fetchDialogOpen, setFetchDialogOpen] = useState(false)
-  // Build-9: Refresh button owns the full capture+fetch pipeline. The
-  // hook tracks isRunning so the button stays disabled while in flight.
-  const { startRefresh, isRunning: isPipelineRunning } = useRefreshPipeline({
-    onOpenDetails: () => setFetchDialogOpen(true),
-  })
+  // Build-9 Bug 1: Refresh button drives the same shared pipeline state
+  // that the FetchDialog modal subscribes to. The dialog open state lives
+  // in the same context so the toast's "Details" action and the dialog
+  // itself stay in sync without prop-drilling.
+  const {
+    startRefresh,
+    isRunning: isPipelineRunning,
+    detailsOpen,
+    closeDetails,
+  } = useFetchPipeline()
   const { sourceFilter, setSourceFilter } = useSourceFilter()
   const { focusArea, setFocusArea } = useKeyboardNavigation()
   const {
@@ -246,7 +250,7 @@ export function Sidebar({ className }: SidebarProps) {
       </div>
 
       {/* Fetch Dialog */}
-      <FetchDialog isOpen={fetchDialogOpen} onClose={() => setFetchDialogOpen(false)} />
+      <FetchDialog isOpen={detailsOpen} onClose={closeDetails} />
     </aside>
   )
 }
