@@ -20,12 +20,19 @@ Options:
 """
 
 import json
+import logging
+import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 import click
 from curl_cffi import requests as curl_requests
+from curl_cffi.requests.errors import RequestsError
+
+
+logger = logging.getLogger(__name__)
 
 
 # Default paths
@@ -40,6 +47,183 @@ WEB_BASE = "https://claude.ai"
 # Request settings
 DEFAULT_DELAY = 0.3
 REQUEST_TIMEOUT = 30.0
+
+
+# ---------------------------------------------------------------------------
+# Bug A: Transient-error retry layer.
+#
+# A first-of-process call to claude.ai through curl_cffi can fail with
+# a TLS handshake error (libcurl code 35) because the TLS context has
+# not been warmed yet. Cloudflare's edge also occasionally returns 5xx
+# during deploys. Both classes of failure recover on the very next call.
+#
+# We classify upstream errors into three domain exceptions so the SSE
+# router can decide what to do without importing curl_cffi types.
+# ---------------------------------------------------------------------------
+
+# libcurl numeric codes we treat as transient.
+#   7  CURLE_COULDNT_CONNECT
+#   28 CURLE_OPERATION_TIMEDOUT
+#   35 CURLE_SSL_CONNECT_ERROR  (the cold-start case the user hit)
+#   52 CURLE_GOT_NOTHING
+#   55 CURLE_SEND_ERROR
+#   56 CURLE_RECV_ERROR
+TRANSIENT_CURL_CODES: frozenset[int] = frozenset({7, 28, 35, 52, 55, 56})
+
+# HTTP statuses we treat as transient (will retry).
+TRANSIENT_HTTP_STATUSES: frozenset[int] = frozenset({502, 503, 504})
+
+# HTTP statuses that mean the credentials are no longer valid. Never
+# retry these — surface immediately so the SSE pipeline can launch
+# capture once.
+AUTH_HTTP_STATUSES: frozenset[int] = frozenset({401, 403})
+
+
+class FetchError(Exception):
+    """Base class for all domain errors raised by the fetcher."""
+
+
+class FetchAuthError(FetchError):
+    """Credentials are invalid / blocked. The router should run capture."""
+
+
+class FetchTransientError(FetchError):
+    """Transient transport-layer failure (TLS, connection, 5xx).
+
+    Wraps the underlying exception in `__cause__`. Raised after retry
+    attempts have been exhausted, OR raised directly when the caller
+    asked us not to retry but the failure was still transient.
+    """
+
+
+class FetchTerminalError(FetchError):
+    """Anything else — unrecoverable. The router emits a sticky toast."""
+
+
+class TransientHTTPError(Exception):
+    """Sentinel raised inside _get when status_code is in TRANSIENT_HTTP_STATUSES.
+
+    Internal to the retry layer; we never let it leak past `with_retry`.
+    """
+
+    def __init__(self, status: int, msg: str = "") -> None:
+        super().__init__(f"HTTP {status} {msg}".strip())
+        self.status = status
+
+
+def _retry_sleep(seconds: float) -> None:
+    """Indirection so tests can patch sleep without touching time.sleep globally."""
+    time.sleep(seconds)
+
+
+def _jittered_backoff(base_delay: float, attempt: int) -> float:
+    """Exponential backoff with ±20% jitter."""
+    delay = base_delay * (3 ** (attempt - 1))
+    jitter = delay * 0.2
+    return max(0.0, delay + random.uniform(-jitter, jitter))
+
+
+def _classify_http_error(exc: BaseException) -> type[FetchError] | None:
+    """Inspect a `raise_for_status()`-style HTTPError and pick a domain class.
+
+    Returns None if the exception isn't an HTTP-status failure we recognize.
+    The caller is responsible for handling the None case.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    status = getattr(response, "status_code", None)
+    if status is None:
+        return None
+    if status in AUTH_HTTP_STATUSES:
+        return FetchAuthError
+    if status in TRANSIENT_HTTP_STATUSES:
+        return FetchTransientError
+    if 400 <= status < 500:
+        return FetchTerminalError
+    if 500 <= status < 600:
+        return FetchTransientError
+    return None
+
+
+def with_retry(
+    fn: Callable,
+    *,
+    max_attempts: int = 3,
+    base_delay: float = 0.25,
+    on_retry: Callable[[int, int, Exception], None] | None = None,
+):
+    """Run `fn`, retrying on transient transport errors.
+
+    Transient set:
+      - curl_cffi RequestsError with code in TRANSIENT_CURL_CODES.
+      - TransientHTTPError raised by the caller for 5xx responses.
+
+    Non-transient errors are mapped to a domain exception and re-raised
+    immediately:
+      - 401/403 (or the cf-mitigated marker) -> FetchAuthError.
+      - Other 4xx -> FetchTerminalError.
+      - Anything else -> propagated as-is.
+
+    If retries are exhausted, the final transient error is re-raised as
+    `FetchTransientError`. The original exception is set as __cause__.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return fn()
+        except RequestsError as exc:
+            code = getattr(exc, "code", None)
+            if code in TRANSIENT_CURL_CODES and attempt < max_attempts:
+                if on_retry:
+                    on_retry(attempt, max_attempts, exc)
+                _retry_sleep(_jittered_backoff(base_delay, attempt))
+                last_exc = exc
+                continue
+            if code in TRANSIENT_CURL_CODES:
+                # Exhausted: wrap into FetchTransientError so the router
+                # doesn't have to import curl_cffi types.
+                raise FetchTransientError(
+                    f"Transport error after {max_attempts} attempts: {exc}"
+                ) from exc
+            # Non-transient curl error: re-raise as terminal.
+            raise FetchTerminalError(str(exc)) from exc
+        except TransientHTTPError as exc:
+            if attempt < max_attempts:
+                if on_retry:
+                    on_retry(attempt, max_attempts, exc)
+                _retry_sleep(_jittered_backoff(base_delay, attempt))
+                last_exc = exc
+                continue
+            raise FetchTransientError(
+                f"HTTP {exc.status} after {max_attempts} attempts"
+            ) from exc
+        except FetchError:
+            # Already classified (e.g. by the caller); re-raise as-is.
+            raise
+        except Exception as exc:
+            # Catch HTTPError from raise_for_status() and classify by
+            # inspecting `.response.status_code`. Everything else is
+            # terminal.
+            cls = _classify_http_error(exc)
+            if cls is FetchTransientError and attempt < max_attempts:
+                if on_retry:
+                    on_retry(attempt, max_attempts, exc)
+                _retry_sleep(_jittered_backoff(base_delay, attempt))
+                last_exc = exc
+                continue
+            if cls is not None:
+                raise cls(str(exc)) from exc
+            # Heuristic fallback for stringly-typed errors (e.g. tests
+            # that raise plain RuntimeError("401 Client Error: ...")).
+            msg = str(exc).lower()
+            if "401" in msg or "403" in msg or "cf-mitigated" in msg:
+                raise FetchAuthError(str(exc)) from exc
+            raise FetchTerminalError(str(exc)) from exc
+    # Unreachable: every path either returns, retries (continues), or raises.
+    raise FetchTransientError(
+        f"Retry loop exited without value (last_exc={last_exc})"
+    )
 
 
 class ClaudeFetcher:
@@ -74,6 +258,14 @@ class ClaudeFetcher:
         if cf_clearance:
             self.cookies["cf_clearance"] = cf_clearance
 
+        # Bug A: SSE layer drains this list after each run_in_executor() to
+        # surface "Network hiccup; retrying..." progress events.
+        # See refresh_pipeline_stream in backend/routers/fetch.py.
+        # NOTE: per CTO decision the drain is post-call, not real-time —
+        # WWCMM if user UX feedback indicates the silence is jarring,
+        # upgrade to asyncio.Queue + call_soon_threadsafe.
+        self.retry_events: list[dict] = []
+
     def _log(self, message: str) -> None:
         """Print message if verbose mode is on."""
         if self.verbose:
@@ -83,31 +275,78 @@ class ClaudeFetcher:
         """Build API URL with org ID."""
         return f"{API_BASE}/organizations/{self.org_id}/{path}"
 
-    def _get(self, url: str) -> curl_requests.Response:
-        """Make a GET request with Chrome impersonation."""
-        return curl_requests.get(
-            url,
-            cookies=self.cookies,
-            impersonate="chrome",
-            timeout=REQUEST_TIMEOUT,
+    def _on_retry(self, attempt: int, max_attempts: int, exc: Exception) -> None:
+        """Record a retry event for the SSE layer to drain.
+
+        Also logs at WARNING so backend logs surface transient hiccups.
+        """
+        message = (
+            f"Network hiccup; retrying ({attempt} of {max_attempts - 1})..."
         )
+        self.retry_events.append(
+            {
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "error": str(exc),
+                "message": message,
+            }
+        )
+        logger.warning(
+            "Transient fetch error (attempt %d/%d): %s",
+            attempt,
+            max_attempts,
+            exc,
+        )
+
+    def _get(self, url: str) -> curl_requests.Response:
+        """Make a GET request with Chrome impersonation, retrying on transients.
+
+        Maps libcurl transport errors and 5xx responses through the retry
+        layer; 4xx (incl. 401/403) is fast-failed via the response's
+        `raise_for_status()` path on the caller. We pre-flight 5xx here
+        so the retry helper can treat them as transient.
+        """
+
+        def _do() -> curl_requests.Response:
+            resp = curl_requests.get(
+                url,
+                cookies=self.cookies,
+                impersonate="chrome",
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code in TRANSIENT_HTTP_STATUSES:
+                raise TransientHTTPError(resp.status_code, resp.reason or "")
+            return resp
+
+        return with_retry(_do, on_retry=self._on_retry)
 
     def _download_file(self, url: str, dest_path: Path) -> tuple[bool, Path]:
         """Download a file from Claude's servers.
 
         Returns (success, actual_path) - path may have different extension based on Content-Type.
+
+        Bug A: transparent retry on transient transport errors. Retries do NOT
+        emit SSE events for file downloads (best-effort path); they are logged
+        at WARNING. Auth/4xx/exhausted-transient still falls through to the
+        existing return-False behavior.
         """
         try:
             # Handle relative URLs
             if url.startswith("/"):
                 url = f"{WEB_BASE}{url}"
 
-            response = curl_requests.get(
-                url,
-                cookies=self.cookies,
-                impersonate="chrome",
-                timeout=REQUEST_TIMEOUT * 2,  # Longer timeout for files
-            )
+            def _do():
+                resp = curl_requests.get(
+                    url,
+                    cookies=self.cookies,
+                    impersonate="chrome",
+                    timeout=REQUEST_TIMEOUT * 2,  # Longer timeout for files
+                )
+                if resp.status_code in TRANSIENT_HTTP_STATUSES:
+                    raise TransientHTTPError(resp.status_code, resp.reason or "")
+                return resp
+
+            response = with_retry(_do)
             response.raise_for_status()
 
             # Determine correct extension from Content-Type
@@ -312,15 +551,27 @@ class ClaudeFetcher:
             response = self._get(url)
             response.raise_for_status()
             return response.json()
+        except FetchAuthError:
+            click.echo(
+                "  Error: Session expired or blocked. Re-run credential capture.",
+                err=True,
+            )
+            raise
+        except FetchTransientError:
+            # Retry layer already exhausted; bubble up to the SSE pipeline.
+            raise
         except Exception as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            status = getattr(getattr(e, "response", None), "status_code", None)
             if status == 404:
                 click.echo(f"  Warning: Conversation {uuid} not found (404)", err=True)
-            elif status == 401:
-                click.echo(f"  Error: Session expired (401). Re-run credential capture.", err=True)
-                raise
+            elif status == 401 or status == 403:
+                click.echo(
+                    "  Error: Session expired or blocked. Re-run credential capture.",
+                    err=True,
+                )
+                raise FetchAuthError(str(e)) from e
             elif status == 429:
-                click.echo(f"  Rate limited. Waiting 60 seconds...", err=True)
+                click.echo("  Rate limited. Waiting 60 seconds...", err=True)
                 time.sleep(60)
                 return self.fetch_conversation(uuid)  # Retry
             else:
