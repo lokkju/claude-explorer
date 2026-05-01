@@ -2,6 +2,12 @@ import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
+import { errorToast } from '@/lib/errorToast'
+
+// Bug B/C: SSE error events now carry a `kind` field (AUTH | TRANSIENT |
+// TERMINAL) and a `retryable` boolean. The frontend uses these to decide
+// whether to show a Retry button vs. a sticky Details toast.
+type ErrorKind = 'AUTH' | 'TRANSIENT' | 'TERMINAL'
 
 interface FetchProgress {
   type:
@@ -17,6 +23,9 @@ interface FetchProgress {
   current?: number
   total?: number
   conversation_name?: string
+  // Bug B: present on `type:"error"` events.
+  kind?: ErrorKind
+  retryable?: boolean
 }
 
 interface UseFetchToastOptions {
@@ -26,6 +35,8 @@ interface UseFetchToastOptions {
 export function useFetchToast({ onOpenDetails }: UseFetchToastOptions) {
   const queryClient = useQueryClient()
   const sourceRef = useRef<EventSource | null>(null)
+  // Forward-reference to startFetch so the toast's Retry action can call it.
+  const startRef = useRef<(incremental?: boolean) => void>(() => {})
 
   const startFetch = useCallback(
     (incremental: boolean = true) => {
@@ -65,13 +76,15 @@ export function useFetchToast({ onOpenDetails }: UseFetchToastOptions) {
           eventSource.close()
           sourceRef.current = null
         } else if (data.type === 'error') {
-          toast.error(data.message || 'Fetch failed.', {
+          // Bug C: classify by SSE kind. TRANSIENT gets a Retry button +
+          // 8s minimum; AUTH/TERMINAL/unknown stays sticky.
+          const isTransient =
+            data.kind === 'TRANSIENT' || data.retryable === true
+          errorToast(data.message || 'Fetch failed.', {
             id: toastId,
-            duration: Infinity,
-            action: {
-              label: 'Details',
-              onClick: () => onOpenDetails(),
-            },
+            sticky: !isTransient,
+            retry: isTransient ? () => startRef.current(incremental) : undefined,
+            details: isTransient ? undefined : () => onOpenDetails(),
           })
           eventSource.close()
           sourceRef.current = null
@@ -94,13 +107,11 @@ export function useFetchToast({ onOpenDetails }: UseFetchToastOptions) {
         if (latestProgress?.type === 'complete') {
           return
         }
-        toast.error('Connection lost during fetch.', {
+        // Connection drops are transient by nature — give the user a Retry
+        // button rather than a sticky doom toast.
+        errorToast('Connection lost during fetch.', {
           id: toastId,
-          duration: Infinity,
-          action: {
-            label: 'Details',
-            onClick: () => onOpenDetails(),
-          },
+          retry: () => startRef.current(incremental),
         })
         eventSource.close()
         sourceRef.current = null
@@ -108,6 +119,8 @@ export function useFetchToast({ onOpenDetails }: UseFetchToastOptions) {
     },
     [onOpenDetails, queryClient],
   )
+
+  startRef.current = startFetch
 
   return { startFetch }
 }
@@ -153,16 +166,18 @@ export function useRefreshPipeline({ onOpenDetails }: UseRefreshPipelineOptions)
         setIsRunning(false)
       }
 
-      const showError = (message: string) => {
-        toast.error(message, {
+      // Bug C: classify error events by `kind`.
+      //   TRANSIENT -> 8s minimum, Retry button.
+      //   AUTH/TERMINAL/unknown -> sticky, Retry button (so the user is
+      //   never trapped without a way to recover from a real-world failure).
+      const showErrorByKind = (message: string, kind?: ErrorKind, retryable?: boolean) => {
+        const isTransient = kind === 'TRANSIENT' || retryable === true
+        errorToast(message, {
           id: toastId,
-          duration: Infinity,
-          action: {
-            label: 'Retry',
-            onClick: () => {
-              toast.dismiss(toastId)
-              startRefresh(incremental)
-            },
+          sticky: !isTransient,
+          retry: () => {
+            toast.dismiss(toastId)
+            startRefresh(incremental)
           },
         })
       }
@@ -237,7 +252,11 @@ export function useRefreshPipeline({ onOpenDetails }: UseRefreshPipelineOptions)
             close()
             break
           case 'error':
-            showError(data.message || 'Refresh failed.')
+            showErrorByKind(
+              data.message || 'Refresh failed.',
+              data.kind,
+              data.retryable,
+            )
             close()
             break
         }
@@ -247,7 +266,8 @@ export function useRefreshPipeline({ onOpenDetails }: UseRefreshPipelineOptions)
         if (latestProgress?.type === 'complete') {
           return
         }
-        showError('Connection lost during refresh.')
+        // Connection drop -> treat as transient (give user a Retry button).
+        showErrorByKind('Connection lost during refresh.', 'TRANSIENT', true)
         close()
       }
     },

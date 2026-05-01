@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
+import { errorToast } from '@/lib/errorToast'
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/queryClient'
 import { useConversation } from '@/hooks/useConversations'
@@ -264,7 +265,11 @@ export function ConversationPage() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all })
       toast.success('Conversation re-fetched.')
     } catch (e) {
-      toast.error(`Re-fetch failed: ${(e as Error).message}`)
+      // Bug C: explicit duration so the user sees the failure (sonner's
+      // default error duration can be as short as 4s).
+      errorToast(`Re-fetch failed: ${(e as Error).message}`, {
+        retry: handleForceRefetch,
+      })
     } finally {
       setIsRefetching(false)
     }
