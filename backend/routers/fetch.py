@@ -57,6 +57,21 @@ SESSION_EXPIRED_MESSAGE = (
 
 TRANSIENT_USER_MESSAGE = "Network problem reaching claude.ai. Retry?"
 
+# Build-9 Bug 3: friendly copy for the per-conversation force-refetch route.
+# When Anthropic returns 404 we don't know WHY (deleted, archived, or in a
+# different workspace), so default to the catch-all message and only switch
+# to the cross-workspace copy when we can confirm the UUID is missing from
+# the current credentials' conversation list (see PLANS/cowork-multi-org.md
+# for the long-term fix that actually syncs across workspaces).
+CONVERSATION_GONE_MESSAGE = (
+    "This conversation isn't available on Anthropic anymore. "
+    "It may have been deleted or archived."
+)
+CONVERSATION_CROSS_WORKSPACE_MESSAGE = (
+    "This conversation may belong to a different Anthropic workspace than "
+    "your current login. Cross-workspace sync is coming in a future update."
+)
+
 
 ErrorKind = Literal["AUTH", "TRANSIENT", "TERMINAL"]
 
@@ -367,13 +382,40 @@ async def force_refetch_conversation(uuid: str) -> dict:
     try:
         full_conv = fetcher.fetch_conversation(uuid)
     except Exception as e:
-        msg = str(e)
-        if "401" in msg or "403" in msg or "cf-mitigated" in msg.lower():
+        # Build-9 Bug 3: route auth failures through the same SESSION_EXPIRED
+        # message as the bulk pipeline, regardless of whether the underlying
+        # exception is a domain `FetchAuthError` or a stringly-typed
+        # RuntimeError("401 ..."). _classify_error already handles both.
+        kind = _classify_error(e)
+        if kind == "AUTH":
             raise HTTPException(status_code=401, detail=SESSION_EXPIRED_MESSAGE)
-        raise HTTPException(status_code=500, detail=f"Fetch failed: {msg}")
+        if kind == "TRANSIENT":
+            raise HTTPException(status_code=503, detail=TRANSIENT_USER_MESSAGE)
+        raise HTTPException(status_code=500, detail=f"Fetch failed: {e}")
 
     if not full_conv:
-        raise HTTPException(status_code=404, detail=f"Conversation {uuid} not found upstream")
+        # Build-9 Bug 3: 404 from Anthropic for a conversation we asked about
+        # explicitly. The most useful disambiguation is "is it in the current
+        # credentials' org list?" If yes, it was probably just deleted; if no,
+        # the most likely cause is that it lives in another Anthropic
+        # workspace (the cowork-multi-org problem). We can't be 100% sure
+        # without proper multi-workspace support, but the cross-workspace
+        # hint is the single most actionable explanation a user can act on.
+        detail = CONVERSATION_GONE_MESSAGE
+        try:
+            org_list = fetcher.fetch_conversation_list()
+        except Exception:
+            # If we can't even pull the list, stick with the generic message.
+            org_list = None
+        # Heuristic: only switch to the cross-workspace message when the
+        # list is non-empty AND the UUID isn't in it. An empty list could
+        # mean a brand-new account, a transient list failure, or genuinely
+        # zero conversations -- none of which warrant the workspace claim.
+        if org_list:
+            org_uuids = {c.get("uuid") for c in org_list}
+            if uuid not in org_uuids:
+                detail = CONVERSATION_CROSS_WORKSPACE_MESSAGE
+        raise HTTPException(status_code=404, detail=detail)
 
     fetcher.save_conversation(full_conv)
     return {"uuid": uuid, "status": "refetched", "name": full_conv.get("name", "")}
