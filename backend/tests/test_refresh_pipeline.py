@@ -27,10 +27,7 @@ Atomicity:
 from __future__ import annotations
 
 import json
-import os
-import time
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -78,17 +75,6 @@ def isolated_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "backend.routers.fetch.DEFAULT_FILES_DIR", tmp_path / "files", raising=True
     )
     return out
-
-
-def _stub_capture(creds_path: Path, payload: dict[str, Any] | None = None):
-    """Build an async stub that mimics playwright_capture.capture_credentials."""
-
-    async def _stub(timeout: int = 300, headless: bool = False) -> dict | None:
-        if payload is None:
-            return None
-        return payload
-
-    return _stub
 
 
 def test_missing_credentials_triggers_capture(

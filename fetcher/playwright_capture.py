@@ -123,11 +123,17 @@ async def capture_credentials(
     Returns:
         Credentials dict or None if failed
     """
-    async with async_playwright() as p:
+    # Build-9: When invoked from inside a FastAPI worker, Playwright's default
+    # SIGINT/SIGTERM handlers fight Uvicorn's. Disable them — the FastAPI
+    # process owns shutdown signaling.
+    async with async_playwright() as p:  # noqa: SIM117 — same scope used below
         # Launch browser - must be headed for user to log in
         browser = await p.chromium.launch(
             headless=headless,
             args=["--disable-blink-features=AutomationControlled"],
+            handle_sigint=False,
+            handle_sigterm=False,
+            handle_sighup=False,
         )
 
         # Create context with realistic settings
@@ -196,14 +202,25 @@ async def capture_credentials(
 
 
 def save_credentials(credentials: dict, path: Path = DEFAULT_CREDENTIALS_PATH) -> None:
-    """Save credentials to file with 0o600 perms; parent dir 0o700."""
+    """Save credentials to file with 0o600 perms; parent dir 0o700.
+
+    Build-9: write to a temp file in the same directory and `os.replace()` to
+    the final path. The fetch path could otherwise read a half-written JSON
+    file when the UI's Refresh button triggers capture concurrent with a
+    background `claude-explorer fetch` invocation.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
 
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(credentials, f, indent=2)
+    os.chmod(tmp_path, 0o600)
 
+    # Atomic rename — POSIX guarantees the destination either has the old
+    # file or the new file, never a partial write.
+    os.replace(tmp_path, path)
     os.chmod(path, 0o600)
 
     click.echo(f"Credentials saved to {path}")
