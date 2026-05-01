@@ -404,15 +404,15 @@ export function ConversationPage() {
           )}
           {conversation.source === 'CLAUDE_AI' && (
             <Button
-              variant="outline"
-              size="sm"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
               onClick={handleForceRefetch}
               disabled={isRefetching}
               title="Re-download this conversation from Anthropic"
               aria-label="Re-download this conversation"
             >
               <Download className={cn('h-4 w-4', isRefetching && 'animate-pulse')} />
-              <span className="ml-2">Re-download this conversation</span>
             </Button>
           )}
           {isCC && hasCompactMarkers && (
