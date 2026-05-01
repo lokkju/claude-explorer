@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useSearchParams } from 'react-router'
-import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors } from 'lucide-react'
+import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors, RefreshCw } from 'lucide-react'
+import { toast } from 'sonner'
+import { useQueryClient } from '@tanstack/react-query'
+import { queryKeys } from '@/lib/queryClient'
 import { useConversation } from '@/hooks/useConversations'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation, type MessageInfo } from '@/contexts/KeyboardNavigationContext'
@@ -22,6 +25,8 @@ export function ConversationPage() {
   const { data: conversation, isLoading, error } = useConversation(uuid || '', branchLeaf)
   const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools, hideCompactMarkers, setHideCompactMarkers } = useSettings()
   const { toggleBookmark } = useBookmarks()
+  const queryClient = useQueryClient()
+  const [isRefetching, setIsRefetching] = useState(false)
   const { isOpen: isSearchPanelOpen } = useSearchPanel()
   const {
     setMessages,
@@ -250,6 +255,21 @@ export function ConversationPage() {
     downloadBlob(blob, `${sanitizeFilename(conversation.name)}.pdf`)
   }
 
+  const handleForceRefetch = async () => {
+    if (!conversation) return
+    setIsRefetching(true)
+    try {
+      await api.forceRefetchConversation(conversation.uuid)
+      await queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(conversation.uuid) })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all })
+      toast.success('Conversation re-fetched.')
+    } catch (e) {
+      toast.error(`Re-fetch failed: ${(e as Error).message}`)
+    } finally {
+      setIsRefetching(false)
+    }
+  }
+
   const handleCopyAll = async () => {
     const markdown = conversationToMarkdown(
       conversation.name,
@@ -366,6 +386,19 @@ export function ConversationPage() {
             >
               <ChevronsUpDown className="h-4 w-4" />
               <span className="ml-2">{expandAllTools ? 'Collapse' : 'Expand'}</span>
+            </Button>
+          )}
+          {conversation.source === 'CLAUDE_AI' && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleForceRefetch}
+              disabled={isRefetching}
+              title="Force re-fetch this conversation from the Claude API"
+              aria-label="Force re-fetch"
+            >
+              <RefreshCw className={cn('h-4 w-4', isRefetching && 'animate-spin')} />
+              <span className="ml-2">Force re-fetch</span>
             </Button>
           )}
           {isCC && hasCompactMarkers && (

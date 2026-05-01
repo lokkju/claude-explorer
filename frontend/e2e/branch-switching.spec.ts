@@ -97,6 +97,8 @@ async function mockBackend(page: import('@playwright/test').Page) {
 }
 
 test.describe('Branch switching (Build-8 #6)', () => {
+  test.use({ viewport: { width: 1600, height: 900 } });
+
   test.beforeEach(async ({ page }) => {
     await mockBackend(page);
   });

@@ -254,6 +254,53 @@ async def fetch_conversations_stream(
         })
 
 
+@router.post("/fetch/conversation/{uuid}")
+async def force_refetch_conversation(uuid: str) -> dict:
+    """Force re-fetch of a single conversation, bypassing the incremental skip.
+
+    Useful when a Desktop-side rename or content change needs to propagate
+    without a full --full-refresh.
+    """
+    try:
+        creds = load_credentials(DEFAULT_CREDENTIALS_PATH)
+    except Exception:
+        raise HTTPException(status_code=400, detail="No credentials. Run 'claude-explorer capture' first.")
+
+    session_key = creds.get("session_key")
+    org_id = creds.get("org_id")
+    if not session_key or not org_id:
+        raise HTTPException(status_code=400, detail="Invalid credentials file.")
+
+    fetcher = ClaudeFetcher(
+        session_key=session_key,
+        org_id=org_id,
+        output_dir=DEFAULT_OUTPUT_DIR,
+        files_dir=DEFAULT_FILES_DIR,
+        delay=0.0,
+        incremental=False,
+        verbose=False,
+        download_files=True,
+        cf_bm=creds.get("cf_bm"),
+        cf_clearance=creds.get("cf_clearance"),
+    )
+
+    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    try:
+        full_conv = fetcher.fetch_conversation(uuid)
+    except Exception as e:
+        msg = str(e)
+        if "401" in msg or "403" in msg or "cf-mitigated" in msg.lower():
+            raise HTTPException(status_code=401, detail=SESSION_EXPIRED_MESSAGE)
+        raise HTTPException(status_code=500, detail=f"Fetch failed: {msg}")
+
+    if not full_conv:
+        raise HTTPException(status_code=404, detail=f"Conversation {uuid} not found upstream")
+
+    fetcher.save_conversation(full_conv)
+    return {"uuid": uuid, "status": "refetched", "name": full_conv.get("name", "")}
+
+
 @router.get("/fetch/start")
 async def fetch_conversations(
     incremental: bool = True,

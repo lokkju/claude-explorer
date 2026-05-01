@@ -96,6 +96,12 @@ export const api = {
     credentials_age_days: number | null
   }> => fetchJson('/fetch/status'),
 
+  forceRefetchConversation: async (uuid: string): Promise<{ uuid: string; status: string; name: string }> => {
+    const r = await fetch(`${BASE_URL}/fetch/conversation/${uuid}`, { method: 'POST' })
+    if (!r.ok) throw new ApiError(r.status, await r.text())
+    return r.json()
+  },
+
   // Returns EventSource for SSE streaming
   startFetch: (incremental: boolean = true): EventSource => {
     const params = new URLSearchParams()
