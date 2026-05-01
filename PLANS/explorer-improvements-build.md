@@ -463,6 +463,26 @@ Each item is **TDD**: a failing test must be committed first, then the fix in a 
 - Future multi-worker uvicorn: the lock is per-worker. If we deploy with `--workers 2`, a filesystem-level lock or shared state is needed. Not on the current roadmap (single-user local tool).
 - `--reload` zombie Chromium: if the user edits backend code mid-capture, the dev server may leave a Chromium process behind. Manual `pkill -f "Google Chrome for Testing"` clears it. Acceptable dev-time annoyance.
 
+### Build-9 follow-ups (Bugs A/B/C — landed)
+
+Real-world testing of the Refresh button surfaced three issues:
+
+| Bug | Symptom | Fix | Where |
+|-----|---------|-----|-------|
+| A | First call after backend cold-start failed at the libcurl TLS layer (`code 35`); whole refresh aborted on a transient blip. | `with_retry()` helper in `fetcher/bulk_fetch.py` retries libcurl codes 7/28/35/52/55/56 and HTTP 502/503/504 with jittered exponential backoff (0.25s → 0.75s → 2.0s). 4xx (incl. 401/403) is fast-failed. | `fetcher/bulk_fetch.py`, `fetcher/tests/test_retry.py` |
+| B | Generic `error` SSE event lost the distinction between "auth — re-capture" and "transport blip — retry"; a connection error risked popping the capture browser unnecessarily. | Domain exceptions `FetchAuthError`/`FetchTransientError`/`FetchTerminalError` in `fetcher/bulk_fetch.py`. New `_classify_error(exc)` in `backend/routers/fetch.py` uses `isinstance` against domain types, no `curl_cffi` import in the router. SSE error event now carries `kind` and `retryable`. Retry events are drained from `ClaudeFetcher.retry_events` after each `run_in_executor()` and surfaced as "Network hiccup; retrying..." progress events. | `backend/routers/fetch.py`, `backend/tests/test_error_classification.py` |
+| C | Error toast disappeared in <5s on first click; user couldn't read it. Sonner's default error duration is variable. | `errorToast()` wrapper in `frontend/src/lib/errorToast.ts` enforces 8000ms minimum, `Infinity` for sticky. All `toast.error()` call sites migrated. SSE `kind` decides Retry button vs sticky. | `frontend/src/lib/errorToast.ts`, `frontend/src/components/fetch/FetchToast.tsx`, `frontend/src/routes/ConversationPage.tsx`, `frontend/e2e/refresh-toast-duration.spec.ts` |
+
+**Error-classification table (canonical):**
+
+| Class | Triggers | UI behaviour | Capture launched? |
+|-------|----------|--------------|-------------------|
+| `AUTH` | HTTP 401, 403, `cf-mitigated` marker, `FetchAuthError` | Sticky toast, `SESSION_EXPIRED_MESSAGE`, no Retry (capture handles recovery) | Yes — once per request |
+| `TRANSIENT` | libcurl transport codes (after retry exhausted), HTTP 5xx, `FetchTransientError` | 8s toast, "Network problem reaching claude.ai. Retry?", Retry button | No |
+| `TERMINAL` | All other failures (`FetchTerminalError`, schema errors, JSON decode, file I/O) | Sticky toast with raw message, Retry button (so user is never trapped) | No |
+
+**Logging:** both `fetcher/bulk_fetch.py` and `backend/routers/fetch.py` now have module-level `logger = logging.getLogger(__name__)`. `logger.warning(...)` on each transient retry; `logger.error(..., exc_info=True)` on TERMINAL. Backend logs flow to `/tmp/claude-explorer-backend.log` per current ops.
+
 ---
 
 ## Test plan (consolidated)
