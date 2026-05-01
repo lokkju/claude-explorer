@@ -18,16 +18,18 @@ import pytest
 
 
 def test_transient_curl_codes_present() -> None:
-    """The set of retried libcurl codes must include the cold-start code 35."""
+    """The set of retried libcurl codes must include DNS + connect + cold-start."""
     from fetcher.bulk_fetch import TRANSIENT_CURL_CODES
 
+    # 5  CURLE_COULDNT_RESOLVE_PROXY
+    # 6  CURLE_COULDNT_RESOLVE_HOST (network down during fetch)
     # 7  CURLE_COULDNT_CONNECT
     # 28 CURLE_OPERATION_TIMEDOUT
-    # 35 CURLE_SSL_CONNECT_ERROR (the cold-start case the user hit)
+    # 35 CURLE_SSL_CONNECT_ERROR (the cold-start case)
     # 52 CURLE_GOT_NOTHING
     # 55 CURLE_SEND_ERROR
     # 56 CURLE_RECV_ERROR
-    for code in (7, 28, 35, 52, 55, 56):
+    for code in (5, 6, 7, 28, 35, 52, 55, 56):
         assert code in TRANSIENT_CURL_CODES, f"libcurl code {code} should be transient"
 
 
