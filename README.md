@@ -254,6 +254,22 @@ uv run claude-explorer serve
 
 Opens the web app at `http://localhost:8000`.
 
+#### One-button Refresh (Build-9)
+
+Once the web app is running, the **Refresh** button in the sidebar footer owns the entire pipeline. A single click:
+
+1. Tries an incremental fetch with whatever credentials are on disk.
+2. If credentials are missing, or the fetch fails with `401`/`403`/`cf-mitigated`, the backend automatically launches the same Playwright login flow as `claude-explorer capture` — a Chromium window opens, you log in, and the new `sessionKey` is written to `~/.claude-exporter/credentials.json` (`0o600`, atomically).
+3. The fetch then continues automatically. Existing conversations are preserved (incremental — never `--full-refresh` automatically).
+
+The toast walks you through each phase:
+
+> "Opening browser to log in to Claude…" → "Waiting for you to log in (Ns elapsed)…" → "Credentials captured. Fetching…" → "Fetched +N new conversations."
+
+If the capture window is closed or login times out (5 min default), the toast becomes sticky with a **Retry** action. You never have to drop to the CLI to re-capture.
+
+Manual override: the **Details** modal still exposes "Full Refresh" and "Fetch New" buttons that hit the original `/fetch/start` endpoint without auto-capture.
+
 For development with hot-reload:
 ```bash
 # Terminal 1 — backend

@@ -114,6 +114,19 @@ claude-explorer serve --port 9000
 claude-explorer serve --reload
 ```
 
+#### Web UI Refresh button (Build-9)
+
+The sidebar **Refresh** button owns the full pipeline — capture + fetch — so the user never has to drop to the CLI to re-capture credentials.
+
+- **Endpoint:** `GET /api/fetch/refresh?incremental=true` (SSE).
+- **Behavior:** if `~/.claude-exporter/credentials.json` is missing OR the fetch returns `401`/`403`/`cf-mitigated`, the backend invokes `fetcher.playwright_capture.capture_credentials` in-process. On success it persists creds (atomic write, `0o600`) and continues with an incremental fetch automatically.
+- **Capture is run at most once per request.** A post-capture fetch that still 401s emits a final `error` event — no retry loop.
+- **Concurrency:** module-level `_refresh_in_progress` flag plus `asyncio.Lock`. A second concurrent request returns `409 Conflict`. Frontend disables the button while running, so 409 is defense-in-depth.
+- **SSE event types:** `capture_start`, `capture_waiting_login` (heartbeat every 25s during the 5-min login wait), `capture_done`, `capture_error`, plus the existing `start`, `progress`, `complete`, `error`.
+- **Manual override:** the Details modal's "Full Refresh" and "Fetch New" buttons still hit `/fetch/start` directly with no auto-capture.
+
+If you change capture or fetch logic, edit `backend/routers/fetch.py` (the `_capture_phase_stream`, `_fetch_phase_stream`, and `refresh_pipeline_stream` async generators) and `frontend/src/components/fetch/FetchToast.tsx` (the `useRefreshPipeline` hook) together — the SSE event schema is shared.
+
 ## Development Setup
 
 ### Python (Backend & Fetcher)

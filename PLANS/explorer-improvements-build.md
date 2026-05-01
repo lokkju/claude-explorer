@@ -407,6 +407,64 @@ Each item is **TDD**: a failing test must be committed first, then the fix in a 
 
 ---
 
+## Build-9. One-button Refresh — capture + fetch as a single SSE pipeline
+
+**Why:** v1 + v2 left a sharp UX edge. When credentials expired (52 days old in the field), the Refresh button surfaced a sticky error toast directing the user to drop to the CLI and run `claude-explorer capture`. The user explicitly called this out: the UI must own the full pipeline so that a single click from the sidebar refreshes credentials when stale and resumes incremental fetch automatically. Existing 89 conversations on disk must be preserved (incremental, never `--full-refresh` automatically).
+
+**Architecture (LLM Council resolved A/B/C/D):**
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| A | In-process vs subprocess Playwright capture | **In-process**, with `handle_sigint=False, handle_sigterm=False, handle_sighup=False` on `chromium.launch` | Already an async function on the asyncio loop in the CLI. Streaming "browser opened / waiting for login / captured" status is the dominant requirement; subprocess + JSON-lines stdout is a heavier lift. Single-worker dev server. Documented WWCMM gates: signal-handler crashes, multi-worker deployment, or measurable loop blocking would flip this to subprocess. |
+| B | Capture timeout default | **300s** with `capture_waiting_login` heartbeats every 25s | 5 min covers email/2FA login. 25s heartbeat is under typical proxy/browser SSE idle timeout (~30s) so the connection doesn't silently drop and trigger a 409 reconnect storm. |
+| C | Detect stale creds proactively or reactively | **Reactive only** | Pre-checking `credentials_age_days > 14` produces false positives (a 14-day key may still be valid). Cost of a wasted upstream API call on a real 401 is negligible vs. forcing an unnecessary capture flow. |
+| D | Concurrency on double-click | **409 Conflict + frontend disables button** | Joining an existing SSE stream needs pub/sub broadcast — overkill for a single-user local app. 409 is defense-in-depth behind the disabled button. |
+
+**Spec:**
+
+- New SSE route `GET /api/fetch/refresh?incremental=true` (GET so native browser `EventSource` works without a polyfill; POST would require `@microsoft/fetch-event-source` which we judged not worth the dependency for a local dev tool).
+- Module-level `_refresh_lock: asyncio.Lock` and `_refresh_in_progress: bool` flag, reset in `try/finally` so an unhandled exception cannot permanently brick the route.
+- New SSE event types layered on top of the existing schema:
+  - `capture_start` — Playwright browser opening
+  - `capture_waiting_login` — heartbeat every 25s during the 5-min login wait
+  - `capture_done` — credentials captured + persisted
+  - `capture_error` (alias: `error` with capture-prefixed message) — capture failed
+- One-retry rule: capture is invoked at most once per request. If post-capture fetch is still 401/403, emit `error` and stop. Never loop capture.
+- Atomic credentials write: `save_credentials` writes to `credentials.json.tmp` (`0o600`) then `os.replace()` to the final path so a concurrent fetch can never read a half-written file.
+- Existing `/fetch/start` route stays unchanged for the `FetchDialog` modal's Full-Refresh / Fetch-New buttons (manual override).
+- Frontend `useRefreshPipeline` hook (parallel to existing `useFetchToast`) drives the toast through the phases and exposes `isRunning` so the Refresh button can be disabled. Sticky error toast on capture failure includes a "Retry" action that re-fires the pipeline.
+
+**Files:**
+- `backend/routers/fetch.py` — new route, `refresh_pipeline_stream`, `_capture_phase_stream`, `_fetch_phase_stream` (extracted from existing `fetch_conversations_stream` for reuse), `_is_session_expired_error` helper, lock + flag.
+- `fetcher/playwright_capture.py` — `handle_sigint/sigterm/sighup=False` on launch; atomic-write `save_credentials`.
+- `frontend/src/components/fetch/FetchToast.tsx` — new `useRefreshPipeline` hook export.
+- `frontend/src/lib/api.ts` — `api.startRefresh`.
+- `frontend/src/components/layout/Sidebar.tsx` — Refresh button now uses the pipeline and disables while running.
+- `README.md`, `CLAUDE.md` — UX documentation for the new Refresh behavior.
+
+**Tests (TDD — RED first, then GREEN):**
+
+- pytest `backend/tests/test_refresh_pipeline.py` — 7 cases:
+  1. missing credentials → `capture_start` then `capture_done` then `complete`
+  2. valid credentials → no capture events, `complete` directly
+  3. session-expired mid-fetch → auto-capture and retry succeeds
+  4. capture failure (closed browser / timeout) → `error` event, no fetch phase
+  5. post-capture still 401 → `error` event, capture invoked exactly once
+  6. concurrent refresh → 409 Conflict
+  7. captured credentials persisted with `0o600` perms
+- Playwright `frontend/e2e/refresh-pipeline.spec.ts` — 3 cases:
+  1. toast walks through capture phases on missing credentials
+  2. Refresh button disabled while pipeline runs
+  3. sticky error toast on capture failure exposes Retry action
+
+**Risks / open items:**
+
+- macOS focus: a headed browser launched from a backgrounded FastAPI worker may pop behind the user's IDE. Mitigation: documentation; if reported, add `--start-fullscreen` or AppleScript focus call.
+- Future multi-worker uvicorn: the lock is per-worker. If we deploy with `--workers 2`, a filesystem-level lock or shared state is needed. Not on the current roadmap (single-user local tool).
+- `--reload` zombie Chromium: if the user edits backend code mid-capture, the dev server may leave a Chromium process behind. Manual `pkill -f "Google Chrome for Testing"` clears it. Acceptable dev-time annoyance.
+
+---
+
 ## Test plan (consolidated)
 
 Per-feature unit + integration tests as listed above. Plus, at the v1-completion gate:
