@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useSearchParams } from 'react-router'
-import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors, RefreshCw } from 'lucide-react'
+import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors, RefreshCw, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { errorToast } from '@/lib/errorToast'
 import { useQueryClient } from '@tanstack/react-query'
@@ -263,12 +263,21 @@ export function ConversationPage() {
       await api.forceRefetchConversation(conversation.uuid)
       await queryClient.invalidateQueries({ queryKey: queryKeys.conversations.detail(conversation.uuid) })
       await queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all })
-      toast.success('Conversation re-fetched.')
+      toast.success('Conversation re-downloaded.')
     } catch (e) {
-      // Bug C: explicit duration so the user sees the failure (sonner's
-      // default error duration can be as short as 4s).
-      errorToast(`Re-fetch failed: ${(e as Error).message}`, {
-        retry: handleForceRefetch,
+      // Build-9 Bug 3: the backend returns FRIENDLY user copy in `detail`
+      // for 404 / 401 / 503 (see backend/routers/fetch.py). The api layer
+      // surfaces that as ApiError.message, so we can show it verbatim
+      // instead of "Re-fetch failed: {\"detail\":\"...\"}".
+      const err = e as Error & { status?: number }
+      const message = err.message || 'Re-download failed.'
+      // 404/401/503 messages are already actionable; don't offer Retry on
+      // 404 (the conversation isn't coming back) or 401 (user must run
+      // capture). Retry only on 5xx-ish unknown failures.
+      const status = (e as { status?: number }).status
+      const allowRetry = status === undefined || (status >= 500 && status !== 503)
+      errorToast(message, {
+        retry: allowRetry ? handleForceRefetch : undefined,
       })
     } finally {
       setIsRefetching(false)
@@ -399,11 +408,11 @@ export function ConversationPage() {
               size="sm"
               onClick={handleForceRefetch}
               disabled={isRefetching}
-              title="Force re-fetch this conversation from the Claude API"
-              aria-label="Force re-fetch"
+              title="Re-download this conversation from Anthropic"
+              aria-label="Re-download this conversation"
             >
-              <RefreshCw className={cn('h-4 w-4', isRefetching && 'animate-spin')} />
-              <span className="ml-2">Force re-fetch</span>
+              <Download className={cn('h-4 w-4', isRefetching && 'animate-pulse')} />
+              <span className="ml-2">Re-download this conversation</span>
             </Button>
           )}
           {isCC && hasCompactMarkers && (

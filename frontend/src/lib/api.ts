@@ -98,7 +98,23 @@ export const api = {
 
   forceRefetchConversation: async (uuid: string): Promise<{ uuid: string; status: string; name: string }> => {
     const r = await fetch(`${BASE_URL}/fetch/conversation/${uuid}`, { method: 'POST' })
-    if (!r.ok) throw new ApiError(r.status, await r.text())
+    if (!r.ok) {
+      // Build-9 Bug 3: surface the backend's friendly `detail` string,
+      // not the raw `{"detail":"..."}` JSON. The route now returns
+      // user-facing copy in `detail` for 404/401/503; falling back to
+      // the raw text only when the body isn't valid JSON.
+      const raw = await r.text()
+      let message = raw
+      try {
+        const parsed = JSON.parse(raw)
+        if (typeof parsed?.detail === 'string') {
+          message = parsed.detail
+        }
+      } catch {
+        // Body isn't JSON — keep the raw text.
+      }
+      throw new ApiError(r.status, message)
+    }
     return r.json()
   },
 
