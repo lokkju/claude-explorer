@@ -523,21 +523,39 @@ After v1 is reviewed and tested by the user, this plan is reopened to address th
 
 ---
 
-## v2 backlog (deferred — to-do list for next session)
+## Status (as of 2026-05-01)
 
-- Build-4 (bookmarks).
-- Build-5 (sidebar filters; grammar finalized above).
-- Build-6 (URL-parameter navigation; nouns and grammar finalized above).
-- Build-7 (compact markers; auto + manual + user-prompt rendering finalized above).
-- Build-8 #5 (per-message tool-block toggle).
-- Build-8 #6 (branch switching wire-up).
-- Build-8 #7 (dark-mode runtime breakage; may need investigation pass).
-- Build-8 #9 (mobile responsive layout).
-- "Force update single conversation" full implementation (the v1 stub from Build-1 may need extension).
-- Bookmark tags (Build-4 v3, deferred further — Council called it a taxonomy bikeshed).
+**Shipped on `main`:**
+
+- Build-1 — Refresh toast + 401/403 mapping + age warning.
+- Build-2 — Claude Code title fix (`type:summary` resolution).
+- Build-3 — Jump-to-top / right-panel-aware button stack.
+- Build-4 — Message bookmarks (CRUD backend, right-pane tab, star UI, gutter ticks, deep links, Markdown export).
+- Build-5 — Persistent rich title filters (chip rail, manage modal, glob/regex, AND/OR, pinning, live preview, empty-state banner).
+- Build-6 — URL-parameter navigation (resource-oriented routes + combinations).
+- Build-7 — Compact markers (auto + manual classification, user-prompt rendering, `[`/`]` keyboard nav, View toggle, CC-only).
+- Build-8 #1 — Search-in-tool-usage fix.
+- Build-8 #2 — Credentials file `0o600` perms.
+- Build-8 #3 — Port-conflict actionable error.
+- Build-8 #4 — Help-modal Cmd/Ctrl glyph by platform.
+- Build-8 #5 — Per-message tool-block toggle.
+- Build-8 #6 — Branch switching wire-up.
+- Build-8 #7 — Dark-mode runtime fix (Tailwind v4 `@custom-variant`).
+- Build-8 #8 — Esc closes Settings page.
+- Build-8 #9 — Mobile responsive drawer below 768px.
+- Build-8 #10 — "Copy" → "Copy as Markdown".
+- Build-8 #11 — Upstream repo renamed to `rpeck/claude-explorer`.
+- Build-9 — One-button Refresh (capture + fetch in a single SSE pipeline).
+- Build-9 follow-ups: TRANSIENT/AUTH/TERMINAL error classification; ≥8s error toasts; toast moved to top-center; DNS errors classified as transient; header Refresh wired to the pipeline; Details modal lifted into shared context; live per-conversation progress in toast; friendly cross-org/404/401 messaging; Re-download button demoted to icon-only.
+- "Force update single conversation" affordance.
+
+**Genuinely deferred (no work scheduled):**
+
+- Bookmark tags (Build-4 v3 — Council called it a taxonomy bikeshed).
 - Filter scopes beyond title (`project_path`, `source`).
 - Backend filtering when message-content filtering needs it.
 - Compact-marker right-rail minimap (low priority; Council recommends skip).
 - "Collapse earlier messages" tied to compact markers.
 - Filter sync across browsers via backend storage.
-- Migration of `~/.claude-exporter/` → `~/.claude-explorer/` (post-Medium-series).
+- Migration of `~/.claude-exporter/` → `~/.claude-explorer/` on disk (post-Medium-series; cosmetic — code references the legacy path everywhere).
+- Cross-workspace (multi-org) sync — see `PLANS/cowork-multi-org.md`. The Re-download button now surfaces a friendly "this conversation may belong to a different workspace" message when it hits the cross-org 404; the actual sync requires that plan to land.
