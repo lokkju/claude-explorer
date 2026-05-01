@@ -2,9 +2,10 @@
 
 import json
 import asyncio
+import logging
 import time
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -13,8 +14,20 @@ from pydantic import BaseModel
 # Import the fetcher
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from fetcher.bulk_fetch import ClaudeFetcher, load_credentials, DEFAULT_CREDENTIALS_PATH, DEFAULT_OUTPUT_DIR, DEFAULT_FILES_DIR
+from fetcher.bulk_fetch import (
+    ClaudeFetcher,
+    DEFAULT_CREDENTIALS_PATH,
+    DEFAULT_FILES_DIR,
+    DEFAULT_OUTPUT_DIR,
+    FetchAuthError,
+    FetchTerminalError,
+    FetchTransientError,
+    load_credentials,
+)
 from fetcher.playwright_capture import capture_credentials, save_credentials
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(tags=["fetch"])
@@ -41,6 +54,53 @@ SESSION_EXPIRED_MESSAGE = (
     "Session expired or Cloudflare-blocked. "
     "Re-run claude-explorer capture to refresh credentials."
 )
+
+TRANSIENT_USER_MESSAGE = "Network problem reaching claude.ai. Retry?"
+
+
+ErrorKind = Literal["AUTH", "TRANSIENT", "TERMINAL"]
+
+
+def _classify_error(exc: BaseException) -> ErrorKind:
+    """Map any exception into one of three classes for the SSE pipeline.
+
+    Domain exceptions defined in fetcher.bulk_fetch are checked first;
+    plain stringly-typed errors (e.g. RuntimeError("401 ...")) fall back
+    to the legacy regex-style detection so existing call sites keep
+    working without refactoring.
+    """
+    if isinstance(exc, FetchAuthError):
+        return "AUTH"
+    if isinstance(exc, FetchTransientError):
+        return "TRANSIENT"
+    if isinstance(exc, FetchTerminalError):
+        return "TERMINAL"
+    msg = str(exc)
+    lowered = msg.lower()
+    if "401" in msg or "403" in msg or "cf-mitigated" in lowered:
+        return "AUTH"
+    if any(s in msg for s in ("502", "503", "504")):
+        return "TRANSIENT"
+    return "TERMINAL"
+
+
+def _user_message_for(kind: ErrorKind, raw: str) -> str:
+    """Pick the user-facing copy for a given error class."""
+    if kind == "AUTH":
+        return SESSION_EXPIRED_MESSAGE
+    if kind == "TRANSIENT":
+        return TRANSIENT_USER_MESSAGE
+    return f"Fetch failed: {raw}" if raw else "Fetch failed: unknown error"
+
+
+def _build_error_event(kind: ErrorKind, raw: str) -> dict:
+    """Construct the SSE error payload with kind + retryable + message."""
+    return {
+        "type": "error",
+        "kind": kind,
+        "retryable": kind == "TRANSIENT",
+        "message": _user_message_for(kind, raw),
+    }
 
 
 def classify_fetch_error(error_msg: str) -> str:
@@ -404,6 +464,36 @@ async def _run_capture_with_keepalive(
         yield {"_error": str(exc)}
 
 
+def _drain_retry_events(fetcher: ClaudeFetcher) -> list[str]:
+    """Drain `fetcher.retry_events`, returning SSE-encoded `progress` events.
+
+    The list is emptied in place. The caller forwards each frame to the
+    client. We use this post-call rather than real-time streaming via
+    asyncio.Queue + call_soon_threadsafe because the maximum delay between
+    a retry happening and the user seeing the message is bounded by the
+    eventual call's completion (sub-2s for the configured backoff).
+
+    See WWCMM in ClaudeFetcher: if user UX feedback indicates the silence
+    during retry is jarring, upgrade to a real-time queue.
+    """
+    frames: list[str] = []
+    if not fetcher.retry_events:
+        return frames
+    for event in fetcher.retry_events:
+        frames.append(
+            _send_event(
+                {
+                    "type": "progress",
+                    "message": event.get("message", "Network hiccup; retrying..."),
+                    "current": 0,
+                    "total": 0,
+                }
+            )
+        )
+    fetcher.retry_events.clear()
+    return frames
+
+
 async def _fetch_phase_stream(
     incremental: bool,
     limit: int | None = None,
@@ -411,9 +501,14 @@ async def _fetch_phase_stream(
     """Drive the fetch phase against currently-saved credentials.
 
     Yields (kind, payload) tuples where kind is one of:
-        "event"    -> payload is an SSE-encoded data string to forward
-        "expired"  -> payload is the underlying error message; caller may capture
-        "fatal"    -> payload is the error message; caller emits final error
+        "event"     -> payload is an SSE-encoded data string to forward
+        "auth"      -> payload is the underlying error message; caller may capture
+        "transient" -> payload is the underlying error message; caller emits a
+                       retryable error event and stops
+        "fatal"     -> payload is the error message; caller emits final error
+
+    The legacy "expired" kind is preserved as an alias for "auth" so any
+    in-flight callers keep working.
     """
     try:
         creds = load_credentials(DEFAULT_CREDENTIALS_PATH)
@@ -466,12 +561,25 @@ async def _fetch_phase_stream(
             None, fetcher.fetch_conversation_list
         )
     except Exception as exc:
-        msg = str(exc)
-        if _is_session_expired_error(msg):
-            yield ("expired", msg)
+        # Always drain retry events before the error so the user sees
+        # "Network hiccup..." even if the eventual call still failed.
+        for frame in _drain_retry_events(fetcher):
+            yield ("event", frame)
+        kind = _classify_error(exc)
+        if kind == "AUTH":
+            yield ("auth", str(exc))
             return
-        yield ("fatal", classify_fetch_error(msg))
+        if kind == "TRANSIENT":
+            logger.warning("Fetch transient error: %s", exc)
+            yield ("transient", str(exc))
+            return
+        logger.error("Fetch terminal error during list: %s", exc, exc_info=True)
+        yield ("fatal", str(exc))
         return
+
+    # Drain retry events from the successful list call too.
+    for frame in _drain_retry_events(fetcher):
+        yield ("event", frame)
 
     if limit:
         conversations = conversations[:limit]
@@ -546,21 +654,48 @@ async def _fetch_phase_stream(
                 )
                 fetched_count += 1
         except Exception as exc:
-            msg = str(exc)
-            if _is_session_expired_error(msg):
-                yield ("expired", msg)
+            for frame in _drain_retry_events(fetcher):
+                yield ("event", frame)
+            kind = _classify_error(exc)
+            if kind == "AUTH":
+                yield ("auth", str(exc))
                 return
-            yield (
-                "event",
-                _send_event(
-                    {
-                        "type": "progress",
-                        "message": f"Error fetching {name}: {msg}",
-                        "current": i,
-                        "total": total,
-                    }
-                ),
-            )
+            if kind == "TRANSIENT":
+                # Transient on a single conversation: surface a progress
+                # event noting the per-conversation failure and continue.
+                # We do NOT abort the whole stream for one bad conversation.
+                logger.warning(
+                    "Transient error fetching %s: %s", name, exc
+                )
+                yield (
+                    "event",
+                    _send_event(
+                        {
+                            "type": "progress",
+                            "message": f"Network hiccup on {name}; skipping",
+                            "current": i,
+                            "total": total,
+                        }
+                    ),
+                )
+            else:
+                logger.error(
+                    "Terminal error fetching %s: %s", name, exc, exc_info=True
+                )
+                yield (
+                    "event",
+                    _send_event(
+                        {
+                            "type": "progress",
+                            "message": f"Error fetching {name}: {exc}",
+                            "current": i,
+                            "total": total,
+                        }
+                    ),
+                )
+        else:
+            for frame in _drain_retry_events(fetcher):
+                yield ("event", frame)
 
         if i < total:
             await asyncio.sleep(0.3)
@@ -679,27 +814,37 @@ async def refresh_pipeline_stream(
         attempt = 1
         max_attempts = 2  # initial + post-capture retry
         while attempt <= max_attempts:
-            expired_msg: str | None = None
+            auth_msg: str | None = None
             async for kind, payload in _fetch_phase_stream(
                 incremental=incremental, limit=limit
             ):
                 if kind == "event":
                     yield payload
-                elif kind == "expired":
-                    expired_msg = payload
+                elif kind == "auth":
+                    # Legacy "expired" alias kept for in-flight callers.
+                    auth_msg = payload
                     break
+                elif kind == "transient":
+                    # A transient transport failure that survived the
+                    # in-process retry layer (Bug A). Emit a retryable
+                    # error and STOP — never trigger capture for a
+                    # network blip.
+                    logger.warning(
+                        "Refresh stopped on transient error: %s", payload
+                    )
+                    yield _send_event(_build_error_event("TRANSIENT", payload or ""))
+                    return
                 elif kind == "fatal":
-                    yield _send_event({"type": "error", "message": payload})
+                    logger.error("Refresh fatal: %s", payload)
+                    yield _send_event(_build_error_event("TERMINAL", payload or ""))
                     return
 
-            if expired_msg is None:
+            if auth_msg is None:
                 return  # success
 
             if captured_already or attempt >= max_attempts:
                 # Already captured once this request; do not loop.
-                yield _send_event(
-                    {"type": "error", "message": SESSION_EXPIRED_MESSAGE}
-                )
+                yield _send_event(_build_error_event("AUTH", auth_msg))
                 return
 
             # Capture once, then retry fetch.
