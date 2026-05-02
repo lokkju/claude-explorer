@@ -41,7 +41,7 @@ export function MessageAttachments({ message, bubbleUuid }: MessageAttachmentsPr
       data-bubble-uuid={bubbleUuid}
     >
       {isSingle ? (
-        <SingleTile file={files[0]} onOpen={() => setLightboxIndex(0)} />
+        <ImageTile file={files[0]} onOpen={() => setLightboxIndex(0)} variant="single" />
       ) : (
         <div className="grid grid-cols-2 gap-2">
           {tilesShown.map((file, i) => (
@@ -70,12 +70,6 @@ export function MessageAttachments({ message, bubbleUuid }: MessageAttachmentsPr
       )}
       <ImageLightbox files={files} index={lightboxIndex} onIndexChange={setLightboxIndex} />
     </div>
-  )
-}
-
-function SingleTile({ file, onOpen }: { file: ImageFile; onOpen: () => void }) {
-  return (
-    <ImageTile file={file} onOpen={onOpen} variant="single" />
   )
 }
 
