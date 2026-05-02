@@ -1,5 +1,27 @@
 # Multi-Org Fetching (Cowork Support)
 
+## Status (2026-05-01) — SHIPPED
+
+Implemented in commit `506335c` on `main`. All six commits (C1-C6) landed; 89 net new pytest cases pass (174 total); 5 Playwright e2e cases for the workspace selector pass; tsc clean.
+
+**Live verification:**
+- v2 credentials at `~/.claude-exporter/credentials.json` (mode `0o600`, both orgs captured: `ae24ae66-…` "raymondpeckiii@gmail.com's Organization" + `0c0c170b-…` "Raymond's Individual Org").
+- Migration ran on startup: 102 v1 conversations relocated to `~/.claude-exporter/conversations/by-org/ae24ae66-.../`. `.migrated_v2` sentinel present. Pre-migration backup at `~/.claude-exporter.pre-cowork-multi-org-backup/`.
+- `/api/orgs` returns three-state response correctly with `authenticated: true` and both orgs in payload.
+- Multi-org fetch loop (`run_all_orgs`) iterates both workspaces; gracefully handles the 403 from the API-only second org (capabilities `[api, api_individual]` — no `chat`).
+- `_index.json` v2 schema with per-org status, `last_successful_fetched_count`, `last_successful_fetched_at`.
+- Sidebar workspace selector live with "All workspaces" option + per-workspace filter.
+
+**Real-world finding:** the user's "Raymond's Individual Org" turned out to be an API-only workspace with no chat conversations, so cross-workspace sync surfaced no new data for this user. The plan still landed correctly — for any user with two chat-capable orgs (the canonical Personal + Cowork case), conversations from both will now flow through.
+
+**Spec items deferred** (flagged in code with `cowork-multi-org` references; non-blocking for the canonical use case):
+- SSE `heartbeat` frames during 429 sleeps (the `on_event` callback in `run_all_orgs` is plumbed; the SSE wrapper just doesn't yet emit them).
+- `claude-explorer list-orgs` / `set-primary-org` / `wipe-creds` / `unlock-fetch` CLI subcommands (`migrate` shipped).
+- `_index.json` `.fetch.lock` wrapping the SSE handler (migration path locks correctly; SSE fetch alone could theoretically race).
+- FetchDialog UI surfacing for `org_start` / `org_done` / `primary_demoted` SSE events (backend emits them; UI shows aggregate via `complete`).
+
+---
+
 ## Context
 
 Claude.ai accounts with a personal org plus a "Cowork" workspace have more than one organization. The fetcher currently captures only the *first* org it sees and never queries the others, so Cowork conversations silently never reach the exporter.
