@@ -1,9 +1,16 @@
 """Store module for reading conversation JSON files from disk."""
 
 import json
+import re
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Literal
+
+
+# Top-level files that should be considered conversation JSONs.
+# UUID-shaped names only — excludes _index.json, .migration_log.json, etc.
+_UUID_FILENAME_RE = re.compile(r"^[0-9a-f-]{36}\.json$", re.IGNORECASE)
+_MIGRATION_SENTINEL = "by-org/.migrated_v2"
 
 from .config import get_settings
 from .claude_code_reader import (
@@ -212,10 +219,41 @@ class ConversationStore:
         self.claude_dir = claude_dir or DEFAULT_CLAUDE_DIR
 
     def _get_conversation_files(self) -> list[Path]:
-        """Get all conversation JSON files."""
+        """Get all conversation JSON files.
+
+        cowork-multi-org C3 layout:
+
+        * Primary location: ``data_dir/by-org/<org_uuid>/<uuid>.json``
+        * Legacy fallback: ``data_dir/<uuid>.json`` (top-level UUID-named
+          files only — excludes ``_index.json`` etc.) is included when the
+          ``by-org/.migrated_v2`` sentinel is absent. Once migration runs
+          (commit C4) the sentinel appears and the legacy glob returns
+          nothing.
+
+        Dedup: when the same UUID appears in both layouts during the
+        migration window, the ``by-org/`` copy wins (it carries org metadata
+        the flat copy lacks). Without this dedup, the UI would render the
+        same conversation twice during the brief window between C3
+        landing and migration completing (NEW3-P0-A).
+        """
         if not self.data_dir.exists():
             return []
-        return sorted(self.data_dir.glob("*.json"))
+
+        by_org = sorted((self.data_dir / "by-org").glob("*/*.json")) if (self.data_dir / "by-org").exists() else []
+
+        sentinel = self.data_dir / _MIGRATION_SENTINEL
+        if sentinel.exists():
+            return by_org
+
+        legacy = sorted(
+            p for p in self.data_dir.glob("*.json")
+            if _UUID_FILENAME_RE.match(p.name)
+        )
+
+        # Dedup by UUID — by-org wins.
+        seen_uuids = {p.stem for p in by_org}
+        legacy_dedup = [p for p in legacy if p.stem not in seen_uuids]
+        return by_org + legacy_dedup
 
     def _load_conversation(self, path: Path) -> dict[str, Any] | None:
         """Load a conversation from a JSON file."""
@@ -265,6 +303,8 @@ class ConversationStore:
             source=data.get("source", "CLAUDE_AI"),
             project_path=data.get("project_path"),
             git_branch=data.get("git_branch"),
+            organization_id=data.get("organization_id"),
+            organization_name=data.get("organization_name"),
             subagents=subagents,
         )
 
@@ -326,6 +366,7 @@ class ConversationStore:
         sort_order: Literal["asc", "desc"] = "desc",
         include_phantom: bool = False,
         include_subagents: bool = False,
+        organization_id: str | None = None,
     ) -> list[ConversationSummary]:
         """List all conversations with optional filtering."""
         conversations = []
@@ -335,6 +376,11 @@ class ConversationStore:
             if starred is not None and data.get("is_starred") != starred:
                 continue
             if model and data.get("model") != model:
+                continue
+            if organization_id is not None and data.get("organization_id") != organization_id:
+                # cowork-multi-org C6: workspace filter. None matches only
+                # exactly None (legacy untagged), so a UUID filter never
+                # incidentally surfaces untagged data.
                 continue
             if search:
                 search_lower = search.lower()

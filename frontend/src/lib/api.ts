@@ -3,6 +3,7 @@ import type {
   ConversationDetail,
   ConversationTree,
   ConversationFilters,
+  OrgsResponse,
   SearchResult,
   SortField,
   SortOrder,
@@ -41,9 +42,12 @@ export const api = {
     if (filters?.sort) params.set('sort', filters.sort)
     if (filters?.sortOrder) params.set('sort_order', filters.sortOrder)
     if (filters?.includePhantom) params.set('include_phantom', 'true')
+    if (filters?.organization_id) params.set('organization_id', filters.organization_id)
     const query = params.toString()
     return fetchJson<ConversationSummary[]>(`/conversations${query ? `?${query}` : ''}`)
   },
+
+  getOrgs: (): Promise<OrgsResponse> => fetchJson<OrgsResponse>('/orgs'),
 
   getConversation: async (uuid: string, leaf?: string): Promise<ConversationDetail> => {
     if (USE_MOCK_DATA) {

@@ -18,6 +18,7 @@ import { ConversationList } from '@/components/conversation/ConversationList'
 import { FetchDialog } from '@/components/fetch/FetchDialog'
 import { useFetchPipeline } from '@/contexts/FetchPipelineContext'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
+import { useOrgs } from '@/hooks/useOrgs'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import { cn } from '@/lib/utils'
@@ -53,7 +54,8 @@ export function Sidebar({ className }: SidebarProps) {
     detailsOpen,
     closeDetails,
   } = useFetchPipeline()
-  const { sourceFilter, setSourceFilter } = useSourceFilter()
+  const { sourceFilter, setSourceFilter, organizationId, setOrganizationId } = useSourceFilter()
+  const { orgs, showSelector: showWorkspaceSelector } = useOrgs()
   const { focusArea, setFocusArea } = useKeyboardNavigation()
   const {
     showPhantomSessions,
@@ -144,6 +146,30 @@ export function Sidebar({ className }: SidebarProps) {
             </SelectItem>
           </SelectContent>
         </Select>
+        {/* cowork-multi-org C6: workspace selector. Reserve the slot to
+            prevent layout shift mid-stream (P2-2); render the actual
+            <Select> only when there are ≥ 2 orgs. */}
+        <div className="h-9">
+          {showWorkspaceSelector && (
+            <Select
+              value={organizationId ?? '__all__'}
+              onValueChange={(v: string) => setOrganizationId(v === '__all__' ? null : v)}
+            >
+              <SelectTrigger className="w-full" data-testid="workspace-select">
+                <SelectValue placeholder="Filter by workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All workspaces</SelectItem>
+                {orgs.map((org) => (
+                  <SelectItem key={org.org_id} value={org.org_id}>
+                    {org.name ?? `Workspace (${org.org_id.slice(0, 8)})`}
+                    {org.is_primary ? ' [primary]' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
         {/* Sort controls */}
         <div className="flex items-center gap-1">
           <Select value={sortField} onValueChange={(v: string) => setSortField(v as SortField)}>
@@ -220,6 +246,7 @@ export function Sidebar({ className }: SidebarProps) {
           titleFilter={urlFilters.title || undefined}
           titleFilterMode={urlFilters.filterMode}
           activeFilters={activeFilters}
+          organizationId={organizationId}
         />
       </ScrollArea>
 

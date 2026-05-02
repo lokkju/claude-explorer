@@ -162,7 +162,8 @@ def _capture_via_browser(output: Path, timeout: int):
             "Playwright not installed. Run: uv sync && uv run playwright install chromium"
         )
 
-    from fetcher.playwright_capture import capture_credentials, save_credentials
+    from fetcher.playwright_capture import capture_credentials
+    from fetcher.credentials import save_credentials
 
     click.echo("=" * 60)
     click.echo("  Claude Credential Capture (Browser)")
@@ -233,6 +234,45 @@ def _capture_via_proxy(port: int):
         )
     except subprocess.CalledProcessError as e:
         raise click.ClickException(f"mitmproxy exited with error: {e}")
+
+
+@main.command()
+@click.option(
+    "--data-dir",
+    type=click.Path(path_type=Path),
+    default=Path.home() / ".claude-exporter" / "conversations",
+    help="Conversations directory to migrate",
+)
+@click.option(
+    "--credentials",
+    type=click.Path(path_type=Path),
+    default=Path.home() / ".claude-exporter" / "credentials.json",
+    help="Path to credentials file (provides legacy_migration_target)",
+)
+def migrate(data_dir: Path, credentials: Path):
+    """Run the v1 -> v2 per-org subdir migration explicitly.
+
+    Useful for users with large data dirs who want to run the migration
+    offline rather than blocking the SSE fetch or server startup.
+    """
+    from fetcher.migrate_to_v2 import migrate_to_v2
+
+    click.echo(f"Migrating {data_dir}...")
+
+    def _progress(moved: int, total: int) -> None:
+        if total:
+            click.echo(f"  {moved}/{total} files migrated")
+
+    try:
+        migrate_to_v2(
+            data_dir=data_dir,
+            credentials_path=credentials,
+            on_progress=_progress,
+            lock_command="cli_migrate",
+        )
+        click.echo("Migration complete.")
+    except Exception as e:
+        raise click.ClickException(f"Migration failed: {e}") from e
 
 
 @main.command()

@@ -28,7 +28,23 @@ export interface ConversationSummary {
   project_path?: string | null
   project_name?: string | null
   git_branch?: string | null
+  // cowork-multi-org C6: workspace metadata. Null for legacy untagged
+  // JSONs that haven't been re-fetched yet.
+  organization_id?: string | null
+  organization_name?: string | null
   subagents?: SubagentSummary[]
+}
+
+// cowork-multi-org C6: workspace selector source.
+export interface Org {
+  org_id: string
+  name: string | null
+  is_primary: boolean
+}
+
+export interface OrgsResponse {
+  authenticated: boolean
+  orgs: Org[]
 }
 
 export interface ContentBlock {
@@ -113,6 +129,8 @@ export interface ConversationFilters {
   sort?: SortField
   sortOrder?: SortOrder
   includePhantom?: boolean
+  // cowork-multi-org C6: filter conversations by workspace.
+  organization_id?: string
 }
 
 // Bookmark types

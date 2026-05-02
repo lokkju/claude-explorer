@@ -175,7 +175,10 @@ def test_fetcher_get_retries_on_transient_failure(tmp_path: Path) -> None:
     from fetcher.bulk_fetch import ClaudeFetcher
 
     fetcher = ClaudeFetcher(
-        session_key="sk", org_id="org", output_dir=tmp_path
+        session_key="sk",
+        orgs=[{"uuid": "ae24ae66-4622-48e7-b4b3-1ab2c49f933d", "name": None, "capabilities": [], "seen_in_response": False}],
+        primary_org_id="ae24ae66-4622-48e7-b4b3-1ab2c49f933d",
+        output_dir=tmp_path,
     )
 
     calls = {"n": 0}
@@ -204,7 +207,10 @@ def test_fetcher_records_retry_events_for_sse(tmp_path: Path) -> None:
     from fetcher.bulk_fetch import ClaudeFetcher
 
     fetcher = ClaudeFetcher(
-        session_key="sk", org_id="org", output_dir=tmp_path
+        session_key="sk",
+        orgs=[{"uuid": "ae24ae66-4622-48e7-b4b3-1ab2c49f933d", "name": None, "capabilities": [], "seen_in_response": False}],
+        primary_org_id="ae24ae66-4622-48e7-b4b3-1ab2c49f933d",
+        output_dir=tmp_path,
     )
 
     calls = {"n": 0}

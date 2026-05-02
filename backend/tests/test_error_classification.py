@@ -143,8 +143,20 @@ def test_auth_error_classified_with_kind_after_capture_retry_fails(
     the final error event must carry kind=AUTH so the toast is sticky."""
     from fetcher.bulk_fetch import FetchAuthError
 
-    async def fake_capture(timeout: int = 300, headless: bool = False) -> dict:
-        return {"session_key": "sk2", "org_id": "org2"}
+    async def fake_capture(timeout: int = 300, headless: bool = False, **kwargs) -> dict:
+        # CredentialsV2 shape (post-cowork-multi-org C2).
+        org_id = "ae24ae66-4622-48e7-b4b3-1ab2c49f933d"
+        return {
+            "schema_version": 2,
+            "session_key": "sk2",
+            "cf_bm": None,
+            "cf_clearance": None,
+            "captured_at": "2026-05-01T00:00:00+00:00",
+            "orgs": [{"uuid": org_id, "name": None, "capabilities": [], "seen_in_response": False}],
+            "primary_org_id": org_id,
+            "legacy_migration_target": org_id,
+            "org_id": org_id,
+        }
 
     monkeypatch.setattr(
         "backend.routers.fetch.capture_credentials", fake_capture, raising=False

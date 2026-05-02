@@ -216,21 +216,28 @@ def import_claude_code_sessions(
 
     Returns the number of sessions imported.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # cowork-multi-org C3: Claude Code sessions land under a synthetic
+    # _claude_code "org" so the loader treats them uniformly with Claude.ai
+    # tenants. Source vs tenant remain orthogonal — the source field on each
+    # JSON drives the icon picker; the parent dir drives the workspace label.
+    cc_dir = output_dir / "by-org" / "_claude_code"
+    cc_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get existing UUIDs if incremental
+    # Get existing UUIDs if incremental — check both the new layout and the
+    # legacy flat layout (in case the user has imported sessions from before
+    # the layout switch and migration hasn't run yet).
     existing_uuids = set()
     if incremental:
-        for p in output_dir.glob("*.json"):
-            if p.stem != "_index":
-                # Check if it's a Claude Code session by reading source field
-                try:
-                    with open(p) as f:
-                        data = json.load(f)
-                    if data.get("source") == "CLAUDE_CODE":
-                        existing_uuids.add(data.get("uuid"))
-                except (json.JSONDecodeError, IOError):
-                    pass
+        for p in list(cc_dir.glob("*.json")) + list(output_dir.glob("*.json")):
+            if p.stem == "_index":
+                continue
+            try:
+                with open(p) as f:
+                    data = json.load(f)
+                if data.get("source") == "CLAUDE_CODE":
+                    existing_uuids.add(data.get("uuid"))
+            except (json.JSONDecodeError, IOError):
+                pass
 
     imported = 0
     skipped = 0
@@ -261,8 +268,8 @@ def import_claude_code_sessions(
 
             conversation = convert_jsonl_to_conversation(entries, jsonl_path)
 
-            # Save to output directory
-            output_path = output_dir / f"{conversation['uuid']}.json"
+            # Save to output directory under the synthetic _claude_code org.
+            output_path = cc_dir / f"{conversation['uuid']}.json"
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(conversation, f, indent=2)
 

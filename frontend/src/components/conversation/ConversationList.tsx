@@ -20,6 +20,8 @@ interface ConversationListProps {
   titleFilter?: string
   titleFilterMode?: FilterMode
   activeFilters?: Filter[]
+  // cowork-multi-org C6: workspace filter (null = "All workspaces").
+  organizationId?: string | null
 }
 
 export function ConversationList({
@@ -33,6 +35,7 @@ export function ConversationList({
   titleFilter,
   titleFilterMode = 'glob',
   activeFilters,
+  organizationId,
 }: ConversationListProps) {
   const { uuid: selectedUuid } = useParams()
   const navigate = useNavigate()
@@ -43,6 +46,7 @@ export function ConversationList({
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
     ...(includePhantom && { includePhantom: true }),
+    ...(organizationId && { organization_id: organizationId }),
     sort: sortField,
     sortOrder: sortOrder,
   }
@@ -160,14 +164,28 @@ export function ConversationList({
 
   // Group by project if enabled
   if (groupByProject) {
-    // Group all conversations by project
+    // Group all conversations by project (Claude Code) or workspace (Claude.ai).
+    // cowork-multi-org C6 / Council P1-1 + NEW2-P1-β:
+    //   * CLAUDE_CODE → project_name
+    //   * CLAUDE_AI tagged → organization_name (or Workspace (<prefix>) when
+    //     mitm-only-captured org has null name)
+    //   * CLAUDE_AI untagged (legacy pre-migration) → "Untagged
+    //     (re-fetch to assign workspace)"
+    //   * The string 'Claude Desktop' no longer appears here.
     const groups = new Map<string, ConversationSummary[]>()
 
     for (const conv of conversations) {
-      const groupKey =
-        conv.source === 'CLAUDE_CODE'
-          ? conv.project_name || 'Unknown Project'
-          : 'Claude Desktop'
+      let groupKey: string
+      if (conv.source === 'CLAUDE_CODE') {
+        groupKey = conv.project_name || 'Unknown Project'
+      } else if (conv.organization_name) {
+        groupKey = conv.organization_name
+      } else if (conv.organization_id) {
+        // mitm-only-captured org — same fallback as the Sidebar selector.
+        groupKey = `Workspace (${conv.organization_id.slice(0, 8)})`
+      } else {
+        groupKey = 'Untagged (re-fetch to assign workspace)'
+      }
       if (!groups.has(groupKey)) {
         groups.set(groupKey, [])
       }
@@ -196,7 +214,12 @@ export function ConversationList({
                     isCollapsed && '-rotate-90'
                   )}
                 />
-                {groupName === 'Claude Desktop' ? (
+                {/* Source/tenant orthogonality (P1-1): icon driven by
+                    source, not group label. A group consisting entirely of
+                    CLAUDE_AI conversations gets the blue MessageSquare;
+                    anything else (CLAUDE_CODE or mixed) gets the
+                    FolderCode. */}
+                {groupConvs.every((c) => c.source === 'CLAUDE_AI') ? (
                   <MessageSquare className="h-3 w-3 text-blue-500" />
                 ) : (
                   <FolderCode className="h-3 w-3 text-amber-500" />

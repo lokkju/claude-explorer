@@ -35,6 +35,9 @@ async def list_conversations(
     include_subagents: bool = Query(
         False, description="Include subagent session details in response"
     ),
+    organization_id: str | None = Query(
+        None, description="Filter by organization (workspace) UUID"
+    ),
 ) -> list[ConversationSummary]:
     """List all conversations with optional filtering."""
     store = get_store()
@@ -47,6 +50,7 @@ async def list_conversations(
         sort_order=sort_order,
         include_phantom=include_phantom,
         include_subagents=include_subagents,
+        organization_id=organization_id,
     )
 
 

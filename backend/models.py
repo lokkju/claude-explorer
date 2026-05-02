@@ -61,6 +61,11 @@ class ConversationSummary(BaseModel):
     project_path: str | None = None  # For Claude Code sessions
     project_name: str | None = None  # Short name extracted from project_path
     git_branch: str | None = None  # For Claude Code sessions
+    # Multi-org metadata (cowork-multi-org C3). Null for legacy untagged
+    # JSONs that haven't been re-fetched yet — UI surfaces these under the
+    # "Untagged (re-fetch to assign workspace)" group.
+    organization_id: str | None = None
+    organization_name: str | None = None
     subagents: list[SubagentSummary] = Field(default_factory=list)  # Nested agent conversations
 
     def model_post_init(self, __context: Any) -> None:

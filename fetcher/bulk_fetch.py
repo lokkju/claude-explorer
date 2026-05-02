@@ -23,9 +23,10 @@ import json
 import logging
 import random
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import click
 from curl_cffi import requests as curl_requests
@@ -229,12 +230,20 @@ def with_retry(
 
 
 class ClaudeFetcher:
-    """Fetches conversations from the Claude API."""
+    """Fetches conversations from the Claude API.
+
+    Multi-org (cowork-multi-org C3): the fetcher is constructed with a list of
+    orgs and a designated primary. ``current_org`` is set to the primary by
+    default; later commits (C5) will iterate ``orgs`` in ``run_all_orgs()``,
+    flipping ``current_org`` per iteration. In C3 only the primary is fetched
+    (``run()`` is single-org); the multi-org loop ships in C5.
+    """
 
     def __init__(
         self,
         session_key: str,
-        org_id: str,
+        orgs: list[dict],
+        primary_org_id: str,
         output_dir: Path,
         files_dir: Path | None = None,
         delay: float = DEFAULT_DELAY,
@@ -244,8 +253,18 @@ class ClaudeFetcher:
         cf_bm: str | None = None,
         cf_clearance: str | None = None,
     ):
+        if not orgs:
+            raise ValueError("orgs must be a non-empty list")
+        org_uuids = {o["uuid"] for o in orgs}
+        if primary_org_id not in org_uuids:
+            raise ValueError(
+                f"primary_org_id {primary_org_id!r} not in orgs ({sorted(org_uuids)})"
+            )
+
         self.session_key = session_key
-        self.org_id = org_id
+        self.orgs: list[dict] = list(orgs)
+        self.primary_org_id = primary_org_id
+        self.current_org: dict = next(o for o in self.orgs if o["uuid"] == primary_org_id)
         self.output_dir = output_dir
         self.files_dir = files_dir or DEFAULT_FILES_DIR
         self.delay = delay
@@ -268,14 +287,23 @@ class ClaudeFetcher:
         # upgrade to asyncio.Queue + call_soon_threadsafe.
         self.retry_events: list[dict] = []
 
+    @property
+    def org_id(self) -> str:
+        """Backward-compat shim for callers reading the old scalar attribute.
+
+        Returns the *current* org being fetched (which is the primary in C3
+        since run() is still single-org). C5 removes this shim.
+        """
+        return self.current_org["uuid"]
+
     def _log(self, message: str) -> None:
         """Print message if verbose mode is on."""
         if self.verbose:
             click.echo(message)
 
     def _api_url(self, path: str) -> str:
-        """Build API URL with org ID."""
-        return f"{API_BASE}/organizations/{self.org_id}/{path}"
+        """Build API URL scoped to the current org being fetched."""
+        return f"{API_BASE}/organizations/{self.current_org['uuid']}/{path}"
 
     def _on_retry(self, attempt: int, max_attempts: int, exc: Exception) -> None:
         """Record a retry event for the SSE layer to drain.
@@ -581,24 +609,98 @@ class ClaudeFetcher:
             return None
 
     def save_conversation(self, conversation: dict) -> None:
-        """Save conversation to JSON file, downloading any attached files."""
+        """Save conversation to JSON file, downloading any attached files.
+
+        cowork-multi-org C3: writes to ``output_dir/by-org/<current_org>/<uuid>.json``
+        and injects ``organization_id`` + ``organization_name`` into the
+        on-disk JSON. If the input dict already has a non-null
+        ``organization_id``, it is left intact (re-fetches don't get
+        retroactively re-tagged to the current scope).
+        """
         uuid = conversation.get("uuid", "unknown")
 
         # Download files and update conversation with local paths
         conversation = self.download_conversation_files(conversation, uuid)
 
-        path = self.output_dir / f"{uuid}.json"
+        # Inject org metadata only if missing — preserves any tag carried
+        # by a re-fetched legacy file.
+        if "organization_id" not in conversation or conversation["organization_id"] is None:
+            conversation["organization_id"] = self.current_org["uuid"]
+        if "organization_name" not in conversation or conversation["organization_name"] is None:
+            conversation["organization_name"] = self.current_org.get("name")
+
+        org_dir = self.output_dir / "by-org" / self.current_org["uuid"]
+        org_dir.mkdir(parents=True, exist_ok=True)
+        path = org_dir / f"{uuid}.json"
         with open(path, "w") as f:
             json.dump(conversation, f, indent=2)
 
         self._log(f"Saved {path}")
 
-    def save_index(self, conversations: list[dict]) -> None:
-        """Save conversation index file."""
-        index = {
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "org_id": self.org_id,
-            "total": len(conversations),
+    def save_index(
+        self,
+        conversations: list[dict],
+        *,
+        status: str = "ok",
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Save the per-run status ledger for the **current org**.
+
+        cowork-multi-org C3 + C5: writes the v2 schema. In single-org runs,
+        the ``orgs`` array has one entry. In multi-org runs (``run_all_orgs``),
+        each per-org call **merges** into the existing array — entries for
+        other orgs are preserved untouched.
+
+        NEW3-P1-C: when ``status != "ok"``, preserves
+        ``last_successful_fetched_count`` and ``last_successful_fetched_at``
+        from the prior on-disk index for the same org. First-ever-failed
+        orgs get ``null`` (NEW4-P1-B), not ``0``.
+
+        Atomicity: tmp + ``os.replace`` ensures crash-mid-write doesn't leave
+        a torn ``_index.json`` (NEW-P1-L).
+        """
+        import os
+
+        org_uuid = self.current_org["uuid"]
+        org_name = self.current_org.get("name")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        fetched_count = len(conversations) if status == "ok" else 0
+
+        # Read prior index to (a) preserve last_successful_* on failure for
+        # this org and (b) preserve other orgs' entries (multi-org merge).
+        prior_orgs: dict[str, dict] = {}
+        index_path = self.output_dir / "_index.json"
+        if index_path.exists():
+            try:
+                with open(index_path) as f:
+                    prior = json.load(f)
+                if prior.get("schema_version") == 2:
+                    for entry in prior.get("orgs", []):
+                        if isinstance(entry, dict) and entry.get("org_id"):
+                            prior_orgs[entry["org_id"]] = entry
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Could not read prior _index.json: %s", e)
+
+        prior_for_org = prior_orgs.get(org_uuid, {})
+        if status == "ok":
+            last_success_count = fetched_count
+            last_success_at = now_iso
+        else:
+            # Preserve from prior — None on first-ever-failed (NEW4-P1-B).
+            last_success_count = prior_for_org.get("last_successful_fetched_count")
+            last_success_at = prior_for_org.get("last_successful_fetched_at")
+
+        org_entry = {
+            "org_id": org_uuid,
+            "name": org_name,
+            "status": status,
+            "fetched_count": fetched_count,
+            "last_successful_fetched_count": last_success_count,
+            "last_successful_fetched_at": last_success_at,
+            "skipped_count": 0,
+            "error_code": error_code,
+            "error_message": error_message,
             "conversations": [
                 {
                     "uuid": c.get("uuid"),
@@ -612,23 +714,88 @@ class ClaudeFetcher:
             ],
         }
 
-        path = self.output_dir / "_index.json"
-        with open(path, "w") as f:
-            json.dump(index, f, indent=2)
+        # Multi-org merge: replace this org's entry, preserve the rest.
+        merged_orgs: dict[str, dict] = dict(prior_orgs)
+        merged_orgs[org_uuid] = org_entry
 
-        self._log(f"Saved index to {path}")
+        index = {
+            "schema_version": 2,
+            "fetched_at": now_iso,
+            "orgs": list(merged_orgs.values()),
+            # Legacy mirror — primary org id at top level for one minor
+            # version. Removed in the version after.
+            "org_id": self.primary_org_id,
+        }
+
+        # Atomic write (tmp + os.replace) — NEW-P1-L. ``status: ok`` is only
+        # written here AFTER all conversations have already been persisted
+        # by the caller (run_all_orgs), so a crash mid-org leaves the prior
+        # entry intact rather than promoting to a fake 'ok'.
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        tmp = index_path.with_suffix(".json.tmp")
+        with open(tmp, "w") as f:
+            json.dump(index, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, index_path)
+
+        self._log(f"Saved index to {index_path}")
+
+    def existing_uuids_for_current_org(self) -> set[str]:
+        """UUIDs of conversations already on disk under the current org's subdir.
+
+        cowork-multi-org C3: per-org dedup uses the by-org/<current_org>/
+        subdir only; conversations under other orgs do not block this org's
+        fetch. C5's run_all_orgs() instead uses ``existing_pairs()`` for
+        cross-org dedup, but this helper remains for single-org callers.
+        """
+        org_dir = self.output_dir / "by-org" / self.current_org["uuid"]
+        if not org_dir.exists():
+            return set()
+        return {p.stem for p in org_dir.glob("*.json")}
+
+    def existing_pairs(self) -> set[tuple[str, str]]:
+        """All ``(org_id, uuid)`` pairs currently on disk.
+
+        cowork-multi-org C5 (NEW2-P1-η): cross-org dedup is by
+        ``(org_id, uuid)`` rather than UUID-only. The same conversation UUID
+        appearing in two orgs (rare but possible per Council P0-2 — shared
+        conversations across tenants) yields TWO files at
+        ``by-org/A/X.json`` and ``by-org/B/X.json``; one must not shadow the
+        other.
+        """
+        by_org = self.output_dir / "by-org"
+        if not by_org.exists():
+            return set()
+        pairs: set[tuple[str, str]] = set()
+        for p in by_org.glob("*/*.json"):
+            pairs.add((p.parent.name, p.stem))
+        return pairs
+
+    @contextmanager
+    def _scoped_org(self, org: dict) -> Iterator[None]:
+        """Temporarily switch ``current_org`` and restore on exit.
+
+        Used by :meth:`run_all_orgs` so a failure in one org doesn't leave
+        the fetcher pointing at a stale org afterward (Python Expert
+        recommendation, C5).
+        """
+        prev = self.current_org
+        self.current_org = org
+        try:
+            yield
+        finally:
+            self.current_org = prev
 
     def run(self, limit: int | None = None) -> None:
         """Run the full fetch process."""
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Get existing UUIDs if incremental
+        # Get existing UUIDs if incremental — scoped to current org's subdir.
         existing_uuids = set()
         if self.incremental:
-            existing_uuids = {
-                p.stem for p in self.output_dir.glob("*.json") if p.stem != "_index"
-            }
+            existing_uuids = self.existing_uuids_for_current_org()
             if existing_uuids:
                 click.echo(f"Found {len(existing_uuids)} existing conversations (incremental mode)")
 
@@ -671,6 +838,214 @@ class ClaudeFetcher:
 
         click.echo(f"\nDone! Fetched {len(fetched)} conversations.")
         click.echo(f"Saved to: {self.output_dir}")
+
+    # ----------------------------------------------------------------- C5
+    # Multi-org loop
+    # ------------------------------------------------------------------
+
+    def run_all_orgs(
+        self,
+        limit: int | None = None,
+        on_event: Callable[[dict], None] | None = None,
+    ) -> dict:
+        """Iterate every org in ``self.orgs`` and fetch each.
+
+        Behavior summary (cowork-multi-org C5):
+
+        * Per org: fetch_conversation_list, then fetch_conversation+save for
+          each new conversation (cross-org dedup via ``existing_pairs``).
+        * Per-org status recorded in ``_index.json`` AFTER every conversation
+          for that org has been persisted (NEW-P1-L atomicity).
+        * **Primary 401**: hard abort the whole run (genuine session expiry).
+        * **Primary 403/404**: log a warning, continue with the next org as
+          best-effort. Auto-demote (clears primary_org_id, persists via
+          credentials.update_primary_org_and_save) is invoked so the next
+          run sees the new primary. NO_ACCESSIBLE_ORGS guardrail (NEW2-P1-γ)
+          surfaces a special status when ALL orgs fail.
+        * **Secondary 403/404**: ``status: skipped``, continue.
+        * **Other failures per org**: ``status: failed``, continue.
+
+        Heartbeats during long backoffs (NEW2-P0-ε) are deferred to a
+        follow-up commit; a placeholder ``on_event`` callback receives every
+        per-org event so the SSE wrapper can already pipe them into its
+        stream and gain heartbeats later without changing the call site.
+
+        Returns a summary dict ``{"orgs": [...], "primary_demoted_from":
+        ..., "status": ...}`` for the SSE wrapper to use.
+        """
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        existing_pairs = self.existing_pairs() if self.incremental else set()
+
+        results: list[dict] = []
+        primary_demoted_from: str | None = None
+
+        for org in list(self.orgs):
+            org_uuid = org["uuid"]
+            org_name = org.get("name") or org_uuid[:8]
+            is_primary = (org_uuid == self.primary_org_id)
+
+            if on_event:
+                on_event({"type": "org_start", "org_id": org_uuid, "name": org_name})
+
+            try:
+                with self._scoped_org(org):
+                    convs_list = self.fetch_conversation_list()
+                    if limit:
+                        convs_list = convs_list[:limit]
+
+                    if self.incremental:
+                        to_fetch = [
+                            c for c in convs_list
+                            if (org_uuid, c.get("uuid", "")) not in existing_pairs
+                        ]
+                    else:
+                        to_fetch = convs_list
+
+                    fetched_convs: list[dict] = []
+                    for i, conv in enumerate(to_fetch, 1):
+                        uuid = conv.get("uuid", "")
+                        if not uuid:
+                            continue
+                        full = self.fetch_conversation(uuid)
+                        if full:
+                            self.save_conversation(full)
+                            fetched_convs.append(full)
+                            existing_pairs.add((org_uuid, uuid))
+                        if i < len(to_fetch):
+                            time.sleep(self.delay)
+
+                    # Status: ok recorded ONLY after every conversation for
+                    # this org has been persisted.
+                    self.save_index(convs_list, status="ok")
+                    results.append({
+                        "org_id": org_uuid,
+                        "name": org_name,
+                        "status": "ok",
+                        "fetched_count": len(fetched_convs),
+                        "total_in_list": len(convs_list),
+                    })
+                    if on_event:
+                        on_event({
+                            "type": "org_done",
+                            "org_id": org_uuid,
+                            "status": "ok",
+                            "fetched_count": len(fetched_convs),
+                        })
+
+            except FetchAuthError as e:
+                msg = str(e)
+                is_401 = "401" in msg
+                is_skip = ("403" in msg) or ("404" in msg)
+
+                if is_primary and is_401:
+                    # Hard abort. Record nothing; let the existing _index.json
+                    # entries survive untouched.
+                    raise
+
+                # Secondary 403/404, OR primary 403/404 (auto-demote path).
+                error_code = "HTTP_401" if is_401 else ("HTTP_403" if "403" in msg else "HTTP_404")
+                with self._scoped_org(org):
+                    self.save_index([], status="skipped", error_code=error_code, error_message=msg)
+                results.append({
+                    "org_id": org_uuid,
+                    "name": org_name,
+                    "status": "skipped",
+                    "error_code": error_code,
+                    "error_message": msg,
+                })
+                if on_event:
+                    on_event({
+                        "type": "org_done",
+                        "org_id": org_uuid,
+                        "status": "skipped",
+                        "error_code": error_code,
+                    })
+
+                if is_primary and is_skip:
+                    # Auto-demote — pick a new primary from the remaining
+                    # orgs (NEW-P0-B). Persist via the credentials helper so
+                    # the next run sees the new primary.
+                    primary_demoted_from = self.primary_org_id
+                    new_primary = self._pick_new_primary(exclude=[org_uuid])
+                    if new_primary is not None:
+                        self.primary_org_id = new_primary
+                        self._persist_demote(new_primary)
+                        if on_event:
+                            on_event({
+                                "type": "primary_demoted",
+                                "from_org_id": primary_demoted_from,
+                                "to_org_id": new_primary,
+                                "reason": error_code,
+                            })
+
+            except Exception as e:
+                # Any other failure: record as failed, continue.
+                logger.warning("Org %s failed: %s", org_uuid, e)
+                error_code = type(e).__name__
+                with self._scoped_org(org):
+                    self.save_index([], status="failed", error_code=error_code, error_message=str(e))
+                results.append({
+                    "org_id": org_uuid,
+                    "name": org_name,
+                    "status": "failed",
+                    "error_code": error_code,
+                    "error_message": str(e),
+                })
+                if on_event:
+                    on_event({
+                        "type": "org_done",
+                        "org_id": org_uuid,
+                        "status": "failed",
+                        "error_code": error_code,
+                    })
+
+        # NO_ACCESSIBLE_ORGS guardrail (NEW2-P1-γ).
+        oks = [r for r in results if r["status"] == "ok"]
+        if not oks:
+            return {
+                "orgs": results,
+                "primary_demoted_from": primary_demoted_from,
+                "status": "NO_ACCESSIBLE_ORGS",
+            }
+
+        return {
+            "orgs": results,
+            "primary_demoted_from": primary_demoted_from,
+            "status": "ok",
+        }
+
+    def _pick_new_primary(self, exclude: list[str]) -> str | None:
+        """Deterministic re-pick after primary auto-demote (NEW-P0-B step 2-4).
+
+        Excludes the demoted org. Returns None if no eligible orgs remain
+        (single-org account guardrail).
+        """
+        candidates = [o for o in self.orgs if o["uuid"] not in exclude]
+        if not candidates:
+            return None
+        chat_capable = [o["uuid"] for o in candidates if "chat" in (o.get("capabilities") or [])]
+        if chat_capable:
+            return sorted(chat_capable)[0]
+        return sorted(o["uuid"] for o in candidates)[0]
+
+    def _persist_demote(self, new_primary: str) -> None:
+        """Persist a primary-org demotion to credentials.json.
+
+        We don't hold the session_key on the fetcher (only on the credentials
+        file), so we delegate to credentials.update_primary_org_and_save.
+        Best-effort: if the credentials path can't be reached, log and
+        continue — the in-memory primary_org_id is already updated.
+        """
+        try:
+            from fetcher.credentials import (
+                DEFAULT_CREDENTIALS_PATH,
+                update_primary_org_and_save,
+            )
+            update_primary_org_and_save(new_primary, DEFAULT_CREDENTIALS_PATH)
+        except Exception as e:
+            logger.warning(
+                "Could not persist primary-org demotion to credentials: %s", e
+            )
 
 
 def load_credentials(credentials_path: Path) -> dict:
@@ -737,32 +1112,52 @@ def main(
     verbose: bool,
 ) -> None:
     """Fetch all conversations from Claude Desktop."""
-    # Get credentials
+    creds_dict: dict | None = None
     if session_key and org_id:
-        # Use CLI args
-        pass
+        # CLI override path. Bootstrap a single-org orgs list.
+        orgs = [{"uuid": org_id, "name": None, "capabilities": [], "seen_in_response": False}]
+        primary = org_id
+        cf_bm = None
+        cf_clearance = None
     else:
-        # Load from file
-        creds = load_credentials(credentials)
-        session_key = session_key or creds.get("session_key")
-        org_id = org_id or creds.get("org_id")
+        creds_dict = load_credentials(credentials)
+        session_key = session_key or creds_dict.get("session_key")
 
-    if not session_key or not org_id:
+        # Multi-org-aware: prefer the orgs array if present (v2 schema).
+        # Fall back to the legacy scalar org_id (v1 file) so this code path
+        # works during the cowork-multi-org rollout window.
+        if "orgs" in creds_dict and creds_dict.get("orgs"):
+            orgs = list(creds_dict["orgs"])
+            primary = creds_dict.get("primary_org_id") or orgs[0]["uuid"]
+        else:
+            legacy_id = org_id or creds_dict.get("org_id")
+            if not legacy_id:
+                raise click.ClickException(
+                    "Missing org_id. Run `claude-explorer capture` to refresh credentials."
+                )
+            orgs = [{"uuid": legacy_id, "name": None, "capabilities": [], "seen_in_response": False}]
+            primary = legacy_id
+
+        cf_bm = creds_dict.get("cf_bm")
+        cf_clearance = creds_dict.get("cf_clearance")
+
+    if not session_key:
         raise click.ClickException(
-            "Missing session_key or org_id. "
-            "Run mitmproxy addon first or provide --session-key and --org-id."
+            "Missing session_key. Run `claude-explorer capture` first."
         )
 
-    # Run fetcher
     fetcher = ClaudeFetcher(
         session_key=session_key,
-        org_id=org_id,
+        orgs=orgs,
+        primary_org_id=primary,
         output_dir=output_dir,
         files_dir=files_dir,
         delay=delay,
         incremental=incremental,
         verbose=verbose,
         download_files=download_files,
+        cf_bm=cf_bm,
+        cf_clearance=cf_clearance,
     )
 
     fetcher.run(limit=limit)

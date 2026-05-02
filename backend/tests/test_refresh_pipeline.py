@@ -33,6 +33,31 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def _v2_creds(
+    session_key: str = "sk-test",
+    org_id: str = "ae24ae66-4622-48e7-b4b3-1ab2c49f933d",
+) -> dict:
+    """Build a CredentialsV2 dict for stubbing capture_credentials.
+
+    After cowork-multi-org C2, capture_credentials returns a CredentialsV2
+    record (single-element orgs array on a fresh first capture). Tests that
+    stub it must return the v2 shape so validation passes in save_credentials.
+    """
+    return {
+        "schema_version": 2,
+        "session_key": session_key,
+        "cf_bm": None,
+        "cf_clearance": None,
+        "captured_at": "2026-05-01T00:00:00+00:00",
+        "orgs": [
+            {"uuid": org_id, "name": None, "capabilities": [], "seen_in_response": False}
+        ],
+        "primary_org_id": org_id,
+        "legacy_migration_target": org_id,
+        "org_id": org_id,
+    }
+
+
 def _parse_sse_events(text: str) -> list[dict]:
     """Parse a `text/event-stream` response body into a list of JSON events.
 
@@ -85,9 +110,9 @@ def test_missing_credentials_triggers_capture(
 ) -> None:
     """No creds on disk -> stream begins with capture_start, then capture_done."""
 
-    captured = {"session_key": "sk-new", "org_id": "org-new"}
+    captured = _v2_creds(session_key="sk-new", org_id="ae24ae66-4622-48e7-b4b3-1ab2c49f933d")
 
-    async def fake_capture(timeout: int = 300, headless: bool = False) -> dict:
+    async def fake_capture(timeout: int = 300, headless: bool = False, **kwargs) -> dict:
         return captured
 
     monkeypatch.setattr(
@@ -125,7 +150,9 @@ def test_missing_credentials_triggers_capture(
     assert isolated_creds.exists()
     saved = json.loads(isolated_creds.read_text())
     assert saved["session_key"] == "sk-new"
-    assert saved["org_id"] == "org-new"
+    # v2 shape: org_id is the legacy mirror of primary_org_id.
+    assert saved["org_id"] == "ae24ae66-4622-48e7-b4b3-1ab2c49f933d"
+    assert saved["schema_version"] == 2
 
 
 def test_valid_credentials_skip_capture(
@@ -136,9 +163,7 @@ def test_valid_credentials_skip_capture(
 ) -> None:
     """Creds already present + fetch succeeds -> no capture events emitted."""
     isolated_creds.parent.mkdir(parents=True, exist_ok=True)
-    isolated_creds.write_text(
-        json.dumps({"session_key": "sk-existing", "org_id": "org-existing"})
-    )
+    isolated_creds.write_text(json.dumps(_v2_creds(session_key="sk-existing")))
 
     async def fail_capture(*args, **kwargs):  # pragma: no cover - must not run
         raise AssertionError("capture must not be invoked when creds are valid")
@@ -175,12 +200,10 @@ def test_session_expired_triggers_recapture_then_retry(
 ) -> None:
     """Stale creds: first fetch attempt 401s -> capture runs -> retry succeeds."""
     isolated_creds.parent.mkdir(parents=True, exist_ok=True)
-    isolated_creds.write_text(
-        json.dumps({"session_key": "sk-stale", "org_id": "org-stale"})
-    )
+    isolated_creds.write_text(json.dumps(_v2_creds(session_key="sk-stale")))
 
-    async def fake_capture(timeout: int = 300, headless: bool = False) -> dict:
-        return {"session_key": "sk-fresh", "org_id": "org-fresh"}
+    async def fake_capture(timeout: int = 300, headless: bool = False, **kwargs) -> dict:
+        return _v2_creds(session_key="sk-fresh")
 
     monkeypatch.setattr(
         "backend.routers.fetch.capture_credentials", fake_capture, raising=False
@@ -253,15 +276,13 @@ def test_post_capture_still_401_does_not_loop(
     Capture must be invoked AT MOST ONCE per request — never loop.
     """
     isolated_creds.parent.mkdir(parents=True, exist_ok=True)
-    isolated_creds.write_text(
-        json.dumps({"session_key": "sk-stale", "org_id": "org-stale"})
-    )
+    isolated_creds.write_text(json.dumps(_v2_creds(session_key="sk-stale")))
 
     capture_calls = {"n": 0}
 
-    async def fake_capture(timeout: int = 300, headless: bool = False) -> dict:
+    async def fake_capture(timeout: int = 300, headless: bool = False, **kwargs) -> dict:
         capture_calls["n"] += 1
-        return {"session_key": "sk-also-stale", "org_id": "org-also-stale"}
+        return _v2_creds(session_key="sk-also-stale")
 
     monkeypatch.setattr(
         "backend.routers.fetch.capture_credentials", fake_capture, raising=False
@@ -316,8 +337,8 @@ def test_credentials_saved_with_0o600_perms(
 ) -> None:
     """Captured credentials must be persisted with 0o600 (owner-read-only)."""
 
-    async def fake_capture(timeout: int = 300, headless: bool = False) -> dict:
-        return {"session_key": "sk-perm", "org_id": "org-perm"}
+    async def fake_capture(timeout: int = 300, headless: bool = False, **kwargs) -> dict:
+        return _v2_creds(session_key="sk-perm")
 
     monkeypatch.setattr(
         "backend.routers.fetch.capture_credentials", fake_capture, raising=False

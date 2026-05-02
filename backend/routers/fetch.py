@@ -24,7 +24,8 @@ from fetcher.bulk_fetch import (
     FetchTransientError,
     load_credentials,
 )
-from fetcher.playwright_capture import capture_credentials, save_credentials
+from fetcher.playwright_capture import capture_credentials
+from fetcher.credentials import save_credentials
 
 
 logger = logging.getLogger(__name__)
@@ -214,10 +215,21 @@ async def fetch_conversations_stream(
             })
             return
 
+        # cowork-multi-org C3: build a single-element orgs list from creds.
+        # The v2 creds schema carries an `orgs` array; the v1 schema only has
+        # the scalar `org_id`. Fall back to the latter during the migration
+        # window. The full multi-org SSE handler ships in C5.
+        primary = creds.get("primary_org_id") or org_id
+        if creds.get("orgs"):
+            orgs_list = list(creds["orgs"])
+        else:
+            orgs_list = [{"uuid": org_id, "name": None, "capabilities": [], "seen_in_response": False}]
+
         # Create fetcher
         fetcher = ClaudeFetcher(
             session_key=session_key,
-            org_id=org_id,
+            orgs=orgs_list,
+            primary_org_id=primary,
             output_dir=DEFAULT_OUTPUT_DIR,
             files_dir=DEFAULT_FILES_DIR,
             delay=0.3,
@@ -231,12 +243,13 @@ async def fetch_conversations_stream(
         # Ensure output directory exists
         DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Get existing UUIDs if incremental
+        # Get existing UUIDs if incremental — scoped to the primary org's
+        # subdir under the new layout. C3 is single-org so this is exactly
+        # equivalent to the prior global glob in behavior; the per-org
+        # scope just gets the layout right for C5's multi-org loop.
         existing_uuids = set()
         if incremental:
-            existing_uuids = {
-                p.stem for p in DEFAULT_OUTPUT_DIR.glob("*.json") if p.stem != "_index"
-            }
+            existing_uuids = fetcher.existing_uuids_for_current_org()
 
         yield send_event({
             "type": "start",
@@ -364,9 +377,14 @@ async def force_refetch_conversation(uuid: str) -> dict:
     if not session_key or not org_id:
         raise HTTPException(status_code=400, detail="Invalid credentials file.")
 
+    primary = creds.get("primary_org_id") or org_id
+    orgs_list = list(creds["orgs"]) if creds.get("orgs") else [
+        {"uuid": org_id, "name": None, "capabilities": [], "seen_in_response": False}
+    ]
     fetcher = ClaudeFetcher(
         session_key=session_key,
-        org_id=org_id,
+        orgs=orgs_list,
+        primary_org_id=primary,
         output_dir=DEFAULT_OUTPUT_DIR,
         files_dir=DEFAULT_FILES_DIR,
         delay=0.0,
@@ -564,9 +582,14 @@ async def _fetch_phase_stream(
         yield ("fatal", "Invalid credentials file. Missing session_key or org_id.")
         return
 
+    primary = creds.get("primary_org_id") or org_id
+    orgs_list = list(creds["orgs"]) if creds.get("orgs") else [
+        {"uuid": org_id, "name": None, "capabilities": [], "seen_in_response": False}
+    ]
     fetcher = ClaudeFetcher(
         session_key=session_key,
-        org_id=org_id,
+        orgs=orgs_list,
+        primary_org_id=primary,
         output_dir=DEFAULT_OUTPUT_DIR,
         files_dir=DEFAULT_FILES_DIR,
         delay=0.3,
@@ -579,11 +602,10 @@ async def _fetch_phase_stream(
 
     DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    existing_uuids: set[str] = set()
+    # cowork-multi-org C5: cross-org dedup via existing_pairs.
+    existing_pairs: set[tuple[str, str]] = set()
     if incremental:
-        existing_uuids = {
-            p.stem for p in DEFAULT_OUTPUT_DIR.glob("*.json") if p.stem != "_index"
-        }
+        existing_pairs = fetcher.existing_pairs()
 
     yield (
         "event",
@@ -598,161 +620,290 @@ async def _fetch_phase_stream(
     )
 
     loop = asyncio.get_event_loop()
-    try:
-        conversations = await loop.run_in_executor(
-            None, fetcher.fetch_conversation_list
-        )
-    except Exception as exc:
-        # Always drain retry events before the error so the user sees
-        # "Network hiccup..." even if the eventual call still failed.
-        for frame in _drain_retry_events(fetcher):
-            yield ("event", frame)
-        kind = _classify_error(exc)
-        if kind == "AUTH":
-            yield ("auth", str(exc))
-            return
-        if kind == "TRANSIENT":
-            logger.warning("Fetch transient error: %s", exc)
-            yield ("transient", str(exc))
-            return
-        logger.error("Fetch terminal error during list: %s", exc, exc_info=True)
-        yield ("fatal", str(exc))
-        return
 
-    # Drain retry events from the successful list call too.
-    for frame in _drain_retry_events(fetcher):
-        yield ("event", frame)
-
-    if limit:
-        conversations = conversations[:limit]
-
-    if incremental:
-        to_fetch = [c for c in conversations if c.get("uuid") not in existing_uuids]
-    else:
-        to_fetch = conversations
-
-    total = len(to_fetch)
-    skipped = len(conversations) - total
-
-    yield (
-        "event",
-        _send_event(
-            {
-                "type": "progress",
-                "message": (
-                    f"Found {len(conversations)} conversations, "
-                    f"fetching {total} new"
-                    + (f" (skipping {skipped} existing)" if skipped else "")
-                ),
-                "current": 0,
-                "total": total,
-            }
-        ),
-    )
-
-    if total == 0:
-        await loop.run_in_executor(None, fetcher.save_index, conversations)
-        yield (
-            "event",
-            _send_event(
-                {
-                    "type": "complete",
-                    "message": "No new conversations to fetch.",
-                    "current": 0,
-                    "total": 0,
-                }
-            ),
-        )
-        return
-
+    # cowork-multi-org C5: outer loop over orgs. The SSE event types
+    # (start/progress/complete/error) stay; new event types (org_start,
+    # org_done, primary_demoted) are emitted alongside for the C6 UI to
+    # render. The outer current/total counters span all orgs cumulatively.
+    cumulative_total = 0
+    cumulative_current = 0
     fetched_count = 0
-    for i, conv in enumerate(to_fetch, 1):
-        uuid = conv.get("uuid", "")
-        name = conv.get("name", "Untitled")[:50]
+    org_results: list[dict] = []
+    primary_demoted_from: str | None = None
+
+    for org in list(fetcher.orgs):
+        org_uuid = org["uuid"]
+        org_name = org.get("name") or org_uuid[:8]
+        is_primary = (org_uuid == fetcher.primary_org_id)
 
         yield (
             "event",
             _send_event(
-                {
-                    "type": "progress",
-                    "message": f"Fetching: {name}",
-                    "current": i,
-                    "total": total,
-                    "conversation_name": name,
-                }
+                {"type": "org_start", "org_id": org_uuid, "name": org_name}
             ),
         )
-
-        if not uuid:
-            continue
 
         try:
-            full_conv = await loop.run_in_executor(
-                None, fetcher.fetch_conversation, uuid
-            )
-            if full_conv:
-                await loop.run_in_executor(
-                    None, fetcher.save_conversation, full_conv
+            with fetcher._scoped_org(org):
+                try:
+                    conversations = await loop.run_in_executor(
+                        None, fetcher.fetch_conversation_list
+                    )
+                except Exception as exc:
+                    for frame in _drain_retry_events(fetcher):
+                        yield ("event", frame)
+                    kind = _classify_error(exc)
+                    if kind == "AUTH":
+                        if is_primary and "401" in str(exc):
+                            # Primary 401 = session expired. Hard abort.
+                            yield ("auth", str(exc))
+                            return
+                        # Secondary AUTH or primary 403/404: skip this org.
+                        error_code = "HTTP_401" if "401" in str(exc) else (
+                            "HTTP_403" if "403" in str(exc) else "HTTP_404"
+                        )
+                        # Persist skipped status.
+                        await loop.run_in_executor(
+                            None,
+                            lambda: fetcher.save_index([], status="skipped",
+                                                       error_code=error_code,
+                                                       error_message=str(exc)),
+                        )
+                        org_results.append({
+                            "org_id": org_uuid, "name": org_name,
+                            "status": "skipped", "error_code": error_code,
+                        })
+                        yield (
+                            "event",
+                            _send_event({
+                                "type": "org_done",
+                                "org_id": org_uuid,
+                                "status": "skipped",
+                                "error_code": error_code,
+                            }),
+                        )
+                        # Auto-demote primary if this was the primary 403/404.
+                        if is_primary and ("403" in str(exc) or "404" in str(exc)):
+                            new_primary = fetcher._pick_new_primary(exclude=[org_uuid])
+                            if new_primary:
+                                primary_demoted_from = fetcher.primary_org_id
+                                fetcher.primary_org_id = new_primary
+                                try:
+                                    fetcher._persist_demote(new_primary)
+                                except Exception:
+                                    pass
+                                yield (
+                                    "event",
+                                    _send_event({
+                                        "type": "primary_demoted",
+                                        "from_org_id": primary_demoted_from,
+                                        "to_org_id": new_primary,
+                                        "reason": error_code,
+                                    }),
+                                )
+                        continue
+                    if kind == "TRANSIENT":
+                        logger.warning("Fetch transient error for %s: %s", org_uuid, exc)
+                        # Per-org transient: skip this org, continue.
+                        await loop.run_in_executor(
+                            None,
+                            lambda: fetcher.save_index([], status="failed",
+                                                       error_code="TRANSIENT",
+                                                       error_message=str(exc)),
+                        )
+                        org_results.append({
+                            "org_id": org_uuid, "name": org_name,
+                            "status": "failed", "error_code": "TRANSIENT",
+                        })
+                        yield (
+                            "event",
+                            _send_event({
+                                "type": "org_done",
+                                "org_id": org_uuid,
+                                "status": "failed",
+                                "error_code": "TRANSIENT",
+                            }),
+                        )
+                        continue
+                    logger.error("Fetch terminal error for %s: %s", org_uuid, exc, exc_info=True)
+                    await loop.run_in_executor(
+                        None,
+                        lambda: fetcher.save_index([], status="failed",
+                                                   error_code=type(exc).__name__,
+                                                   error_message=str(exc)),
+                    )
+                    org_results.append({
+                        "org_id": org_uuid, "name": org_name,
+                        "status": "failed", "error_code": type(exc).__name__,
+                    })
+                    yield (
+                        "event",
+                        _send_event({
+                            "type": "org_done",
+                            "org_id": org_uuid,
+                            "status": "failed",
+                            "error_code": type(exc).__name__,
+                        }),
+                    )
+                    continue
+
+                # Drain retry events from the successful list call.
+                for frame in _drain_retry_events(fetcher):
+                    yield ("event", frame)
+
+                if limit:
+                    conversations = conversations[:limit]
+
+                if incremental:
+                    to_fetch = [
+                        c for c in conversations
+                        if (org_uuid, c.get("uuid", "")) not in existing_pairs
+                    ]
+                else:
+                    to_fetch = conversations
+
+                org_total = len(to_fetch)
+                cumulative_total += org_total
+
+                yield (
+                    "event",
+                    _send_event({
+                        "type": "progress",
+                        "message": (
+                            f"[{org_name}] Found {len(conversations)} conversations, "
+                            f"fetching {org_total} new"
+                        ),
+                        "current": cumulative_current,
+                        "total": cumulative_total,
+                    }),
                 )
-                fetched_count += 1
+
+                org_fetched = 0
+                for i, conv in enumerate(to_fetch, 1):
+                    uuid = conv.get("uuid", "")
+                    name = conv.get("name", "Untitled")[:50]
+                    cumulative_current += 1
+
+                    yield (
+                        "event",
+                        _send_event({
+                            "type": "progress",
+                            "message": f"[{org_name}] Fetching: {name}",
+                            "current": cumulative_current,
+                            "total": cumulative_total,
+                            "conversation_name": name,
+                        }),
+                    )
+
+                    if not uuid:
+                        continue
+
+                    try:
+                        full_conv = await loop.run_in_executor(
+                            None, fetcher.fetch_conversation, uuid
+                        )
+                        if full_conv:
+                            await loop.run_in_executor(
+                                None, fetcher.save_conversation, full_conv
+                            )
+                            org_fetched += 1
+                            existing_pairs.add((org_uuid, uuid))
+                    except Exception as exc:
+                        for frame in _drain_retry_events(fetcher):
+                            yield ("event", frame)
+                        kind = _classify_error(exc)
+                        if kind == "AUTH":
+                            if is_primary and "401" in str(exc):
+                                yield ("auth", str(exc))
+                                return
+                            # Mid-org auth failure: stop fetching this org.
+                            break
+                        # Transient/Terminal on a single conversation:
+                        # log and continue with next conv (existing behavior).
+                        if kind == "TRANSIENT":
+                            logger.warning("Transient error fetching %s: %s", name, exc)
+                            yield (
+                                "event",
+                                _send_event({
+                                    "type": "progress",
+                                    "message": f"Network hiccup on {name}; skipping",
+                                    "current": cumulative_current,
+                                    "total": cumulative_total,
+                                }),
+                            )
+                        else:
+                            logger.error("Terminal error fetching %s: %s", name, exc, exc_info=True)
+                            yield (
+                                "event",
+                                _send_event({
+                                    "type": "progress",
+                                    "message": f"Error fetching {name}: {exc}",
+                                    "current": cumulative_current,
+                                    "total": cumulative_total,
+                                }),
+                            )
+                    else:
+                        for frame in _drain_retry_events(fetcher):
+                            yield ("event", frame)
+
+                    if i < org_total:
+                        await asyncio.sleep(0.3)
+
+                # status: ok recorded only AFTER every conversation in this
+                # org has been persisted.
+                await loop.run_in_executor(None, fetcher.save_index, conversations)
+                fetched_count += org_fetched
+                org_results.append({
+                    "org_id": org_uuid, "name": org_name,
+                    "status": "ok", "fetched_count": org_fetched,
+                })
+                yield (
+                    "event",
+                    _send_event({
+                        "type": "org_done",
+                        "org_id": org_uuid,
+                        "status": "ok",
+                        "fetched_count": org_fetched,
+                    }),
+                )
         except Exception as exc:
-            for frame in _drain_retry_events(fetcher):
-                yield ("event", frame)
-            kind = _classify_error(exc)
-            if kind == "AUTH":
-                yield ("auth", str(exc))
-                return
-            if kind == "TRANSIENT":
-                # Transient on a single conversation: surface a progress
-                # event noting the per-conversation failure and continue.
-                # We do NOT abort the whole stream for one bad conversation.
-                logger.warning(
-                    "Transient error fetching %s: %s", name, exc
-                )
-                yield (
-                    "event",
-                    _send_event(
-                        {
-                            "type": "progress",
-                            "message": f"Network hiccup on {name}; skipping",
-                            "current": i,
-                            "total": total,
-                        }
-                    ),
-                )
-            else:
-                logger.error(
-                    "Terminal error fetching %s: %s", name, exc, exc_info=True
-                )
-                yield (
-                    "event",
-                    _send_event(
-                        {
-                            "type": "progress",
-                            "message": f"Error fetching {name}: {exc}",
-                            "current": i,
-                            "total": total,
-                        }
-                    ),
-                )
-        else:
-            for frame in _drain_retry_events(fetcher):
-                yield ("event", frame)
+            # Defensive: any unhandled exception in the per-org block.
+            logger.error("Unhandled per-org error for %s: %s", org_uuid, exc, exc_info=True)
+            org_results.append({
+                "org_id": org_uuid, "name": org_name,
+                "status": "failed", "error_code": type(exc).__name__,
+            })
 
-        if i < total:
-            await asyncio.sleep(0.3)
+    # If every org failed, escalate to a stream-level error so existing
+    # error-toast UI still surfaces (rather than a misleading "complete").
+    successful = [r for r in org_results if r.get("status") == "ok"]
+    if org_results and not successful:
+        # Find the most informative failure to emit.
+        first_fail = next(
+            (r for r in org_results if r.get("status") in ("failed", "skipped")),
+            org_results[0],
+        )
+        kind_map = {
+            "TRANSIENT": "transient",
+            "HTTP_401": "auth",
+            "HTTP_403": "fatal",
+            "HTTP_404": "fatal",
+        }
+        bucket = kind_map.get(first_fail.get("error_code", ""), "fatal")
+        msg = first_fail.get("error_message", first_fail.get("error_code", "fetch failed"))
+        yield (bucket, msg)
+        return
 
-    await loop.run_in_executor(None, fetcher.save_index, conversations)
     yield (
         "event",
-        _send_event(
-            {
-                "type": "complete",
-                "message": f"Fetched {fetched_count} conversations successfully.",
-                "current": total,
-                "total": total,
-            }
-        ),
+        _send_event({
+            "type": "complete",
+            "message": f"Fetched {fetched_count} conversations across {len(org_results)} workspace(s).",
+            "current": cumulative_total,
+            "total": cumulative_total,
+            "orgs": org_results,
+            "primary_demoted_from": primary_demoted_from,
+        }),
     )
 
 
