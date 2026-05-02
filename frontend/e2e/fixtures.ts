@@ -5,6 +5,7 @@ import type {
   ConversationSummary,
   ConversationTree,
   Message,
+  MessageNode,
   OrgsResponse,
 } from '../src/lib/types'
 
@@ -115,21 +116,14 @@ export function makeDetail(
 }
 
 function synthesizeTree(detail: ConversationDetail): ConversationTree {
-  // Linear tree from messages.
-  const root_messages = detail.messages.length === 0
-    ? []
-    : [
-        detail.messages.reduceRight<{ message: Message; children: { message: Message; children: never[] }[] }>(
-          (acc, message, idx, arr) => {
-            if (idx === arr.length - 1) return { message, children: [] }
-            return { message, children: [acc] }
-          },
-          { message: detail.messages[detail.messages.length - 1], children: [] },
-        ),
-      ]
+  // Linear chain: each message has at most one child.
+  let chain: MessageNode[] = []
+  for (let i = detail.messages.length - 1; i >= 0; i--) {
+    chain = [{ message: detail.messages[i], children: chain }]
+  }
   return {
     uuid: detail.uuid,
-    root_messages,
+    root_messages: chain,
     active_path: detail.messages.map((m) => m.uuid),
   }
 }
@@ -199,4 +193,5 @@ export const test = base.extend<Fixtures>({
 })
 
 export { expect }
+export type { Page, Route } from '@playwright/test'
 export const PRIMARY_ORG = PRIMARY_ORG_ID
