@@ -55,6 +55,28 @@ export interface ContentBlock {
   content?: ContentBlock[] // tool_result
 }
 
+// Image asset metadata (thumbnail or preview variant). Returned by
+// claude.ai's chat_conversations API inside Message.files / files_v2.
+export interface ImageAsset {
+  url: string
+  file_variant?: string
+  primary_color?: string
+  image_width?: number
+  image_height?: number
+}
+
+export interface ImageFile {
+  file_kind: 'image' | string
+  file_uuid: string
+  file_name: string
+  created_at: string
+  thumbnail_url?: string
+  thumbnail_asset?: ImageAsset
+  preview_asset?: ImageAsset
+  // Other file_kind values (e.g. 'document') exist; they're carried through
+  // but the renderer only treats file_kind === 'image' specially.
+}
+
 export interface Message {
   uuid: string
   sender: 'human' | 'assistant'
@@ -65,7 +87,10 @@ export interface Message {
   truncated: boolean
   parent_message_uuid: string | null
   attachments: unknown[]
-  files: unknown[]
+  files: ImageFile[]
+  // claude.ai sometimes ships a v2 array alongside the legacy 'files'
+  // with overlapping entries. Render after deduping by file_uuid.
+  files_v2?: ImageFile[]
 }
 
 export interface CompactMarker {

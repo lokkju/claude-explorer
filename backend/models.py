@@ -29,6 +29,9 @@ class Message(BaseModel):
     parent_message_uuid: str | None = None
     attachments: list[Any] = Field(default_factory=list)
     files: list[Any] = Field(default_factory=list)
+    # claude.ai sometimes ships a v2 array alongside the legacy `files`
+    # with overlapping entries. Renderers dedupe by file_uuid.
+    files_v2: list[Any] = Field(default_factory=list)
 
 
 class SubagentSummary(BaseModel):

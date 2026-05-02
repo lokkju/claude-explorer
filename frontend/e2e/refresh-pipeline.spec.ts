@@ -22,7 +22,7 @@ import { waitForConnection } from './test-utils';
  */
 
 async function clickRefresh(page: Page) {
-  await page.getByRole('button', { name: /Fetch Claude Desktop conversations/i }).click();
+  await page.locator('aside button[title="Refresh conversation list"]').click();
 }
 
 test.describe('Refresh pipeline (capture + fetch)', () => {
@@ -95,9 +95,7 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
     await page.goto('/');
     await waitForConnection(page, { waitForConversations: false });
 
-    const refreshButton = page.getByRole('button', {
-      name: /Fetch Claude Desktop conversations/i,
-    });
+    const refreshButton = page.locator('aside button[title="Refresh conversation list"]');
     await refreshButton.click();
 
     // Immediately after clicking, the button should be disabled.

@@ -23,8 +23,10 @@ test.describe('Command Palette Full-Text Search', () => {
     // Type a single character
     await page.getByPlaceholder('Search messages...').fill('a');
 
-    // Should show hint
-    await expect(page.getByText('Type at least 2 characters')).toBeVisible();
+    // SearchPanel renders the short-query hint as a single line of text
+    // alongside a magnifier icon. Match the exact phrasing used by the
+    // current implementation.
+    await expect(page.getByText(/Type at least 2 characters/i)).toBeVisible();
   });
 
   test('searches message content', async ({ page }) => {
@@ -39,30 +41,23 @@ test.describe('Command Palette Full-Text Search', () => {
     const searchInput = page.getByPlaceholder('Search messages...');
     await searchInput.fill('test');
 
-    // Wait for search API to complete
-    await page.waitForTimeout(1500);
-
-    // Should show search results with conversation names or "No results"
-    // Check various possible result indicators
-    const hasResults = await page.locator('[cmdk-item]').count() > 0;
-    const hasNoResults = await page.getByText('No results found').isVisible();
-    const hasSearching = await page.getByText('Searching').isVisible();
-    const hasAnyContent = await page.locator('[cmdk-list]').isVisible();
-
-    // Either we have results, no results message, or the search is still in progress
-    expect(hasResults || hasNoResults || hasAnyContent).toBe(true);
+    // Wait for either result cards or the "No matches" empty state.
+    const cards = page.locator('[data-result-card]');
+    const empty = page.getByText(/No matches/i);
+    await expect.poll(async () => (await cards.count()) > 0 || (await empty.isVisible()))
+      .toBe(true);
   });
 
   test('navigates to conversation when result is clicked', async ({ page }) => {
     await page.goto('/');
     await waitForConnection(page);
 
-    // Wait for conversations to load
+    // Wait for conversations to load.
     await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
       timeout: 10000,
     });
 
-    // Get the name of the first conversation for searching
+    // Get the name of the first conversation for searching.
     const firstConvName = await page.getByRole('button', { name: /\d+ msgs/ }).first()
       .locator('span.truncate').textContent();
 
@@ -71,55 +66,41 @@ test.describe('Command Palette Full-Text Search', () => {
       return;
     }
 
-    // Open command palette and search
+    // Open command palette and search.
     await page.keyboard.press('Meta+k');
     await expect(page.getByPlaceholder('Search messages...')).toBeVisible();
-
-    // Search for the conversation name
     await page.getByPlaceholder('Search messages...').fill(firstConvName.substring(0, 10));
 
-    // Wait for results
-    await page.waitForTimeout(500);
+    const results = page.locator('[data-result-card]');
+    await expect.poll(async () => await results.count(), { timeout: 5000 }).toBeGreaterThan(0);
+    await results.first().click();
 
-    // Click on first result if available
-    const results = page.locator('[cmdk-item]');
-    if (await results.count() > 0) {
-      await results.first().click();
-
-      // Should navigate to conversation
-      await expect(page).toHaveURL(/\/conversations\/[a-f0-9-]+/);
-
-      // Command palette should be closed
-      await expect(page.getByPlaceholder('Search messages...')).not.toBeVisible();
-    }
+    // Should navigate to a conversation URL.
+    await expect(page).toHaveURL(/\/conversations\/[a-f0-9-]+/);
   });
 
-  test('closes command palette with close button', async ({ page }) => {
+  test('closes command palette via keyboard (Escape)', async ({ page }) => {
     await page.goto('/');
 
-    // Open command palette
+    // Open command palette.
     await page.keyboard.press('Meta+k');
-    await expect(page.getByPlaceholder('Search messages...')).toBeVisible();
+    const searchAside = page.locator('aside[aria-label="Search panel"]');
+    await expect(searchAside).toHaveAttribute('aria-hidden', 'false');
 
-    // Click the X close button
-    await page.locator('button').filter({ has: page.locator('svg.lucide-x') }).click();
-
-    // Should close
-    await expect(page.getByPlaceholder('Search messages...')).not.toBeVisible();
+    // Esc closes (the SearchPanel uses CSS transform + aria-hidden, so the
+    // input element stays mounted; assert via aria-hidden).
+    await page.keyboard.press('Escape');
+    await expect(searchAside).toHaveAttribute('aria-hidden', 'true');
   });
 
-  test('closes command palette when clicking backdrop', async ({ page }) => {
+  test('Cmd+K toggles open and closed', async ({ page }) => {
     await page.goto('/');
 
-    // Open command palette
+    const searchAside = page.locator('aside[aria-label="Search panel"]');
     await page.keyboard.press('Meta+k');
-    await expect(page.getByPlaceholder('Search messages...')).toBeVisible();
-
-    // Click on the backdrop (outside the dialog)
-    await page.locator('.fixed.inset-0.bg-black\\/50').click();
-
-    // Should close
-    await expect(page.getByPlaceholder('Search messages...')).not.toBeVisible();
+    await expect(searchAside).toHaveAttribute('aria-hidden', 'false');
+    await page.keyboard.press('Meta+k');
+    await expect(searchAside).toHaveAttribute('aria-hidden', 'true');
   });
 
   test('shows keyboard hint in sidebar', async ({ page }) => {

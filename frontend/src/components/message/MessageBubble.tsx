@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { MessageAttachments } from './MessageAttachments'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent } from '@/lib/utils'
+import { dedupeImageFiles } from '@/lib/imageFiles'
 import type { Message, ContentBlock } from '@/lib/types'
 
 interface MessageBubbleProps {
@@ -40,11 +42,14 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
   }
 
   const hasVisibleContent = messageHasVisibleContent(message, showToolCalls)
+  const imageFiles = dedupeImageFiles(message)
+  const hasImages = imageFiles.length > 0
   const hasToolBlocks = message.content.some((b) => b.type === 'tool_use' || b.type === 'tool_result')
   const [bubbleToolsCollapsed, setBubbleToolsCollapsed] = useState(false)
 
-  // Don't render empty bubbles
-  if (!hasVisibleContent) {
+  // Don't render empty bubbles — but a message with image attachments is
+  // never empty even if there's no text content.
+  if (!hasVisibleContent && !hasImages) {
     return null
   }
 
@@ -153,6 +158,9 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
             <MarkdownRenderer content={message.text} showToolCalls={showToolCalls && !bubbleToolsCollapsed} />
           )}
         </div>
+
+        {/* Image attachments — always rendered (never gated by tool toggle). */}
+        {hasImages && <MessageAttachments message={message} bubbleUuid={message.uuid} />}
       </div>
     </div>
   )

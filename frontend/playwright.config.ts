@@ -8,8 +8,15 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  retries: process.env.CI ? 2 : 1,
+  // Live-backend specs (conversations.spec.ts, search.spec.ts,
+  // keyboard-navigation.spec.ts, etc.) hit the user's actual data dir,
+  // which can be hundreds of MB. With multiple workers in flight the
+  // backend serializes file I/O and individual requests routinely take
+  // 2–3 seconds. Cap workers at 2 and give every test a 120s budget so
+  // those specs finish reliably under load.
+  workers: process.env.CI ? 1 : 2,
+  timeout: 120_000,
   reporter: 'html',
   use: {
     baseURL: 'http://localhost:5173',

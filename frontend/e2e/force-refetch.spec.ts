@@ -78,7 +78,9 @@ test.describe('Force re-fetch', () => {
 
     await page.goto(`/conversations/${FAKE_UUID}`);
 
-    const button = page.getByRole('button', { name: /force re-fetch/i });
+    // The button was renamed to "Re-download this conversation" and later
+    // demoted to an icon-only ghost (aria-label preserved).
+    const button = page.getByRole('button', { name: /re-download this conversation/i });
     await expect(button).toBeVisible();
     await button.click();
 

@@ -4,6 +4,7 @@ import io
 import re
 import zipfile
 from datetime import datetime
+from typing import Any
 
 from .models import ConversationDetail, Message, ContentBlock
 
@@ -72,7 +73,16 @@ def render_content_block(
 
 
 def message_has_visible_content(message: Message, include_tools: bool = True) -> bool:
-    """Check if a message has any visible content (considering tool call visibility)."""
+    """Check if a message has any visible content (considering tool call visibility).
+
+    A message with image attachments is always visible (Council Q7: images
+    are primary content, not gated by toggles).
+    """
+    # Forward declaration: _dedupe_image_files is defined later in this
+    # module. The check is cheap (list membership) and avoids restructuring
+    # the existing function order.
+    if _dedupe_image_files(message):
+        return True
     if message.text and message.text.strip():
         if not include_tools:
             filtered = filter_tool_placeholders(message.text).strip()
@@ -86,6 +96,45 @@ def message_has_visible_content(message: Message, include_tools: bool = True) ->
             if block.type in ("tool_use", "tool_result") and include_tools:
                 return True
     return False
+
+
+def _dedupe_image_files(message: Message) -> list[dict[str, Any]]:
+    """Merge files + files_v2 and dedupe by file_uuid; image files only."""
+    merged: list[dict[str, Any]] = []
+    for raw in (message.files or []) + (getattr(message, "files_v2", None) or []):
+        if isinstance(raw, dict) and raw.get("file_kind") == "image":
+            merged.append(raw)
+    by_uuid: dict[str, dict[str, Any]] = {}
+    for f in merged:
+        uuid = f.get("file_uuid") or f.get("file_name") or ""
+        existing = by_uuid.get(uuid)
+        if not existing:
+            by_uuid[uuid] = f
+            continue
+        # Prefer the entry with a preview_asset.url present.
+        existing_url = (existing.get("preview_asset") or {}).get("url")
+        new_url = (f.get("preview_asset") or {}).get("url")
+        if not existing_url and new_url:
+            by_uuid[uuid] = f
+    return list(by_uuid.values())
+
+
+def _image_markdown(message: Message) -> str:
+    """Render image attachments as Markdown image refs (after content)."""
+    images = _dedupe_image_files(message)
+    if not images:
+        return ""
+    lines: list[str] = [""]
+    for img in images:
+        url = (img.get("preview_asset") or {}).get("url") or img.get("thumbnail_url") or ""
+        name = img.get("file_name") or "image"
+        alt = f"Image attachment: {name}"
+        if url:
+            lines.append(f"![{alt}]({url})")
+        else:
+            lines.append(f"_(image attachment unavailable: {name})_")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def message_to_markdown(message: Message, include_tools: bool = True) -> str:
@@ -107,6 +156,11 @@ def message_to_markdown(message: Message, include_tools: bool = True) -> str:
         if not include_tools:
             text = filter_tool_placeholders(text)
         lines.append(text)
+
+    # Image attachments (always rendered, regardless of include_tools).
+    image_md = _image_markdown(message)
+    if image_md:
+        lines.append(image_md)
 
     lines.append("")
     lines.append("---")

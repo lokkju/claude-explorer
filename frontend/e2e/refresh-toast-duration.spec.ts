@@ -21,9 +21,7 @@ import { waitForConnection } from './test-utils';
  */
 
 async function clickRefresh(page: Page) {
-  await page
-    .getByRole('button', { name: /Fetch Claude Desktop conversations/i })
-    .click();
+  await page.locator('aside button[title="Refresh conversation list"]').click();
 }
 
 test.describe('Refresh error toast duration (Bug C)', () => {

@@ -2,6 +2,7 @@ import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns'
 import type { Message, ContentBlock } from './types'
+import { dedupeImageFiles, imageAltText, previewSrc } from './imageFiles'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -43,8 +44,11 @@ export function formatFullDate(date: string | Date): string {
 
 /**
  * Check if a message has any visible content (considering tool call visibility).
+ * A message with image attachments is always visible regardless of text/tool
+ * content (Council Q7: images are primary content, not gated by toggles).
  */
 export function messageHasVisibleContent(message: Message, showToolCalls: boolean): boolean {
+  if (dedupeImageFiles(message).length > 0) return true
   if (message.text && message.text.trim()) {
     // Check if it's only tool placeholders
     if (!showToolCalls) {
@@ -126,7 +130,23 @@ export function messageToMarkdown(message: Message, showToolCalls: boolean): str
     content = filterToolPlaceholders(content)
   }
 
-  return `**${sender}:**\n\n${content.trim()}`
+  // Append image attachments as Markdown image references. The URLs are
+  // claude.ai-relative (e.g. /api/.../preview) and resolve via the local
+  // Claude Explorer backend proxy — they will 404 if pasted into a
+  // serverless Markdown viewer, which is documented in the article.
+  const images = dedupeImageFiles(message)
+  let imagesMd = ''
+  if (images.length > 0) {
+    imagesMd = '\n\n' + images
+      .map((img) => {
+        const url = previewSrc(img)
+        const alt = imageAltText(img)
+        return url ? `![${alt}](${url})` : `_(image attachment unavailable: ${img.file_name})_`
+      })
+      .join('\n\n')
+  }
+
+  return `**${sender}:**\n\n${content.trim()}${imagesMd}`
 }
 
 export function conversationToMarkdown(

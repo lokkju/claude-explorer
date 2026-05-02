@@ -100,6 +100,7 @@ def _parse_message(raw: dict[str, Any]) -> Message:
         parent_message_uuid=raw.get("parent_message_uuid"),
         attachments=raw.get("attachments", []),
         files=raw.get("files", []),
+        files_v2=raw.get("files_v2", []),
     )
 
 

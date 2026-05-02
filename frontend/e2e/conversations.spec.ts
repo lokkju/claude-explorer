@@ -119,12 +119,15 @@ test.describe('Conversation Browser', () => {
     await expect(page).toHaveURL(/\/conversations\/[a-f0-9-]+/);
   });
 
-  test('shows empty state when no conversation selected', async ({ page }) => {
+  test('shows hint state when no conversation selected', async ({ page }) => {
     await page.goto('/');
     await waitForConnection(page);
 
-    // Should show "Select a conversation" message
-    await expect(page.getByText('Select a conversation')).toBeVisible();
+    // The empty-state copy is "Press Enter to open this conversation."
+    // (HintState in ConversationPage.tsx). It renders whenever no
+    // conversation uuid is in the URL OR the sidebar selection differs
+    // from the loaded conversation.
+    await expect(page.getByText(/Press\s+Enter\s+to open this conversation/i)).toBeVisible();
   });
 });
 
