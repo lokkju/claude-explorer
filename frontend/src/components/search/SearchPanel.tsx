@@ -66,13 +66,24 @@ export function SearchPanel() {
     }
   }, [isOpen])
 
-  // Scroll the active match card into view whenever activeMatchIndex changes
+  // Scroll the active match card into view whenever activeMatchIndex
+  // changes, AND auto-navigate to the active match. Article line 109:
+  // "If match #7 is in one conversation and match #8 is in another,
+  // ⌘+G takes you there anyway; you keep your hands on the keyboard
+  // and you keep moving forward." Cmd+G / Cmd+Shift+G change
+  // activeMatchIndex; this effect makes them actually navigate to the
+  // newly-active match, both in-conversation and cross-conversation.
   useEffect(() => {
     if (activeMatchIndex < 0) return
     const el = activeCardRef.current
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
+    const match = flatMatches[activeMatchIndex]
+    if (match) {
+      navigateToMatch(match)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMatchIndex])
 
   const flatIndexByKey = useMemo(() => {

@@ -5,7 +5,10 @@ import type { Page } from '@playwright/test';
  * Also waits for conversations to load.
  */
 export async function waitForConnection(page: Page, options?: { waitForConversations?: boolean }) {
-  const timeout = 15000;
+  // The live backend hits the user's full conversations directory and
+  // can take 2-3s per request. Multiple workers slow it further. Give
+  // the connection up to 60s before giving up.
+  const timeout = 60000;
   const startTime = Date.now();
 
   // Keep trying until timeout

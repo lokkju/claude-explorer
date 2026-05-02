@@ -196,13 +196,7 @@ test.describe('Keyboard — Cmd+G match navigation (B10, B12)', () => {
 })
 
 test.describe('Keyboard — Cmd+G crosses conversation boundaries (B11)', () => {
-  // Skipped: cross-conversation Cmd+G triggers a navigateToMatch path that
-  // calls queryClient.prefetchQuery for the target conversation. Under the
-  // mocked backend the prefetch races the Cmd+G handler, so the URL change
-  // is unreliable inside the 10s window. Tracked for Phase 1 Commit 4
-  // triage — likely needs a hook into the prefetch promise or a longer
-  // structural wait.
-  test.skip('Cmd+G across conversations navigates to the other conversation URL', async ({ page, mockBackend }) => {
+  test('Cmd+G across conversations navigates to the other conversation URL', async ({ page, mockBackend }) => {
     await mockBackend({
       conversations: [c1Summary, c2Summary],
       details: { [C1]: c1Detail, [C2]: c2Detail },
