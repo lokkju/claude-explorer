@@ -1,0 +1,84 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: Python (backend + fetcher pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync Python deps
+        run: uv sync --extra dev
+
+      - name: Backend pytest
+        run: uv run pytest backend/tests/ --tb=short
+
+      - name: Fetcher pytest
+        run: uv run pytest fetcher/tests/ --tb=short
+
+  e2e:
+    name: Playwright (fixture mode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync Python deps
+        run: uv sync --extra dev
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify fixtures are up to date
+        run: |
+          # The fixture generator is deterministic — re-running it must
+          # produce byte-identical files. Catch out-of-date fixtures
+          # (or accidental hand-edits) before the e2e suite even runs.
+          uv run python scripts/generate_e2e_fixtures.py
+          if ! git diff --quiet tests/fixtures; then
+            echo "::error::Fixtures are out of date. Run 'uv run python scripts/generate_e2e_fixtures.py' and commit the result."
+            git diff tests/fixtures
+            exit 1
+          fi
+
+      - name: Playwright e2e (fixture mode)
+        working-directory: frontend
+        # CLAUDE_EXPORTER_DATA_DIR + CLAUDE_DIR are set by playwright.config.ts
+        # webServer command. fixture mode is the default in CI.
+        run: npx playwright test --reporter=line
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

@@ -85,13 +85,7 @@ test.describe('Refresh toast', () => {
     await expect(errorToast).toBeVisible();
   });
 
-  // Skipped: sonner renders the loading-toast action via its own DOM
-  // shape (the `action.label` button isn't reliably matchable as
-  // role=button under [data-sonner-toast]). Retry buttons on error
-  // toasts work fine (see refresh-toast-duration.spec.ts:87) — that
-  // covers the "Details/Retry round-trip" intent. Re-enable once
-  // sonner's loading-action ARIA is reliable.
-  test.skip('toast Details link opens full progress dialog', async ({ page }) => {
+  test('toast Details link opens full progress dialog', async ({ page }) => {
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -107,12 +101,17 @@ test.describe('Refresh toast', () => {
     });
 
     await page.route('**/api/fetch/refresh*', async (route) => {
+      // Emit start + progress + complete so the toast lands in a success
+      // state (still carries the Details action). If we leave the stream
+      // open without complete, sonner advances to a Retry-labelled error
+      // toast and the click target text changes.
       await route.fulfill({
         status: 200,
         contentType: 'text/event-stream',
         body:
           'data: {"type":"start","message":"Fetching conversation list...","current":0,"total":3}\n\n' +
-          'data: {"type":"progress","message":"Fetching: alpha","current":1,"total":3}\n\n',
+          'data: {"type":"progress","message":"Fetching: alpha","current":1,"total":3}\n\n' +
+          'data: {"type":"complete","message":"Fetched 3 conversations.","current":3,"total":3}\n\n',
       });
     });
 
@@ -123,8 +122,18 @@ test.describe('Refresh toast', () => {
     const toast = page.locator('[data-sonner-toast]').first();
     await expect(toast).toBeVisible({ timeout: 5000 });
 
-    await toast.getByRole('button', { name: /Details/i }).click();
+    // Sonner renders the action label inside the toast root with
+    // `data-action` and `data-button` attributes (see sonner index.mjs
+    // line 813-815). The accessible-name path (getByRole) is unreliable
+    // for *loading* toasts — error/success/default toasts work fine —
+    // so target the action element by its sonner-stable data attribute.
+    const detailsButton = toast.locator('[data-button][data-action]');
+    await expect(detailsButton).toBeVisible({ timeout: 5000 });
+    await expect(detailsButton).toHaveText(/Details/i);
+    await detailsButton.click();
 
-    await expect(page.getByRole('heading', { name: /Fetch Claude Desktop Conversations/i })).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: /Fetch Claude Desktop Conversations/i }),
+    ).toBeVisible({ timeout: 10_000 });
   });
 });

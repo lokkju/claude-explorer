@@ -216,8 +216,13 @@ class ConversationStore:
     """Store for reading conversation data from disk and Claude Code JSONL files."""
 
     def __init__(self, data_dir: Path | None = None, claude_dir: Path | None = None):
+        # Both directories fall back through the constructor argument first,
+        # then the global Settings (which reads CLAUDE_EXPORTER_DATA_DIR /
+        # CLAUDE_DIR / ~/.claude-exporter/config.json), and finally the
+        # platform default. claude_dir matters for tests that need a
+        # synthetic ~/.claude/projects/ tree on disk.
         self.data_dir = data_dir or get_settings().data_dir
-        self.claude_dir = claude_dir or DEFAULT_CLAUDE_DIR
+        self.claude_dir = claude_dir or get_settings().claude_dir
 
     def _get_conversation_files(self) -> list[Path]:
         """Get all conversation JSON files.

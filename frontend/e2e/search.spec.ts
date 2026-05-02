@@ -52,24 +52,17 @@ test.describe('Command Palette Full-Text Search', () => {
     await page.goto('/');
     await waitForConnection(page);
 
-    // Wait for conversations to load.
-    await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
+    // The fixture suite ships a long TLS conversation containing the
+    // `NEEDLE_HANDSHAKE` token — a unique searchable string we control,
+    // so this test is deterministic regardless of the contributor's
+    // local data.
+    await expect(page.getByText(/Phase 5 fixture: TLS handshakes/)).toBeVisible({
       timeout: 10000,
     });
 
-    // Get the name of the first conversation for searching.
-    const firstConvName = await page.getByRole('button', { name: /\d+ msgs/ }).first()
-      .locator('span.truncate').textContent();
-
-    if (!firstConvName) {
-      test.skip();
-      return;
-    }
-
-    // Open command palette and search.
     await page.keyboard.press('Meta+k');
     await expect(page.getByPlaceholder('Search messages...')).toBeVisible();
-    await page.getByPlaceholder('Search messages...').fill(firstConvName.substring(0, 10));
+    await page.getByPlaceholder('Search messages...').fill('NEEDLE_HANDSHAKE');
 
     const results = page.locator('[data-result-card]');
     await expect.poll(async () => await results.count(), { timeout: 5000 }).toBeGreaterThan(0);

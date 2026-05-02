@@ -1,0 +1,88 @@
+{
+  "chat_messages": [
+    {
+      "attachments": [],
+      "content": [
+        {
+          "text": "Tell me about branching. NEEDLE_BRANCH",
+          "type": "text"
+        }
+      ],
+      "created_at": "2026-04-01T10:00:00Z",
+      "files": [],
+      "files_v2": [],
+      "parent_message_uuid": null,
+      "sender": "human",
+      "text": "Tell me about branching. NEEDLE_BRANCH",
+      "truncated": false,
+      "updated_at": "2026-04-01T10:00:00Z",
+      "uuid": "725445c1-b1a2-aa9d-0251-746ddb3b59f3"
+    },
+    {
+      "attachments": [],
+      "content": [
+        {
+          "text": "Branches happen when you regenerate from an earlier message.",
+          "type": "text"
+        }
+      ],
+      "created_at": "2026-04-01T10:01:00Z",
+      "files": [],
+      "files_v2": [],
+      "parent_message_uuid": "725445c1-b1a2-aa9d-0251-746ddb3b59f3",
+      "sender": "assistant",
+      "text": "Branches happen when you regenerate from an earlier message.",
+      "truncated": false,
+      "updated_at": "2026-04-01T10:01:00Z",
+      "uuid": "5b869d32-c789-4f70-7619-fafbd7b3b3db"
+    },
+    {
+      "attachments": [],
+      "content": [
+        {
+          "text": "What does the tree visualization look like?",
+          "type": "text"
+        }
+      ],
+      "created_at": "2026-04-01T10:02:00Z",
+      "files": [],
+      "files_v2": [],
+      "parent_message_uuid": "5b869d32-c789-4f70-7619-fafbd7b3b3db",
+      "sender": "human",
+      "text": "What does the tree visualization look like?",
+      "truncated": false,
+      "updated_at": "2026-04-01T10:02:00Z",
+      "uuid": "d2c6abd7-3321-777f-c114-4843ac2f2b2b"
+    },
+    {
+      "attachments": [],
+      "content": [
+        {
+          "text": "A read-only tree where you can click any leaf to switch branches.",
+          "type": "text"
+        }
+      ],
+      "created_at": "2026-04-01T10:03:00Z",
+      "files": [],
+      "files_v2": [],
+      "parent_message_uuid": "d2c6abd7-3321-777f-c114-4843ac2f2b2b",
+      "sender": "assistant",
+      "text": "A read-only tree where you can click any leaf to switch branches.",
+      "truncated": false,
+      "updated_at": "2026-04-01T10:03:00Z",
+      "uuid": "d080483b-90a6-a8ee-4a53-578a945a0e53"
+    }
+  ],
+  "created_at": "2026-04-01T10:00:00Z",
+  "current_leaf_message_uuid": "d080483b-90a6-a8ee-4a53-578a945a0e53",
+  "has_branches": true,
+  "is_starred": false,
+  "is_temporary": false,
+  "model": "claude-sonnet-4-6",
+  "name": "Phase 5 fixture: Branch tree",
+  "organization_id": "00000000-1111-2222-3333-444444444444",
+  "organization_name": "Fixture Workspace",
+  "summary": "Phase 5 fixture: Branch tree",
+  "updated_at": "2026-04-01T10:04:00Z",
+  "uuid": "c8da94ab-641d-bf28-d4a6-cba9bc72468e"
+}

@@ -1,0 +1,6 @@
+{
+  "pid": 61231,
+  "hostname": "M3-Max.local",
+  "started_at": "2026-05-02T17:15:20.386787+00:00",
+  "command": "lifespan_migrate"
+}

@@ -53,17 +53,19 @@ test.describe('Keyboard Navigation', () => {
   });
 
   test('Tab navigates through interactive elements', async ({ page }) => {
-    // Start from body
+    // Click body first to ensure focus starts somewhere predictable.
+    await page.locator('body').click({ position: { x: 1, y: 1 } });
     await page.keyboard.press('Tab');
 
-    // Should focus on search input first (or another interactive element)
+    // Should focus on an interactive element (input/button/anchor).
     const focused = await page.evaluate(() => document.activeElement?.tagName);
     expect(['INPUT', 'BUTTON', 'A']).toContain(focused);
   });
 
   test('keyboard does not trigger in input fields', async ({ page }) => {
-    // Focus the search input
-    const searchInput = page.locator('input[placeholder*="Search"]');
+    // Focus the sidebar search input by exact placeholder (avoids
+    // ambiguity with the SearchPanel input which uses "Search messages...").
+    const searchInput = page.getByPlaceholder('Search titles...');
     await searchInput.focus();
 
     // Type '?' - should go into input, not open help modal
@@ -77,8 +79,11 @@ test.describe('Keyboard Navigation', () => {
   });
 
   test('Enter selects focused conversation', async ({ page }) => {
-    // Click on conversation list to focus
-    await page.getByRole('button', { name: /\d+ msgs/ }).first().focus();
+    // Click on conversation list to focus a row. In fixture mode the
+    // first deterministic row to look for is the long TLS conversation.
+    const row = page.getByText('Phase 5 fixture: TLS handshakes (long)');
+    await expect(row).toBeVisible({ timeout: 10000 });
+    await row.focus();
 
     // Press Enter
     await page.keyboard.press('Enter');
@@ -132,16 +137,17 @@ test.describe('Vim Mode', () => {
     // Should show the help modal with Vim mode
     await expect(page.locator('text=Keyboard Shortcuts')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('text=Vim Mode')).toBeVisible();
-    // Should show vim-specific keys (use exact match to avoid matching ⌘+K)
-    await expect(page.getByText('j', { exact: true })).toBeVisible();
-    await expect(page.getByText('k', { exact: true })).toBeVisible();
+    // Should show vim-specific keys. Multiple <kbd>j</kbd> tags appear
+    // (one per binding row); .first() avoids the strict-mode violation.
+    await expect(page.getByText('j', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('k', { exact: true }).first()).toBeVisible();
   });
 
   test('/ focuses search', async ({ page }) => {
     await page.keyboard.press('/');
 
     // Search input should be focused
-    const searchInput = page.locator('input[placeholder*="Search"]');
+    const searchInput = page.getByPlaceholder('Search titles...');
     await expect(searchInput).toBeFocused();
   });
 });
@@ -174,7 +180,7 @@ test.describe('Emacs Mode', () => {
     await page.keyboard.press('Control+s');
 
     // Search input should be focused
-    const searchInput = page.locator('input[placeholder*="Search"]');
+    const searchInput = page.getByPlaceholder('Search titles...');
     await expect(searchInput).toBeFocused();
   });
 });
