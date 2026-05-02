@@ -86,7 +86,7 @@ See `PROCESS/00_session_inventory.md` for the full table. In scope: `a70251a5-�
 | E | Current + skipped | ✅ | `PROCESS/76fe578b/summary.md`, `PROCESS/skipped/gmail_sessions.md` |
 | F | Synthesis | ✅ | `PROCESS/{90_themes,91_memorable_quotes,92_timeline,93_use_cases}.md` |
 | G | User review gate | ⬜ | pause |
-| H | Article drafts | 🟡 | **1 of 5 done.** `PLANS/articles/part_1_overview.md` written (3,772 words). Awaiting user review before Part 2. |
+| H | Article drafts | 🟡 | **2 of 5 done.** Part 1 v2 (4,290 words, post-Council review). Part 2 v1 draft (4,878 words, 8 screenshot placeholders). Awaiting user review of Part 2 before Part 3. |
 | I | Series intro | ⬜ | `PLANS/articles/00_series_intro.md` |
 | J | PII sweep | ⬜ | final versions |
 

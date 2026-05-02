@@ -42,6 +42,21 @@ Every part after #1 opens with a recap + link to the prior part:
 - Layered subordinate clauses joined by *however*, *on the other hand*, *but also because…*
 - Favorite scaffold: **"On one hand… on the other hand…"**
 - Punctuated by short enthusiastic one-liners: *"I figured out a way, and you're reading this!"*, *"See you then!"*
+- **Tighter joining of related thoughts. Choppy back-to-back short sentences are an AI-writing tell.** Raymond joins related thoughts using one of three tools, in rough order of preference:
+
+  1. **Semicolons** for parallel / contrastive pairs.
+     - ❌ *"The UI is how you browse and read. The MCP server is how another Claude reads."*
+     - ✅ *"The UI is how you the human search and browse and read; the MCP server is how another Claude session searches and browses and reads."*
+
+  2. **Comma splices** for a tight reframe of a just-said thing (technically "wrong" per strict grammar, intentionally informal in Raymond's voice).
+     - ❌ *"You will not find your conversations. They're not there."*
+     - ✅ *"You will not find your conversations, they're not there."*
+
+  3. **Subordinating clauses** (*because, since, however, on the other hand, but also because…*) when the thoughts are cause-and-effect or contrast, not reframing.
+
+  When in doubt between a period and one of the above, and the two clauses are thematically paired (contrast, parallel structure, cause/effect, reframing), avoid the period. Periods go between thematic units, not inside them.
+
+- **Prefer technical vocabulary when it fits.** Small but real: Raymond will pick *query* over *ask*, *iterate* over *loop*, *idempotent* over *safe to re-run*, when the more-technical word is accurate. This is not showing off; it's precision. The "I love it when I get to use the word isomorphic!" moment (in Tone tics) is the archetype.
 
 ## Paragraphs
 
@@ -66,6 +81,11 @@ Prose-dominant. Bulleted lists appear only for enumerating variants (UserBase / 
 - Occasional nerdy emoji — 🤓 at wrap-up.
 - Mild self-deprecation / self-awareness: *"I commented the heck out of it."*, *"I love it when I get to use the word isomorphic!"*
 - Credits collaborators and tool authors by name (Sebastián Ramírez etc.).
+- **Approved signature phrases — keep these when they appear naturally; do not flag them as clichés.** These are part of Raymond's established voice, not AI-assistant tells:
+  - *"As I often say, laziness is the mother of invention!"* — used after any "I let the tool do the work" beat.
+  - *"I commented the heck out of it."*
+  - *"I love it when I get to use the word isomorphic!"* (or similar nerd-delight asides at vocabulary choices).
+  - *"I figured out a way, and you're reading this!"*
 
 ## Closing move ("Wrapping Up!")
 
@@ -107,3 +127,18 @@ Every part ends with an **H2 "Wrapping Up!"** (with exclamation). Content:
 - Numbered step-by-step lists for technical ideas — use prose with `1.` / `2.` embedded.
 - Overly academic tone. The author is a working engineer, not a professor.
 - AI-assistant tells: *"Let's dive in"*, *"In this comprehensive guide"*, *"It's worth noting that…"*, emdashes, "It's not this, it's that" and similar framing that's common to AI writing — Raymond doesn't write like that.
+
+### The "it's not X, it's Y" trope — one-shot example (do not use this construction)
+
+This construction is a top-3 AI-writing tell. Avoid it even when the contrast feels natural. **Just state what it is; drop the negation.**
+
+- ❌ *"The real payoff isn't neatness, it's **learning across silos**."*
+- ✅ *"The real payoff is **learning across silos**."*
+
+Other surface forms to avoid with the same fix:
+
+- *"Not X. Y."* (two sentences)
+- *"It's less about X and more about Y."*
+- *"X is fine, but Y is the point."*
+
+If you genuinely need to negate a prior framing (because the reader is mid-paragraph and needs to unlearn something), just say *"I don't mean X"* once and move on. Don't build paragraphs on the contrast.

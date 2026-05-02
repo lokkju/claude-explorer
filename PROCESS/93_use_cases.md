@@ -1,20 +1,38 @@
 # Use Cases for Part 1
 
-Three-plus concrete use cases grounded in the actual build sessions — suitable for Part 1 ("What This Thing Is and Why You'd Want It"). Every use case ties back to specific moments from the extractions so the prose doesn't have to invent hypotheticals.
+Five concrete use cases grounded in the actual build sessions — suitable for Part 1 ("What This Thing Is and Why You'd Want It"). Every use case ties back to specific moments from the extractions so the prose doesn't have to invent hypotheticals.
 
-**Part-1 hook guidance (from `PLANS/medium-article.md`):** the original "lost access to my account" framing was explicitly pivoted away from on 2026-04-19; the user deemed it "sketchy, makes me seem like I'm stealing IP." The new framing is around **searching and accessing full session transcripts with a UI that shows the entirety of each session, plus programmatically via Claude Code and Claude Desktop.** The use cases below are **interleaved UI ↔ MCP** (not grouped), because grouping all the UI uses first risks the reader thinking "cool, I get it" and bailing before the MCP use cases — which are arguably the more leveraged ones. The lost-access edge case comes last as a supported-but-not-headline capability.
+**Part-1 hook guidance (from `PLANS/medium-article.md`):** the original "lost access to my account" framing was explicitly pivoted away from on 2026-04-19; the user deemed it "sketchy, makes me seem like I'm stealing IP." **The lost-access edge case was removed entirely from Part 1** on 2026-04-20 after the LLM Council review — the user felt it still read as sketchy even when framed as an edge case. The capability stays in the codebase (mitmproxy addon + documentation in the README), but *zero* references to it should appear in Part 1. The company-IP caveat in Use Case 3 stays.
+
+The new framing is around **searching and accessing full session transcripts with a UI that shows the entirety of each session, plus programmatically via Claude Code and Claude Desktop.** The use cases below are **interleaved UI ↔ MCP** (not grouped), because grouping all the UI uses first risks the reader thinking "cool, I get it" and bailing before the MCP use cases — which are arguably the more leveraged ones.
 
 **A grounding fact that threads through every use case below:** Claude Desktop stores your conversation history **server-side only** — the local macOS / Windows / Linux app is a thin view onto the Anthropic backend. If you lose access to the account (email rotation, SSO revocation, subscription lapse, employer offboarding), the history is effectively gone. Claude Code stores sessions locally as JSONL under `~/.claude/projects/`, but there's no shipped UI to browse them. This project gives you a **local, unified, searchable archive of both**, so none of the above events can take your history from you — and opens up programmatic access to the combined corpus via an MCP server.
 
 ## 1. Unified local archive with full-text search — Claude Desktop + Claude Code in one place *(UI)*
 
-Claude Desktop ships its own full-text search, and it's a genuinely good feature — but the data it searches lives server-side on Anthropic's infrastructure, reachable only through a logged-in Desktop or web session. Claude Code keeps its sessions in `~/.claude/projects/*.jsonl` on your machine, but there's no built-in UI for browsing or searching them. Between the two of them, everything you've asked Claude is spread across two storage systems, accessed through two different interfaces, owned by different parties. This project pulls both into a single local corpus and a single searchable UI. CMD-K runs full-text search over every message across both sources at once, and the archive is on your disk — no account, no network, no subscription required to read it once it's been captured.
+Claude Desktop **does** ship full-text search (don't claim otherwise — that error was caught in review), and it's a genuinely good feature. The catch is that the data Claude Desktop searches lives server-side on Anthropic's infrastructure, reachable only through a logged-in Desktop or web session. Claude Code keeps its sessions in `~/.claude/projects/*.jsonl` on your machine, but there's no built-in UI for browsing or searching them. Between the two of them, everything you've ever asked Claude (and everything Claude has ever asked back, every tool call, every tool result) is spread across two storage systems, accessed through two different interfaces, owned by different parties. This project pulls both into a single local corpus and a single searchable UI.
 
-The build session surfaces exactly this gap: "The full-text search hook (`useSearch`) exists but **isn't used anywhere in the UI**. The sidebar search only filters by title/summary." [a70251a5#pos=869 msg=4b710ca3…] The fix was to keep the title filter but add a Cmd+K command palette that queries the real search endpoint — and later to make CMD-G walk the match list with a fast path plus background prefetch of adjacent conversations, so navigating hits across a 5,000-message corpus feels instant. [a70251a5#pos=4831 msg=015920bd…]
+**There are TWO distinct searches in the UI — don't conflate them (2026-04-20 directive after a user catch):**
+
+1. **Sidebar title filter** (left pane). Narrows the conversation list as you type, against titles and summaries only. For when you remember *roughly* what a session was about. Focused via:
+   - Emacs mode: `Ctrl+S` (see `useKeyboardShortcuts.ts` line ~366-369).
+   - Vim mode: `/` (see `useKeyboardShortcuts.ts` line ~313-316).
+
+2. **Full-text SearchPanel** (right pane, persistent overlay, post-commit `d69439c`). Walks through every match across every message in the combined corpus. For when you need to find the exact turn where something got said. Key bindings:
+   - `Cmd+K` *or* `Cmd+F` — toggle the SearchPanel open/closed (`useKeyboardShortcuts.ts` line 130).
+   - `Cmd+G` — next match. Opens the panel if closed, so `Cmd+G` works as a one-key entry point.
+   - `Cmd+Shift+G` — previous match. Also opens the panel if closed.
+   - `Escape` — close the panel (cascade-aware; only intercepts when the panel owns focus).
+
+**Part-1 framing rule:** Part 1 should mention that *both* searches exist and should emphasize the keyboard-first philosophy ("everything important is one keystroke from your left hand"), **without** listing specific key bindings. The full key map belongs in Part 2. This was a user directive on 2026-04-20 after a first-draft conflation.
+
+Relevant frontend files: `frontend/src/components/search/SearchPanel.tsx`, `frontend/src/contexts/SearchPanelContext.tsx`, `frontend/src/components/search/navigateToMatch.ts`, `frontend/src/hooks/useKeyboardShortcuts.ts`. Drafters for Parts 2, 3, and 5 should use this current UX, not the old Cmd+K-modal language.
+
+The build session surfaces exactly the gap the SearchPanel was built to fill: "The full-text search hook (`useSearch`) exists but **isn't used anywhere in the UI**. The sidebar search only filters by title/summary." [a70251a5#pos=869 msg=4b710ca3…] The first fix was a `Cmd+K` command palette against the real search endpoint; then `Cmd+G` with a fast path and background prefetch of adjacent conversations (so navigating hits feels instant) [a70251a5#pos=4831 msg=015920bd…]; then the persistent right-side panel replaced the modal entirely (commit `d69439c`, reflected in 92_timeline.md's arc 5).
 
 The user also explicitly framed the unified-browser scope during Phase 09: "Claude Desktop only shows the Claude Code sessions that I ran inside Claude Desktop under the Code tab. That's fine, but I'd like our front end (conversation browser) to show and be able to search all Claude Code sessions, whether they are from the CLI or from inside Claude Desktop." [a70251a5#pos=1474 msg=6b33711a…]
 
-**Where it appears:** anchor use case for **Part 1**; CMD-K / CMD-G search behaviors shown in detail in **Part 2**.
+**Where it appears:** anchor use case for **Part 1**; full SearchPanel walkthrough in **Part 2**.
 
 ## 2. MCP-powered retrospective: query your own build history from inside a new Claude Code session *(MCP)*
 
@@ -44,11 +62,21 @@ This also matters if you use Claude across **personal and work contexts**, acros
 
 ## 4. Find mistakes Claude Code made so you can tune your agent prompts or `CLAUDE.md` *(MCP)*
 
-A specific subset of the retrospective use case, named directly by the user in the same prompt that spawned the MCP server: "find mistakes that Claude Code made that we had to correct through followon prompts." [a70251a5#pos=4844 msg=ff2ee72e…] With the MCP server attached, Claude Code can walk prior sessions, surface patterns of correction (the assistant's proposed approach → the user's pushback → the follow-on fix), and use those to propose `CLAUDE.md` updates or refined agent prompts. This is a durable improvement loop you cannot run if your session transcripts live only in two opaque on-disk stores.
+**Scope clarification (2026-04-20, post-Council review):** keep Use Cases 2 and 4 cleanly distinct.
+- **Use Case 2** is about summarizing *what you did* on a project across all its sessions.
+- **Use Case 4** is about mining *what went sideways with the agent* and feeding that back into `CLAUDE.md`.
 
-Concrete evidence from the build session that this loop is worth running: the "no self-credit in commit messages" rule had to be asserted *twice* and eventually propagated into `~/.claude/CLAUDE.md` and every `llm-council-*.md` agent file [a70251a5#pos=958 msg=237d6350…]; the "never broad-`pkill`" rule was born from a single blast-radius incident when `pkill uvicorn` blew away another project's server [a70251a5#pos=4308 msg=1854813a…]; and the `uv`-for-the-venv rule required two interrupts of tool use before it stuck [a70251a5#pos=262 msg=4746a23b…]. Each of those is a durable rule that was born from a single correction event — the kind of signal a retrospective pass with the MCP server can surface systematically.
+The originating prompt names Use Case 4 directly: "find mistakes that Claude Code made that we had to correct through followon prompts." [a70251a5#pos=4844 msg=ff2ee72e…] But the pattern is **broader than proposal → pushback → fix**. Drafters should cover at least these five sub-patterns:
 
-**Where it appears:** called out in **Part 1** as one of the headline MCP use cases; lives alongside the retrospective demo in **Part 3** and **Part 5**.
+1. **Proposal → pushback → fix.** Claude suggests an approach, user rejects, Claude corrects. These are preference signals for what *your* codebase wants.
+2. **Wrong-assumption bugs.** Claude coded against an imagined API / data shape without looking at actual data. The codifiable rule: *read the actual JSON before coding against your mental model of the JSON.* The `files_v2` nested-shape bug (Phase 05) is the canonical example in this project's own history.
+3. **Context loss across compactions.** Claude forgot a codebase convention after a context compaction — test fixture location, naming scheme, deploy script. These belong in `CLAUDE.md` so they survive compaction automatically.
+4. **Rule violations.** Claude did something explicitly banned. `pkill uvicorn` blowing away another project's server [a70251a5#pos=4308 msg=1854813a…]. Self-credit in commit messages landing twice [a70251a5#pos=35 msg=eeebeb16…, pos=958 msg=237d6350…]. `cat | grep` instead of `rg`. Each violation is a rule that wasn't explicit until it was violated.
+5. **Over-eager optimization.** Claude quietly broke correctness to make something look fast. The `message_count=0` hard-code during the perf pass (Phase 11) is the canonical example — hard to find without a retrospective pass because the symptom and cause are days apart.
+
+**Cadence and curation (user directive, 2026-04-20):** weekly, not quarterly. Pull the last week's sessions, have a fresh Claude Code instance with the MCP server propose `CLAUDE.md` diffs, and **a human reviews and edits the diffs before anything lands**. The human-curation gate is explicit because without it, `CLAUDE.md` accumulates cruft, overfits to one bad session, or contradicts itself. Frame this in article prose as *personal workflow* ("I like running this as a small weekly loop"), not prescription ("you should run this weekly") — Council flagged prescriptive cadence as preachy. The cadence is less important than the loop plus the gate.
+
+**Where it appears:** called out in **Part 1** as one of the headline MCP use cases; mechanics in **Part 3**; the demo itself (on this project's own sessions) in **Part 5**.
 
 ## 5. Self-contained archive: keep the attachments, not just the text *(UI)*
 
@@ -58,10 +86,18 @@ The PDF case is the illustrative one: a specific conversation was missing its PD
 
 **Where it appears:** minor callout in **Part 1** ("the archive is self-contained"); fetcher details in **Part 3**; the bug story itself fits well in **Part 5** as a "read the actual JSON before coding against your mental model" beat.
 
-## 6. Data portability before SSO revocation / account closure *(edge case)*
+<!-- Use Case 6 (Data portability / lost access) was REMOVED on 2026-04-20 after LLM
+     Council review. The user felt the framing still read as sketchy even as an
+     edge case, and asked for zero references to "lost access" anywhere in the
+     Part 1 article. The mitmproxy capability stays in the codebase and is still
+     documented in the README. The company-IP caveat stays in Use Case 3.
 
-Not the headline framing anymore — per the user's 2026-04-19 directive, the "locked out of my account" pitch got reframed because it reads as "stealing IP." But the capability is still real, and it's the actual history behind the whole project. In the user's own words from Phase 13: "The mitmproxy method works for my initial case, where the Playwright one can't: I lost access to a work Claude account (so I couldn't log in), but I was still logged in to Claude Desktop. The mitmproxy method allowed me to export all my sessions. Please leave the plugin, and document how to use it in the README.md. I don't know if anyone else will ever be in this situation, but this was a lifesaver and I don't want to lose it." [a70251a5#pos=2391 msg=7d317c0f…]
+     Drafters for Parts 3 and 5 should also avoid leading with the lost-access
+     framing. If Part 3 needs to explain *why* both credential-capture paths
+     exist, frame it as complementary failure modes ("these two paths exist
+     because they cover different environments") without turning the account-
+     lockout case into the hook. -->
 
-The upshot for the reader: if your Claude Desktop is still authenticated but your SSO / email login is gone — or if you simply want a local archive before switching employers, cancelling a subscription, or rotating accounts — the mitmproxy credential-capture path gives you a one-time escape hatch that the Playwright login path does not. And the on-disk archive, once you have it, is yours in perpetuity regardless of server-side retention decisions.
+## Removed: Use Case 6 (Data portability before SSO revocation / account closure)
 
-**Where it appears:** mentioned as a supported edge case in **Part 1** (brief paragraph, not the hook); documented operationally in **Part 3** alongside the mitmproxy setup; revisited in **Part 5** as the origin-story beat that motivated the whole project (and then got reframed for the published series).
+See the HTML comment above for the removal rationale and downstream drafter guidance.
