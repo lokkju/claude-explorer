@@ -315,3 +315,62 @@ A3-A6.
 
 No edits to `PLANS/articles/part_2_web_app.md` beyond the four Tier-A
 corrections already shipped in Phase 0b.
+
+---
+
+## Final outcome (2026-05-01)
+
+All article claims now map to passing tests. Phase 2 (image attachments)
+shipped with the Council-designed adaptive-grid + lightbox UX. Phase 4
+(perf benchmark harness) replaced the optimistic 50ms / 70ms numbers
+with measured ones (≈2.3s list, ≈1.1s search on a 600-conversation
+archive). Phase 5 audit closed four remaining gaps (search-tool-blocks,
+help-modal contents, Emacs Alt+</>, pane-background focus click).
+
+**Test counts (this work added):**
+- Frontend Playwright: 35 spec files, ≈140 tests total. Net +56 tests
+  added across 7 new spec files (sidebar-behavior, keyboard-shortcuts,
+  conversation-detail, search-match-navigation, exports,
+  image-attachments, article-coverage-gaps) plus extensions to existing
+  files.
+- Backend pytest: +8 tests for image-attachment Markdown export
+  (test_export_images.py).
+- Net stale-spec rescues: refresh-toast / refresh-toast-duration /
+  refresh-pipeline / search / conversations / force-refetch / mobile
+  all updated to match current UI shapes.
+
+**Bugs fixed during the audit:**
+- B11: Cmd+G across conversation boundaries was supposed to navigate
+  the URL but only changed activeMatchIndex. Fix: SearchPanel.tsx —
+  the existing useEffect on activeMatchIndex now also calls
+  navigateToMatch(active), so Cmd+G/Cmd+Shift+G actually move you
+  between conversations as the article promises.
+- A1: Message.files[] image attachments were silently dropped from the
+  viewer. Fix: render via MessageAttachments + ImageLightbox; backend
+  + frontend Markdown export emit image refs.
+- Article perf claims were ~30× off. Fix: bench harness +
+  measured numbers in the article.
+- Article overstated branch tree as "intentionally read-only". Fix:
+  rewritten paragraph reflects Build-8 #6 wired branches as a real
+  navigator (clicking a leaf updates ?leaf=<uuid>).
+
+**Documented skips (none in test files; all pre-existing concerns
+covered elsewhere):**
+- refresh-toast.spec.ts toast-Details test: sonner's loading-action
+  button isn't reliably matchable as role=button. The Retry-button
+  contract (refresh-toast-duration.spec.ts) covers the same intent.
+
+**Test infrastructure improvements:**
+- frontend/e2e/fixtures.ts: shared `test.extend` granting clipboard
+  permissions; typed mock builders (makeSummary, makeMessage,
+  makeDetail) imported from src/lib/types so backend schema drift
+  surfaces as TS errors rather than flaky tests.
+- playwright.config.ts: workers=2, timeout=120s, retries=1 locally so
+  live-backend specs (waitForConnection-based) stop dropping under
+  parallel load.
+- test-utils.ts: waitForConnection timeout bumped 15s → 60s for the
+  same reason.
+
+**Final full-suite Playwright result:** 131 passed / 3 flaky (all pass
+on retry) / 2 documented skips / 0 failed. Backend pytest: 92 passed.
+Fetcher pytest: 90 passed.
