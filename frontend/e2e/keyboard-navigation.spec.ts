@@ -252,4 +252,41 @@ test.describe('Accessibility', () => {
     const placeholder = await searchInput.getAttribute('placeholder');
     expect(placeholder).toBeTruthy();
   });
+
+  // B9 — Cmd+R (or Ctrl+R) is intercepted: it triggers a React Query
+  // invalidation of the conversation list rather than a full browser
+  // reload. The article calls this out (line 135) because losing the
+  // single-page state on every refresh is the classic SPA gotcha.
+  test('Cmd+R invalidates the conversation list query without a browser reload (B9)', async ({ page }) => {
+    let listRequestCount = 0
+    await page.route('**/api/conversations*', (route) => {
+      const url = new URL(route.request().url())
+      if (!/\/api\/conversations\/[^/?]+/.test(url.pathname)) {
+        listRequestCount += 1
+      }
+      route.fulfill({ contentType: 'application/json', body: '[]' })
+    })
+
+    await page.goto('/')
+    await expect.poll(() => listRequestCount).toBeGreaterThan(0)
+
+    // Tag the window so we can detect a true browser reload (which would
+    // wipe this property).
+    await page.evaluate(() => {
+      ;(window as unknown as { __noReloadSentinel: boolean }).__noReloadSentinel = true
+    })
+
+    const before = listRequestCount
+    await page.locator('main').click()
+    // Use Meta+R on macOS-style keyboards; Playwright accepts the alias.
+    await page.keyboard.press('Meta+r')
+
+    // List re-fetched (query invalidation).
+    await expect.poll(() => listRequestCount).toBeGreaterThan(before)
+    // Sentinel survived → no browser reload.
+    const sentinel = await page.evaluate(() => {
+      return (window as unknown as { __noReloadSentinel?: boolean }).__noReloadSentinel === true
+    })
+    expect(sentinel).toBe(true)
+  });
 });

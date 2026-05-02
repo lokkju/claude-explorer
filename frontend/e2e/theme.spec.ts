@@ -57,6 +57,29 @@ test.describe('Theme Functionality', () => {
     expect(newTitle).not.toBe(initialTitle)
   })
 
+  // B8 — verify the cycle is Light → Dark → System and back to Light.
+  // The article documents this exact order; the sidebar's cycleTheme()
+  // walks the array ['light','dark','system'] in `Sidebar.tsx`.
+  test('theme cycles in the documented order Light → Dark → System (B8)', async ({ page }) => {
+    await page.goto('/')
+    // SettingsContext stores the theme as JSON.stringify(value), so the
+    // raw localStorage value is the JSON-quoted form ("light"), not light.
+    await page.evaluate(() => localStorage.setItem('theme', JSON.stringify('light')))
+    await page.reload()
+
+    const themeButton = page.locator('button[title*="Theme:"]')
+    await expect(themeButton).toHaveAttribute('title', /light/)
+
+    await themeButton.click()
+    await expect(themeButton).toHaveAttribute('title', /dark/)
+
+    await themeButton.click()
+    await expect(themeButton).toHaveAttribute('title', /system/)
+
+    await themeButton.click()
+    await expect(themeButton).toHaveAttribute('title', /light/)
+  })
+
   test('theme persists across navigation', async ({ page }) => {
     await page.goto('/settings')
 
