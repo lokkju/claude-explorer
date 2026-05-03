@@ -258,6 +258,67 @@ test.describe('Image attachments — broken image fallback (Phase 2)', () => {
   })
 })
 
+test.describe('Inline image content blocks (Claude Code shape)', () => {
+  test('image content block renders as inline <img> with the data URI', async ({ page, mockBackend }) => {
+    // Manual finding 2026-05-03: Claude Code embeds images as
+    // { type: 'image', source: { type: 'base64', media_type, data } }
+    // content blocks (alongside a sibling text block carrying the
+    // [Image #N] marker). The Desktop Message.files[] proxy doesn't
+    // help here — we render the bytes inline via a data URI.
+    const summary = makeSummary({
+      uuid: C,
+      source: 'CLAUDE_CODE',
+      message_count: 1,
+      project_path: '/fixture/project',
+      project_name: 'project',
+    })
+    const m = makeMessage({
+      uuid: 'cc-img',
+      sender: 'human',
+      text: '[Image #1]',
+      content: [
+        { type: 'text', text: '[Image #1]' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: TINY_PNG_B64 } },
+      ],
+    } as Partial<Message> & { uuid: string })
+    const detail = makeDetail(summary, [m])
+    await mockBackend({ conversations: [summary], details: { [C]: detail } })
+
+    await page.goto(`/conversations/${C}`)
+    const bubble = page.locator('[data-message-uuid="cc-img"]')
+    await expect(bubble).toBeVisible()
+
+    const inlineButton = bubble.locator('[data-content-image]')
+    await expect(inlineButton).toBeVisible()
+    const img = inlineButton.locator('img')
+    const src = await img.getAttribute('src')
+    expect(src).toMatch(/^data:image\/png;base64,/)
+    expect(src).toContain(TINY_PNG_B64)
+  })
+
+  test('image content block visible even with no text alongside (visibility check)', async ({ page, mockBackend }) => {
+    // Message with ONLY an image content block (no text/tool blocks)
+    // must still render — messageHasVisibleContent has to count image
+    // content blocks toward "visible".
+    const summary = makeSummary({ uuid: C, source: 'CLAUDE_CODE', message_count: 1 })
+    const m = makeMessage({
+      uuid: 'cc-img-only',
+      sender: 'human',
+      text: '',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: TINY_PNG_B64 } },
+      ],
+    } as Partial<Message> & { uuid: string })
+    const detail = makeDetail(summary, [m])
+    await mockBackend({ conversations: [summary], details: { [C]: detail } })
+
+    await page.goto(`/conversations/${C}`)
+    const bubble = page.locator('[data-message-uuid="cc-img-only"]')
+    await expect(bubble).toBeVisible()
+    await expect(bubble.locator('[data-content-image] img')).toBeVisible()
+  })
+})
+
 test.describe('Image attachments — independent of showToolCalls toggle (Phase 2 / Council Q7)', () => {
   test('image renders even when no text and tools are hidden', async ({ page, mockBackend }) => {
     const summary = makeSummary({ uuid: C, source: 'CLAUDE_AI', message_count: 1 })

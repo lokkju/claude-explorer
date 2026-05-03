@@ -63,6 +63,9 @@ export function messageHasVisibleContent(message: Message, showToolCalls: boolea
     return message.content.some((block) => {
       if (block.type === 'text' && block.text?.trim()) return true
       if ((block.type === 'tool_use' || block.type === 'tool_result') && showToolCalls) return true
+      // Claude Code inline image content blocks count as visible
+      // content (always — never gated by showToolCalls).
+      if (block.type === 'image' && block.source) return true
       return false
     })
   }

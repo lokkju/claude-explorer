@@ -184,9 +184,46 @@ function ContentBlockRenderer({ block, showToolCalls, expandAll }: ContentBlockR
       return showToolCalls ? (
         <ToolResultBlock content={block.content || []} forceExpanded={expandAll} />
       ) : null
+    case 'image':
+      // Claude Code embeds images as inline content blocks of shape
+      // { type: 'image', source: { type: 'base64', media_type: '...', data: '...' } }
+      // alongside a sibling text block carrying the "[Image #N]"
+      // marker. Render the bytes inline; click to open at native size in
+      // a new tab (the data URI gets the browser's native image viewer).
+      return <InlineImageBlock source={block.source} />
     default:
       return null
   }
+}
+
+function InlineImageBlock({ source }: { source: ContentBlock['source'] }) {
+  if (!source) return null
+  let src: string | null = null
+  if (source.type === 'base64' && source.data) {
+    const mt = source.media_type || 'image/png'
+    src = `data:${mt};base64,${source.data}`
+  } else if (source.type === 'url' && source.url) {
+    src = source.url
+  }
+  if (!src) return null
+  return (
+    <button
+      type="button"
+      onClick={() => window.open(src, '_blank', 'noopener,noreferrer')}
+      className="my-2 block overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-zinc-800 dark:bg-zinc-800"
+      aria-label="Open image at native size in new tab"
+      data-content-image
+    >
+      <img
+        src={src}
+        alt="Inline image"
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        className="block max-h-96 max-w-full object-contain"
+      />
+    </button>
+  )
 }
 
 interface ToolUseBlockProps {

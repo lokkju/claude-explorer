@@ -47,12 +47,25 @@ export interface OrgsResponse {
   orgs: Org[]
 }
 
+export interface ImageBlockSource {
+  type: 'base64' | 'url'
+  // base64
+  media_type?: string
+  data?: string
+  // url variant (claude.ai sometimes uses this for hosted refs)
+  url?: string
+}
+
 export interface ContentBlock {
   type: 'text' | 'tool_use' | 'tool_result' | 'image'
   text?: string
   name?: string // tool_use
   input?: unknown // tool_use
   content?: ContentBlock[] // tool_result
+  // image content blocks (Claude Code embeds images inline as base64
+  // here, alongside a sibling text block that carries the "[Image #N]"
+  // marker).
+  source?: ImageBlockSource
 }
 
 // Image asset metadata (thumbnail or preview variant). Returned by
