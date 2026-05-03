@@ -256,7 +256,7 @@ WeasyPrint handles PDF export. On macOS, you'll need the system libraries it exp
 brew install pango cairo libffi
 ```
 
-Once those are installed, PDF export works the way you'd expect: you click export, you get a PDF representation of the conversation. You can choose whether tool calls appear, and the toggle matches the viewer's setting.
+Once those are installed, PDF export works the way you'd expect: you click export, you get a PDF representation of the conversation. You can choose whether tool calls appear, and the toggle matches the viewer's setting. Image attachments come through too, sized to fit the page width, so a conversation that included screenshots stays a conversation that includes screenshots after you save it as a PDF.
 
 If you're thinking *"why bother with PDF when Markdown exists,"* the answer is simple: PDF is a stable artifact. Markdown is great for editing and reuse, but it will render differently depending on where you view it; PDF is the thing you can stick in an archive folder, attach to a ticket, or keep as *"this is exactly what we saw at the time."*
 

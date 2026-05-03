@@ -112,3 +112,63 @@ def test_message_with_only_images_is_visible():
     msg = _msg(text="", content=[], files=[_img("only", "lone.png")])
     assert message_has_visible_content(msg, include_tools=True) is True
     assert message_has_visible_content(msg, include_tools=False) is True
+
+
+def test_html_export_emits_img_tags():
+    """conversation_to_html (PDF source) must include <img> tags for image
+    attachments — the article's "one truth, three surfaces" promise."""
+    from backend.export import conversation_to_html
+    from backend.models import ConversationDetail
+
+    msg = _msg(text="here", files=[_img("p1", "preview.png")])
+    conv = ConversationDetail(
+        uuid="c1",
+        name="Test",
+        summary="",
+        model="claude",
+        created_at=datetime(2026, 4, 1, 10, 0),
+        updated_at=datetime(2026, 4, 1, 10, 0),
+        message_count=1,
+        human_message_count=1,
+        current_leaf_message_uuid="m1",
+        messages=[msg],
+    )
+    html = conversation_to_html(conv, include_tools=True)
+    assert '<img ' in html
+    assert '/api/test/files/p1/preview' in html
+    assert 'Image attachment: preview.png' in html
+
+
+def test_html_export_emits_images_when_include_tools_is_false():
+    """Images are never gated by include_tools (Council Q7)."""
+    from backend.export import conversation_to_html
+    from backend.models import ConversationDetail
+
+    msg = _msg(text="hi", files=[_img("k", "k.png")])
+    conv = ConversationDetail(
+        uuid="c1", name="T", summary="", model="claude",
+        created_at=datetime(2026, 4, 1, 10, 0),
+        updated_at=datetime(2026, 4, 1, 10, 0),
+        message_count=1, human_message_count=1,
+        current_leaf_message_uuid="m1", messages=[msg],
+    )
+    html = conversation_to_html(conv, include_tools=False)
+    assert '<img ' in html
+    assert 'k.png' in html
+
+
+def test_html_export_handles_missing_image_url():
+    from backend.export import conversation_to_html
+    from backend.models import ConversationDetail
+
+    msg = _msg(text="hi", files=[{"file_kind": "image", "file_uuid": "x", "file_name": "ghost.png"}])
+    conv = ConversationDetail(
+        uuid="c1", name="T", summary="", model="claude",
+        created_at=datetime(2026, 4, 1, 10, 0),
+        updated_at=datetime(2026, 4, 1, 10, 0),
+        message_count=1, human_message_count=1,
+        current_leaf_message_uuid="m1", messages=[msg],
+    )
+    html = conversation_to_html(conv, include_tools=True)
+    assert "image attachment unavailable" in html.lower()
+    assert "ghost.png" in html

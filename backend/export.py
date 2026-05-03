@@ -303,12 +303,18 @@ def conversation_to_html(
                 text = filter_tool_placeholders(text)
             content_html = escape_html(text)
 
+        # Append image attachments (always, never gated by include_tools).
+        # Mirrors the Markdown export's _image_markdown helper so the PDF
+        # surface stays in sync with viewer + Markdown ("one truth, three
+        # surfaces").
+        images_html = _image_html(message)
+
         html += f"""
     <div class="message {message.sender}">
         <div class="message-header">
             {sender} <span class="timestamp">{timestamp}</span>
         </div>
-        <div class="message-content">{content_html}</div>
+        <div class="message-content">{content_html}{images_html}</div>
     </div>
 """
 
@@ -327,6 +333,39 @@ def escape_html(text: str) -> str:
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+def _image_html(message: Message) -> str:
+    """Render the message's image attachments as an HTML block.
+
+    WeasyPrint accepts both data: URIs and absolute http(s) URLs. Our
+    image URLs are claude.ai-relative (``/api/...``); WeasyPrint can't
+    fetch those directly, so we wrap each image in a <p> with the
+    filename as a fallback caption when the URL fails to resolve.
+    """
+    images = _dedupe_image_files(message)
+    if not images:
+        return ""
+    parts: list[str] = ['<div class="attachments">']
+    for img in images:
+        url = (img.get("preview_asset") or {}).get("url") or img.get("thumbnail_url") or ""
+        name = img.get("file_name") or "image"
+        alt = f"Image attachment: {name}"
+        if url:
+            parts.append(
+                f'<figure class="attachment">'
+                f'<img src="{escape_html(url)}" alt="{escape_html(alt)}" '
+                f'style="max-width:100%;max-height:480px;height:auto;display:block;" />'
+                f'<figcaption style="font-size:11px;color:#666;">{escape_html(name)}</figcaption>'
+                f"</figure>"
+            )
+        else:
+            parts.append(
+                f'<p class="attachment-missing"><em>(image attachment unavailable: '
+                f"{escape_html(name)})</em></p>"
+            )
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def render_content_block_html(block: ContentBlock, include_tools: bool = True) -> str:
