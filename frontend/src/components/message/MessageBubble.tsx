@@ -172,10 +172,74 @@ interface ContentBlockRendererProps {
   expandAll?: boolean
 }
 
+// Pattern B: Claude Code sometimes inlines image references as
+// `[Image: source: <abs-path>]` markers in a plain text content block,
+// with the actual bytes living on disk under
+// `~/.claude/image-cache/<session-uuid>/<N>.<ext>`. Split the text on
+// those markers so we render text + <img> + text + <img> ... in order.
+const CC_IMAGE_MARKER_RE = /\[Image: source: ([^\]]+)\]/g
+
+function CcImageMarkerText({ content, showToolCalls }: { content: string; showToolCalls: boolean }) {
+  CC_IMAGE_MARKER_RE.lastIndex = 0
+  const segments: Array<{ kind: 'text'; value: string } | { kind: 'image'; path: string }> = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = CC_IMAGE_MARKER_RE.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ kind: 'text', value: content.slice(lastIndex, match.index) })
+    }
+    segments.push({ kind: 'image', path: match[1].trim() })
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < content.length) {
+    segments.push({ kind: 'text', value: content.slice(lastIndex) })
+  }
+  if (segments.length === 0 || (segments.length === 1 && segments[0].kind === 'text')) {
+    // Fast path: no markers, fall through to standard markdown rendering.
+    return <MarkdownRenderer content={content} showToolCalls={showToolCalls} />
+  }
+  return (
+    <>
+      {segments.map((seg, i) => {
+        if (seg.kind === 'text') {
+          // Skip empty / whitespace-only text segments (common when a
+          // marker is the entire message body).
+          if (!seg.value.trim()) return null
+          return <MarkdownRenderer key={i} content={seg.value} showToolCalls={showToolCalls} />
+        }
+        // Backend route validates the path is under ~/.claude/image-cache/
+        // and serves the bytes. Encode the absolute path as a query
+        // param.
+        const url = `/api/cc-image?path=${encodeURIComponent(seg.path)}`
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+            className="my-2 block overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-zinc-800 dark:bg-zinc-800"
+            aria-label={`Open ${seg.path.split('/').pop() || 'image'} at native size in new tab`}
+            data-cc-image-marker
+            data-cc-image-path={seg.path}
+          >
+            <img
+              src={url}
+              alt={seg.path.split('/').pop() || 'Image'}
+              loading="lazy"
+              decoding="async"
+              draggable={false}
+              className="block max-h-96 max-w-full object-contain"
+            />
+          </button>
+        )
+      })}
+    </>
+  )
+}
+
 function ContentBlockRenderer({ block, showToolCalls, expandAll }: ContentBlockRendererProps) {
   switch (block.type) {
     case 'text':
-      return <MarkdownRenderer content={block.text || ''} showToolCalls={showToolCalls} />
+      return <CcImageMarkerText content={block.text || ''} showToolCalls={showToolCalls} />
     case 'tool_use':
       return showToolCalls ? (
         <ToolUseBlock name={block.name || ''} input={block.input} forceExpanded={expandAll} />

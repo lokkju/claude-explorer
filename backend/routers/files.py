@@ -132,3 +132,69 @@ def get_thumbnail(org_id: str, file_uuid: str) -> Response:
 @router.get("/{org_id}/files/{file_uuid}/preview", response_class=StreamingResponse)
 def get_preview(org_id: str, file_uuid: str) -> Response:
     return _proxy(org_id, file_uuid, "preview")
+
+
+# ----------------------------------------------------------------------
+# Claude Code image-cache serving
+#
+# Claude Code stores image attachments on disk at
+# ``~/.claude/image-cache/<session-uuid>/<N>.<ext>`` and references them
+# inside the message text as a literal ``[Image: source: <abs-path>]``
+# marker. The frontend strips the marker, encodes the absolute path into
+# a query string, and renders ``<img src="/api/cc-image?path=...">``.
+# This route validates the path is under the user's image-cache dir and
+# serves the bytes — no proxying to claude.ai required, the bytes are
+# already local.
+# ----------------------------------------------------------------------
+
+import mimetypes
+from pathlib import Path
+
+from fastapi import Query
+from fastapi.responses import FileResponse
+
+from ..config import get_settings
+
+
+def _image_cache_root() -> Path:
+    """Where Claude Code stores image-cache files. Honors the same
+    CLAUDE_DIR override the rest of the backend uses."""
+    return get_settings().claude_dir / "image-cache"
+
+
+_ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
+
+@router.get("/cc-image")
+def get_cc_image(path: str = Query(..., description="Absolute path under ~/.claude/image-cache/")) -> FileResponse:
+    """Serve a Claude Code cached image from disk.
+
+    Path must be a *resolved* absolute path inside the configured
+    image-cache root, and must end in a known image extension.
+    """
+    try:
+        candidate = Path(path).expanduser().resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        raise HTTPException(status_code=404, detail=f"image not found: {exc}") from exc
+
+    root = _image_cache_root().resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail=f"refused: path is outside the Claude Code image-cache ({root})",
+        ) from exc
+
+    if candidate.suffix.lower() not in _ALLOWED_IMAGE_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"refused: extension {candidate.suffix!r} is not an allowed image type",
+        )
+
+    media_type = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+    return FileResponse(
+        candidate,
+        media_type=media_type,
+        headers={"cache-control": "public, max-age=86400, stale-while-revalidate=604800"},
+    )

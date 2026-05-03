@@ -258,6 +258,96 @@ test.describe('Image attachments — broken image fallback (Phase 2)', () => {
   })
 })
 
+test.describe('Claude Code [Image: source: <path>] text markers (Pattern B)', () => {
+  // Manual finding 2026-05-03: this is the OTHER CC shape — the
+  // message text contains a literal "[Image: source: <abs-path>]"
+  // marker pointing at ~/.claude/image-cache/<session-uuid>/<N>.png.
+  // No inline base64; the bytes live on disk. The previous fixes
+  // (Desktop Message.files[] proxy + inline base64 image content
+  // blocks) don't help here — these markers render as plain text.
+  //
+  // This test asserts the desired behavior: the marker is replaced
+  // with an <img> in the bubble. Failing == we still need to ship
+  // the fix (preprocessor + image-cache proxy).
+  test('text marker [Image: source: <path>] renders as an <img>, not literal text', async ({ page, mockBackend }) => {
+    const summary = makeSummary({
+      uuid: C,
+      source: 'CLAUDE_CODE',
+      message_count: 1,
+      project_path: '/fixture/project',
+      project_name: 'project',
+    })
+    const m = makeMessage({
+      uuid: 'cc-marker',
+      sender: 'human',
+      // The exact shape from a real CC JSONL: a single `text` content
+      // block whose body is the marker. NO inline base64. The bytes
+      // live on disk at the absolute path in the marker.
+      text: '[Image: source: /fixture/cc-image-cache/test-session/1.png]',
+      content: [
+        {
+          type: 'text',
+          text: '[Image: source: /fixture/cc-image-cache/test-session/1.png]',
+        },
+      ],
+    } as Partial<Message> & { uuid: string })
+    const detail = makeDetail(summary, [m])
+    await mockBackend({ conversations: [summary], details: { [C]: detail } })
+
+    await page.goto(`/conversations/${C}`)
+    const bubble = page.locator('[data-message-uuid="cc-marker"]')
+    await expect(bubble).toBeVisible()
+
+    // The literal "[Image: source: ..." text MUST NOT be visible in
+    // the rendered bubble — that's the bug we're fixing. The marker
+    // should be replaced with an <img>.
+    await expect(bubble).not.toContainText('[Image: source:')
+
+    // An <img> tag must be rendered for the cached file. Either as a
+    // backend proxy URL, OR a content-block image (the preprocessor's
+    // choice — assert the structural outcome, not the implementation).
+    const img = bubble.locator('img').first()
+    await expect(img).toBeVisible()
+    const src = await img.getAttribute('src')
+    expect(src).toBeTruthy()
+    // The src should point at SOMETHING that proxies the cached path
+    // — an /api/... URL, a data: URI, or similar — but NOT the raw
+    // file:// path which the browser can't fetch.
+    expect(src).not.toMatch(/^\/Users\//)
+    expect(src).not.toMatch(/^file:/)
+  })
+
+  test('multiple [Image: source:] markers in one message render multiple <img>s', async ({ page, mockBackend }) => {
+    const summary = makeSummary({ uuid: C, source: 'CLAUDE_CODE', message_count: 1 })
+    const m = makeMessage({
+      uuid: 'cc-multi-marker',
+      sender: 'human',
+      text:
+        'Two pics: [Image: source: /fixture/cc-image-cache/test-session/1.png] and [Image: source: /fixture/cc-image-cache/test-session/2.png] there.',
+      content: [
+        {
+          type: 'text',
+          text:
+            'Two pics: [Image: source: /fixture/cc-image-cache/test-session/1.png] and [Image: source: /fixture/cc-image-cache/test-session/2.png] there.',
+        },
+      ],
+    } as Partial<Message> & { uuid: string })
+    const detail = makeDetail(summary, [m])
+    await mockBackend({ conversations: [summary], details: { [C]: detail } })
+
+    await page.goto(`/conversations/${C}`)
+    const bubble = page.locator('[data-message-uuid="cc-multi-marker"]')
+    await expect(bubble).toBeVisible()
+    // Both markers replaced.
+    await expect(bubble).not.toContainText('[Image: source:')
+    // Two <img> elements present.
+    await expect(bubble.locator('img')).toHaveCount(2)
+    // Surrounding text preserved.
+    await expect(bubble).toContainText('Two pics:')
+    await expect(bubble).toContainText('there.')
+  })
+})
+
 test.describe('Inline image content blocks (Claude Code shape)', () => {
   test('image content block renders as inline <img> with the data URI', async ({ page, mockBackend }) => {
     // Manual finding 2026-05-03: Claude Code embeds images as

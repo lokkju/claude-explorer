@@ -122,3 +122,74 @@ def test_proxy_preview_endpoint(fresh_creds: Path) -> None:
     assert resp.status_code == 200
     args, _ = mock_get.call_args
     assert args[0].endswith("/files/f/preview")
+
+
+# ----------------------------------------------------------------------
+# Claude Code image-cache route tests
+# ----------------------------------------------------------------------
+
+def test_cc_image_serves_file_under_image_cache(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    cache_root = tmp_path / "image-cache" / "test-session"
+    cache_root.mkdir(parents=True)
+    img_path = cache_root / "1.png"
+    img_path.write_bytes(
+        b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+        b'\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xfc\xff'
+        b'\xff?\x03\x00\x05\xfe\x02\xfe\xa6\x14\xa6\x9d\x00\x00\x00\x00IEND\xaeB`\x82'
+    )
+    monkeypatch.setenv("CLAUDE_DIR", str(tmp_path))
+    from backend import config
+    config.get_settings.cache_clear()
+    from backend.main import app
+    client = TestClient(app)
+    resp = client.get("/api/cc-image", params={"path": str(img_path)})
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("image/png")
+    assert resp.content.startswith(b"\x89PNG")
+
+
+def test_cc_image_refuses_path_outside_image_cache(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    (tmp_path / "image-cache").mkdir()
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(b"\x89PNG-secret-bytes")
+    monkeypatch.setenv("CLAUDE_DIR", str(tmp_path))
+    from backend import config
+    config.get_settings.cache_clear()
+    from backend.main import app
+    client = TestClient(app)
+    resp = client.get("/api/cc-image", params={"path": str(secret)})
+    assert resp.status_code == 403
+    assert "outside" in resp.json()["detail"].lower()
+
+
+def test_cc_image_refuses_non_image_extension(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    cache = tmp_path / "image-cache" / "session"
+    cache.mkdir(parents=True)
+    txt = cache / "leaked.txt"
+    txt.write_bytes(b"sensitive text content")
+    monkeypatch.setenv("CLAUDE_DIR", str(tmp_path))
+    from backend import config
+    config.get_settings.cache_clear()
+    from backend.main import app
+    client = TestClient(app)
+    resp = client.get("/api/cc-image", params={"path": str(txt)})
+    assert resp.status_code == 400
+    assert "extension" in resp.json()["detail"].lower()
+
+
+def test_cc_image_404_for_missing_path(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    (tmp_path / "image-cache" / "session").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_DIR", str(tmp_path))
+    from backend import config
+    config.get_settings.cache_clear()
+    from backend.main import app
+    client = TestClient(app)
+    resp = client.get(
+        "/api/cc-image",
+        params={"path": str(tmp_path / "image-cache" / "session" / "nope.png")},
+    )
+    assert resp.status_code == 404
