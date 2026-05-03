@@ -1,0 +1,134 @@
+"""Image-attachment proxy.
+
+Claude Desktop conversations carry image attachments as `Message.files[]`
+entries with claude.ai-relative URLs like
+``/api/<org_uuid>/files/<file_uuid>/{thumbnail,preview}``. The browser
+can't reach those directly — they require the captured ``sessionKey``
+cookie that lives in ``~/.claude-exporter/credentials.json``.
+
+This router proxies those URLs back through claude.ai using the same
+``curl_cffi`` + cookie pattern as ``fetcher/bulk_fetch.py``. The local
+backend acts as a same-origin shim so:
+
+  - ``MessageAttachments`` <img> tags ``src="/api/<org>/files/<file>/thumbnail"``
+    work without CORS gymnastics.
+  - The Markdown export's image refs render in any Markdown viewer that
+    can reach localhost:8000.
+  - The PDF export's WeasyPrint pass can fetch the bytes through the
+    same URL.
+
+The proxy is a no-op when credentials are missing — returns 503 with a
+hint to run ``claude-explorer capture`` rather than failing silently.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import StreamingResponse
+
+from fetcher.credentials import (
+    DEFAULT_CREDENTIALS_PATH,
+    CredentialsCorruptError,
+    load_credentials,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+# Lazy imports inside handlers so the backend still boots when curl_cffi
+# isn't installed (e.g. fixture-mode CI on a backend-only build).
+
+
+def _build_upstream_url(org_id: str, file_uuid: str, variant: str) -> str:
+    return f"https://claude.ai/api/{org_id}/files/{file_uuid}/{variant}"
+
+
+def _load_session_cookies() -> dict[str, str]:
+    """Load sessionKey + Cloudflare cookies from disk, raise 503 on miss."""
+    try:
+        creds = load_credentials(DEFAULT_CREDENTIALS_PATH)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Image proxy unavailable: no Claude Desktop credentials on disk. "
+                "Run `claude-explorer capture` (or click Refresh in the sidebar) "
+                "to log in."
+            ),
+        ) from exc
+    except CredentialsCorruptError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Image proxy unavailable: credentials file is corrupt ({exc}).",
+        ) from exc
+
+    cookies: dict[str, str] = {"sessionKey": creds["session_key"]}
+    cf_bm = creds.get("cf_bm")
+    if cf_bm:
+        cookies["__cf_bm"] = cf_bm
+    cf_clearance = creds.get("cf_clearance")
+    if cf_clearance:
+        cookies["cf_clearance"] = cf_clearance
+    return cookies
+
+
+def _proxy(org_id: str, file_uuid: str, variant: str) -> Response:
+    """Fetch the image bytes from claude.ai and stream them back."""
+    try:
+        from curl_cffi import requests as curl_requests  # type: ignore
+    except ImportError as exc:  # pragma: no cover — curl_cffi is a hard dep in production
+        raise HTTPException(
+            status_code=500,
+            detail="curl_cffi is required for image proxying but isn't installed.",
+        ) from exc
+
+    cookies = _load_session_cookies()
+    url = _build_upstream_url(org_id, file_uuid, variant)
+
+    try:
+        upstream = curl_requests.get(url, cookies=cookies, impersonate="chrome", timeout=15)
+    except Exception as exc:
+        logger.warning("image proxy upstream fetch failed for %s: %s", url, exc)
+        raise HTTPException(status_code=502, detail=f"upstream fetch failed: {exc}") from exc
+
+    if upstream.status_code == 404:
+        raise HTTPException(status_code=404, detail="image not found upstream")
+    if upstream.status_code in (401, 403):
+        raise HTTPException(
+            status_code=upstream.status_code,
+            detail=(
+                "Claude Desktop session expired. Re-run `claude-explorer capture` "
+                "(or click Refresh in the sidebar) to refresh credentials."
+            ),
+        )
+    if upstream.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"upstream returned HTTP {upstream.status_code}",
+        )
+
+    content_type = upstream.headers.get("content-type", "application/octet-stream")
+    # Cache aggressively in the browser — these assets are immutable
+    # (file_uuid is content-addressed). Stale-while-revalidate gives us a
+    # quick recovery if the upstream URL ever changes.
+    headers = {
+        "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+    }
+    return Response(content=upstream.content, media_type=content_type, headers=headers)
+
+
+# Register both legacy ``files`` and (any future) ``files_v2`` paths in
+# case the upstream URL shape evolves; for now both variants are
+# rendered in the UI as the same path shape.
+@router.get("/{org_id}/files/{file_uuid}/thumbnail", response_class=StreamingResponse)
+def get_thumbnail(org_id: str, file_uuid: str) -> Response:
+    return _proxy(org_id, file_uuid, "thumbnail")
+
+
+@router.get("/{org_id}/files/{file_uuid}/preview", response_class=StreamingResponse)
+def get_preview(org_id: str, file_uuid: str) -> Response:
+    return _proxy(org_id, file_uuid, "preview")
