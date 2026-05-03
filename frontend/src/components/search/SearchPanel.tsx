@@ -45,6 +45,7 @@ export function SearchPanel() {
     setSortField,
     setSortOrder,
     setActiveMatchIndex,
+    focusRequestSeq,
   } = useSearchPanel()
 
   const navigateToMatch = useNavigateToMatch()
@@ -54,17 +55,19 @@ export function SearchPanel() {
   const listRef = useRef<HTMLDivElement>(null)
   const activeCardRef = useRef<HTMLButtonElement | null>(null)
 
-  // Auto-focus the input when the panel opens
+  // Auto-focus the input whenever the panel opens, AND whenever a Cmd+F
+  // focus-request comes in (focusRequestSeq bumped). The latter handles
+  // the case where the panel is already open but the user pressed Cmd+F
+  // from elsewhere on the page expecting "find" muscle memory to put
+  // them in the search box.
   useEffect(() => {
-    if (isOpen) {
-      // Small delay so the focus happens after the slide-in transition settles
-      const id = window.setTimeout(() => {
-        inputRef.current?.focus()
-        inputRef.current?.select()
-      }, 0)
-      return () => window.clearTimeout(id)
-    }
-  }, [isOpen])
+    if (!isOpen) return
+    const id = window.setTimeout(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }, 0)
+    return () => window.clearTimeout(id)
+  }, [isOpen, focusRequestSeq])
 
   // Scroll the active match card into view whenever activeMatchIndex
   // changes, AND auto-navigate to the active match. Article line 109:

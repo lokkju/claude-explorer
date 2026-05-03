@@ -51,6 +51,14 @@ interface SearchPanelContextType {
   nextMatch: () => void
   prevMatch: () => void
   setActiveMatchIndex: (i: number) => void
+  // Bumped by callers (Cmd+F handler) that want the SearchPanel to
+  // re-focus its input even if the panel is already open. SearchPanel
+  // listens to this counter via a useEffect and refocuses the input
+  // whenever the value changes. Cmd+F is "find" muscle memory; the user
+  // must be able to type the query immediately, regardless of whether
+  // the panel was already open.
+  focusRequestSeq: number
+  requestFocus: () => void
 }
 
 const SearchPanelContext = createContext<SearchPanelContextType | null>(null)
@@ -85,6 +93,9 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   const [sortOrder, setSortOrderState] = useState<SortOrder>(() =>
     getStoredValue<SortOrder>('searchPanel.sortOrder', 'desc')
   )
+  // Cmd+F focus-request counter. Bumping it triggers SearchPanel's
+  // focus-input useEffect even when isOpen hasn't changed.
+  const [focusRequestSeq, setFocusRequestSeq] = useState(0)
 
   // Fetch search results (updated useSearch signature accepts contextSize)
   const { data: rawResults, isLoading } = useSearch(
@@ -276,6 +287,20 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     })
   }, [flatMatches.length])
 
+  const requestFocus = useCallback(() => {
+    // Open the panel if it's closed (so the input is mounted) and bump
+    // the focus-request counter so SearchPanel's effect refocuses the
+    // input even when isOpen was already true.
+    setIsOpen((prev) => {
+      if (!prev) {
+        localStorage.setItem('searchPanel.isOpen', JSON.stringify(true))
+        return true
+      }
+      return prev
+    })
+    setFocusRequestSeq((n) => n + 1)
+  }, [])
+
   return (
     <SearchPanelContext.Provider
       value={{
@@ -298,6 +323,8 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
         nextMatch,
         prevMatch,
         setActiveMatchIndex,
+        focusRequestSeq,
+        requestFocus,
       }}
     >
       {children}

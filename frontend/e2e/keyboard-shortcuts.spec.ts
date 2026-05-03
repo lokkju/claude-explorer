@@ -331,15 +331,56 @@ test.describe('Keyboard — Emacs paging keys (B14, article-corrected)', () => {
     await page.keyboard.press('Alt+p')
     await expect(page).toHaveURL(new RegExp(`/conversations/${C1}`))
 
-    // Cmd+F toggles SearchPanel (overrides forward-char as the article notes).
+    // Cmd+F opens the SearchPanel (overrides forward-char as the article notes).
     // The panel is shown/hidden via a CSS transform on the parent <aside>;
     // assert via the aria-hidden attribute, which flips when the panel
     // toggles, rather than presence of the input element.
     const searchAside = page.locator('aside[aria-label="Search panel"]')
     await page.keyboard.press('Meta+f')
     await expect(searchAside).toHaveAttribute('aria-hidden', 'false')
+
+    // The article promises Cmd+F is "find" muscle memory — the user must
+    // be able to start typing the query immediately after pressing it,
+    // without an extra click.
+    const searchInput = page.locator('input[placeholder="Search messages..."]')
+    await expect(searchInput).toBeFocused()
+  })
+
+  test('Cmd+F focuses the Search messages input even when the panel is already open', async ({
+    page,
+    mockBackend,
+  }) => {
+    // Regression test for the manual finding 2026-05-03: opening the
+    // panel and then pressing Cmd+F again from elsewhere on the page
+    // must FOCUS the search input (so the user can type immediately),
+    // not close the panel.
+    await mockBackend({
+      conversations: [c1Summary],
+      details: { [C1]: c1Detail },
+    })
+    await page.goto(`/conversations/${C1}`)
+    await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
+
+    const searchAside = page.locator('aside[aria-label="Search panel"]')
+    const searchInput = page.locator('input[placeholder="Search messages..."]')
+
+    // Open the panel.
+    await page.keyboard.press('Meta+k')
+    await expect(searchAside).toHaveAttribute('aria-hidden', 'false')
+    await expect(searchInput).toBeFocused()
+
+    // Move focus away (click a message in the detail pane).
+    await page.locator('[data-message-uuid="c1-m1"]').click()
+    await expect(searchInput).not.toBeFocused()
+
+    // Cmd+F from elsewhere — panel stays open AND search input regains focus.
     await page.keyboard.press('Meta+f')
-    await expect(searchAside).toHaveAttribute('aria-hidden', 'true')
+    await expect(searchAside).toHaveAttribute('aria-hidden', 'false')
+    await expect(searchInput).toBeFocused()
+
+    // Typing now goes into the search input.
+    await page.keyboard.type('handshake')
+    await expect(searchInput).toHaveValue('handshake')
   })
 })
 

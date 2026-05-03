@@ -126,10 +126,20 @@ export function useKeyboardShortcuts() {
       // the SearchPanel itself is open (or when the focused input opts in via
       // data-allow-shortcuts).
 
-      // Cmd+K or Cmd+F: toggle the SearchPanel
-      if (cmdOrCtrl && (e.key === 'k' || e.key === 'f') && !e.altKey && !e.shiftKey) {
+      // Cmd+K toggles the SearchPanel (open ↔ closed).
+      if (cmdOrCtrl && e.key === 'k' && !e.altKey && !e.shiftKey) {
         e.preventDefault()
         searchPanel.toggle()
+        return
+      }
+
+      // Cmd+F is "find" muscle memory: always open the panel (if closed)
+      // AND focus the search input, even when the panel was already
+      // open. Pressing Cmd+F must NEVER close the panel — that's what
+      // Cmd+K and Esc are for. (Manual finding 2026-05-03.)
+      if (cmdOrCtrl && e.key === 'f' && !e.altKey && !e.shiftKey) {
+        e.preventDefault()
+        searchPanel.requestFocus()
         return
       }
 
