@@ -1,13 +1,14 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MessageAttachments } from './MessageAttachments'
+import { ImageLightbox } from './ImageLightbox'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { dedupeImageFiles } from '@/lib/imageFiles'
-import type { Message, ContentBlock } from '@/lib/types'
+import type { Message, ContentBlock, ImageFile } from '@/lib/types'
 
 interface MessageBubbleProps {
   message: Message
@@ -46,6 +47,19 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
   const hasImages = imageFiles.length > 0
   const hasToolBlocks = message.content.some((b) => b.type === 'tool_use' || b.type === 'tool_result')
   const [bubbleToolsCollapsed, setBubbleToolsCollapsed] = useState(false)
+
+  // Issue #1 — Claude Code images (inline base64 content blocks AND
+  // `[Image: source: <abs-path>]` text markers) used to open in a new
+  // browser tab via window.open(). The spec was that they should pop
+  // the same shadcn Dialog lightbox the Desktop image grid uses, so
+  // the user gets keyboard nav + download + open-original without
+  // losing scroll position.
+  //
+  // Collect a per-bubble list of CC images in document order so the
+  // InlineImageBlock / CcImageMarkerText renderers can all hand the
+  // same flat index into a single ImageLightbox instance.
+  const ccImageEntries = useMemo(() => collectCcImages(message), [message])
+  const [ccLightboxIndex, setCcLightboxIndex] = useState<number | null>(null)
 
   // Don't render empty bubbles — but a message with image attachments is
   // never empty even if there's no text content.
@@ -146,14 +160,13 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
         {/* Message content */}
         <div className="text-sm text-zinc-900 dark:text-zinc-100">
           {message.content && message.content.length > 0 ? (
-            message.content.map((block, index) => (
-              <ContentBlockRenderer
-                key={index}
-                block={block}
-                showToolCalls={showToolCalls && !bubbleToolsCollapsed}
-                expandAll={expandAllTools}
-              />
-            ))
+            <ContentBlockList
+              content={message.content}
+              showToolCalls={showToolCalls && !bubbleToolsCollapsed}
+              expandAll={expandAllTools}
+              ccImageEntries={ccImageEntries}
+              onOpenCcImage={setCcLightboxIndex}
+            />
           ) : (
             <MarkdownRenderer content={message.text} showToolCalls={showToolCalls && !bubbleToolsCollapsed} />
           )}
@@ -161,15 +174,124 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
 
         {/* Image attachments — always rendered (never gated by tool toggle). */}
         {hasImages && <MessageAttachments message={message} bubbleUuid={message.uuid} />}
+
+        {/* Lightbox for CC inline images / image markers. Mounted once
+            per bubble so the keyboard handler is scoped correctly. */}
+        {ccImageEntries.files.length > 0 && (
+          <ImageLightbox
+            files={ccImageEntries.files}
+            index={ccLightboxIndex}
+            onIndexChange={setCcLightboxIndex}
+          />
+        )}
       </div>
     </div>
   )
 }
 
-interface ContentBlockRendererProps {
-  block: ContentBlock
+interface CcImageEntries {
+  files: ImageFile[]
+  /** Map block index → starting CC image index for that block. Each
+   *  block (text or image) contributes 0+ CC images; the renderer
+   *  consumes them sequentially. */
+  blockOffsets: number[]
+}
+
+/**
+ * Walk the content in document order and collect every Claude Code
+ * image (inline base64 OR `[Image: source: <path>]` text marker) into
+ * a flat ImageFile list usable by ImageLightbox. Each entry gets a
+ * synthetic file_uuid/file_name and a preview_asset.url that the
+ * lightbox <img> element can resolve directly.
+ */
+function collectCcImages(message: Message): CcImageEntries {
+  const files: ImageFile[] = []
+  const blockOffsets: number[] = []
+  if (!message.content) return { files, blockOffsets }
+  for (let bi = 0; bi < message.content.length; bi++) {
+    blockOffsets.push(files.length)
+    const block = message.content[bi]
+    if (block.type === 'image' && block.source) {
+      const src = imageSourceUrl(block.source)
+      if (src) {
+        files.push({
+          file_kind: 'image',
+          file_uuid: `${message.uuid}:cc-inline:${bi}`,
+          file_name: `inline-image-${bi + 1}.png`,
+          created_at: message.created_at,
+          preview_asset: { url: src, file_variant: 'preview' },
+        })
+      }
+    } else if (block.type === 'text' && block.text) {
+      const re = /\[Image: source: ([^\]]+)\]/g
+      let m: RegExpExecArray | null
+      while ((m = re.exec(block.text)) !== null) {
+        const path = m[1].trim()
+        const url = `/api/cc-image?path=${encodeURIComponent(path)}`
+        const filename = path.split('/').pop() || `cc-image-${files.length + 1}`
+        files.push({
+          file_kind: 'image',
+          file_uuid: `${message.uuid}:cc-marker:${bi}:${m.index}`,
+          file_name: filename,
+          created_at: message.created_at,
+          preview_asset: { url, file_variant: 'preview' },
+        })
+      }
+    }
+  }
+  return { files, blockOffsets }
+}
+
+function imageSourceUrl(source: NonNullable<ContentBlock['source']>): string | null {
+  if (source.type === 'base64' && source.data) {
+    const mt = source.media_type || 'image/png'
+    return `data:${mt};base64,${source.data}`
+  }
+  if (source.type === 'url' && source.url) {
+    return source.url
+  }
+  return null
+}
+
+interface ContentBlockListProps {
+  content: ContentBlock[]
   showToolCalls: boolean
   expandAll?: boolean
+  ccImageEntries: CcImageEntries
+  onOpenCcImage: (index: number) => void
+}
+
+function ContentBlockList({
+  content,
+  showToolCalls,
+  expandAll,
+  ccImageEntries,
+  onOpenCcImage,
+}: ContentBlockListProps) {
+  return (
+    <>
+      {content.map((block, index) => (
+        <ContentBlockRenderer
+          key={index}
+          block={block}
+          blockIndex={index}
+          showToolCalls={showToolCalls}
+          expandAll={expandAll}
+          ccImageEntries={ccImageEntries}
+          onOpenCcImage={onOpenCcImage}
+        />
+      ))}
+    </>
+  )
+}
+
+interface ContentBlockRendererProps {
+  block: ContentBlock
+  blockIndex: number
+  showToolCalls: boolean
+  expandAll?: boolean
+  ccImageEntries: CcImageEntries
+  onOpenCcImage: (index: number) => void
 }
 
 // Pattern B: Claude Code sometimes inlines image references as
@@ -179,7 +301,17 @@ interface ContentBlockRendererProps {
 // those markers so we render text + <img> + text + <img> ... in order.
 const CC_IMAGE_MARKER_RE = /\[Image: source: ([^\]]+)\]/g
 
-function CcImageMarkerText({ content, showToolCalls }: { content: string; showToolCalls: boolean }) {
+interface CcImageMarkerTextProps {
+  content: string
+  showToolCalls: boolean
+  /** Index in the bubble's ccImageEntries.files of the FIRST marker in
+   *  this text block. Subsequent markers within the same text block
+   *  get sequential indices. */
+  startCcIndex: number
+  onOpenCcImage: (index: number) => void
+}
+
+function CcImageMarkerText({ content, showToolCalls, startCcIndex, onOpenCcImage }: CcImageMarkerTextProps) {
   CC_IMAGE_MARKER_RE.lastIndex = 0
   const segments: Array<{ kind: 'text'; value: string } | { kind: 'image'; path: string }> = []
   let lastIndex = 0
@@ -198,6 +330,7 @@ function CcImageMarkerText({ content, showToolCalls }: { content: string; showTo
     // Fast path: no markers, fall through to standard markdown rendering.
     return <MarkdownRenderer content={content} showToolCalls={showToolCalls} />
   }
+  let imageOrdinal = 0
   return (
     <>
       {segments.map((seg, i) => {
@@ -211,13 +344,15 @@ function CcImageMarkerText({ content, showToolCalls }: { content: string; showTo
         // and serves the bytes. Encode the absolute path as a query
         // param.
         const url = `/api/cc-image?path=${encodeURIComponent(seg.path)}`
+        const ccIndex = startCcIndex + imageOrdinal
+        imageOrdinal += 1
         return (
           <button
             key={i}
             type="button"
-            onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+            onClick={() => onOpenCcImage(ccIndex)}
             className="my-2 block overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-zinc-800 dark:bg-zinc-800"
-            aria-label={`Open ${seg.path.split('/').pop() || 'image'} at native size in new tab`}
+            aria-label={`Open ${seg.path.split('/').pop() || 'image'} in lightbox`}
             data-cc-image-marker
             data-cc-image-path={seg.path}
           >
@@ -236,10 +371,24 @@ function CcImageMarkerText({ content, showToolCalls }: { content: string; showTo
   )
 }
 
-function ContentBlockRenderer({ block, showToolCalls, expandAll }: ContentBlockRendererProps) {
+function ContentBlockRenderer({
+  block,
+  blockIndex,
+  showToolCalls,
+  expandAll,
+  ccImageEntries,
+  onOpenCcImage,
+}: ContentBlockRendererProps) {
   switch (block.type) {
     case 'text':
-      return <CcImageMarkerText content={block.text || ''} showToolCalls={showToolCalls} />
+      return (
+        <CcImageMarkerText
+          content={block.text || ''}
+          showToolCalls={showToolCalls}
+          startCcIndex={ccImageEntries.blockOffsets[blockIndex] ?? 0}
+          onOpenCcImage={onOpenCcImage}
+        />
+      )
     case 'tool_use':
       return showToolCalls ? (
         <ToolUseBlock name={block.name || ''} input={block.input} forceExpanded={expandAll} />
@@ -248,34 +397,40 @@ function ContentBlockRenderer({ block, showToolCalls, expandAll }: ContentBlockR
       return showToolCalls ? (
         <ToolResultBlock content={block.content || []} forceExpanded={expandAll} />
       ) : null
-    case 'image':
+    case 'image': {
       // Claude Code embeds images as inline content blocks of shape
       // { type: 'image', source: { type: 'base64', media_type: '...', data: '...' } }
       // alongside a sibling text block carrying the "[Image #N]"
-      // marker. Render the bytes inline; click to open at native size in
-      // a new tab (the data URI gets the browser's native image viewer).
-      return <InlineImageBlock source={block.source} />
+      // marker. Click opens the in-page lightbox (Issue #1).
+      const ccIndex = ccImageEntries.blockOffsets[blockIndex] ?? 0
+      return (
+        <InlineImageBlock
+          source={block.source}
+          onOpen={() => onOpenCcImage(ccIndex)}
+        />
+      )
+    }
     default:
       return null
   }
 }
 
-function InlineImageBlock({ source }: { source: ContentBlock['source'] }) {
+function InlineImageBlock({
+  source,
+  onOpen,
+}: {
+  source: ContentBlock['source']
+  onOpen: () => void
+}) {
   if (!source) return null
-  let src: string | null = null
-  if (source.type === 'base64' && source.data) {
-    const mt = source.media_type || 'image/png'
-    src = `data:${mt};base64,${source.data}`
-  } else if (source.type === 'url' && source.url) {
-    src = source.url
-  }
+  const src = imageSourceUrl(source)
   if (!src) return null
   return (
     <button
       type="button"
-      onClick={() => window.open(src, '_blank', 'noopener,noreferrer')}
+      onClick={onOpen}
       className="my-2 block overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-zinc-800 dark:bg-zinc-800"
-      aria-label="Open image at native size in new tab"
+      aria-label="Open inline image in lightbox"
       data-content-image
     >
       <img
