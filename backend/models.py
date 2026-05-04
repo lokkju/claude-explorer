@@ -14,6 +14,10 @@ class ContentBlock(BaseModel):
     name: str | None = None  # for tool_use
     input: dict[str, Any] | None = None  # for tool_use
     content: list["ContentBlock"] | None = None  # for tool_result
+    # for type == "image": Claude Code's inline base64 shape is
+    # {"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}.
+    # claude.ai sometimes uses {"type": "image", "source": {"type": "url", "url": "..."}}.
+    source: dict[str, Any] | None = None
 
 
 class Message(BaseModel):

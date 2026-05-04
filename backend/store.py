@@ -81,6 +81,7 @@ def _parse_content_blocks(content: list[dict[str, Any]]) -> list[ContentBlock]:
             name=block.get("name"),
             input=block.get("input"),
             content=parsed_nested,
+            source=block.get("source"),
         )
         blocks.append(parsed)
     return blocks

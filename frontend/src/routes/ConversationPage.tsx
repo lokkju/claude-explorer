@@ -24,7 +24,16 @@ export function ConversationPage() {
   const highlightMessageId = searchParams.get('highlight') || searchParams.get('m')
   const branchLeaf = searchParams.get('leaf') || undefined
   const { data: conversation, isLoading, error } = useConversation(uuid || '', branchLeaf)
-  const { showToolCalls, setShowToolCalls, expandAllTools, setExpandAllTools, hideCompactMarkers, setHideCompactMarkers } = useSettings()
+  const {
+    showToolCalls,
+    setShowToolCalls,
+    expandAllTools,
+    setExpandAllTools,
+    hideCompactMarkers,
+    setHideCompactMarkers,
+    markdownBundleImages,
+    markdownDialect,
+  } = useSettings()
   const { toggleBookmark } = useBookmarks()
   const queryClient = useQueryClient()
   const [isRefetching, setIsRefetching] = useState(false)
@@ -251,6 +260,20 @@ export function ConversationPage() {
   }
 
   const handleExportMarkdown = async () => {
+    // Issue #4: when Settings → "Bundle images as a zip" is on, hit
+    // the bundle endpoint that ships conversation.md + images/ in a
+    // self-contained zip with relative refs. Otherwise emit the
+    // single-file .md (default behavior).
+    if (markdownBundleImages) {
+      const response = await api.exportMarkdownBundle(
+        conversation.uuid,
+        showToolCalls,
+        markdownDialect,
+      )
+      const blob = await response.blob()
+      downloadBlob(blob, `${sanitizeFilename(conversation.name)}.zip`)
+      return
+    }
     const response = await api.exportMarkdown(conversation.uuid, showToolCalls)
     const blob = await response.blob()
     downloadBlob(blob, `${sanitizeFilename(conversation.name)}.md`)

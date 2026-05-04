@@ -87,6 +87,16 @@ export const api = {
   exportMarkdown: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
     fetch(`${BASE_URL}/conversations/${uuid}/export/markdown?include_tools=${showToolCalls}`),
 
+  // Issue #4 — Markdown bundle (zip with conversation.md + images/).
+  exportMarkdownBundle: (
+    uuid: string,
+    showToolCalls: boolean = true,
+    dialect: 'commonmark' | 'obsidian' = 'commonmark',
+  ): Promise<Response> =>
+    fetch(
+      `${BASE_URL}/conversations/${uuid}/export/markdown-bundle?include_tools=${showToolCalls}&dialect=${dialect}`,
+    ),
+
   exportPdf: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
     fetch(`${BASE_URL}/conversations/${uuid}/export/pdf?include_tools=${showToolCalls}`),
 

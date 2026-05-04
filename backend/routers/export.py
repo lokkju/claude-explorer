@@ -1,12 +1,15 @@
 """Export router."""
 
-from fastapi import APIRouter, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 import io
 
 from ..store import ConversationStore
 from ..export import (
     conversation_to_markdown,
+    create_markdown_bundle,
     create_pdf,
     create_markdown_zip,
     sanitize_filename,
@@ -29,6 +32,46 @@ async def export_markdown(uuid: str, include_tools: bool = True) -> Response:
     return Response(
         content=content.encode("utf-8"),
         media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/conversations/{uuid}/export/markdown-bundle")
+async def export_markdown_bundle(
+    uuid: str,
+    include_tools: bool = True,
+    dialect: Literal["commonmark", "obsidian"] = Query(
+        "commonmark",
+        description="Markdown dialect: 'commonmark' for ![alt](path), 'obsidian' for ![[path]] wikilinks",
+    ),
+) -> Response:
+    """Issue #4 — Bundle a conversation as a self-contained zip
+    (Markdown + ``images/`` directory).
+
+    Replaces the dangling ``/api/...`` image URLs in the plain
+    Markdown export with bundled copies under ``images/<filename>``,
+    so the user can email the zip to a colleague who doesn't have
+    Claude Explorer running.
+
+    Currently bundles Claude Code images (inline base64 + on-disk
+    ``[Image: source: <path>]`` markers). Desktop ``Message.files[]``
+    previews require an authenticated proxy fetch and remain
+    out-of-scope; the bundled .md surfaces them as a footnote.
+    """
+    store = ConversationStore()
+    conversation = store.get_conversation(uuid)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    bundle = create_markdown_bundle(
+        conversation,
+        include_tools=include_tools,
+        dialect=dialect,
+    )
+    filename = f"{sanitize_filename(conversation.name)}.zip"
+    return Response(
+        content=bundle,
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

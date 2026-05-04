@@ -3,6 +3,7 @@ import type { SortField, SortOrder } from '@/lib/types'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type KeyboardMode = 'emacs' | 'vim'
+export type MarkdownDialect = 'commonmark' | 'obsidian'
 
 interface SettingsContextType {
   // Display settings
@@ -31,6 +32,11 @@ interface SettingsContextType {
   // Right-pane tab
   rightPaneTab: 'search' | 'bookmarks'
   setRightPaneTab: (tab: 'search' | 'bookmarks') => void
+  // Markdown export bundle settings (Issue #4)
+  markdownBundleImages: boolean
+  setMarkdownBundleImages: (bundle: boolean) => void
+  markdownDialect: MarkdownDialect
+  setMarkdownDialect: (dialect: MarkdownDialect) => void
 }
 
 const SettingsContext = createContext<SettingsContextType | null>(null)
@@ -71,6 +77,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   )
   const [rightPaneTab, setRightPaneTabState] = useState<'search' | 'bookmarks'>(() =>
     getStoredValue<'search' | 'bookmarks'>('rightPaneTab', 'search')
+  )
+
+  // Issue #4 — Markdown export bundle preferences. Default off so the
+  // existing single-file Markdown export behavior is preserved for
+  // returning users; opt-in via Settings.
+  const [markdownBundleImages, setMarkdownBundleImagesState] = useState<boolean>(() =>
+    getStoredValue<boolean>('markdownBundleImages', false)
+  )
+  const [markdownDialect, setMarkdownDialectState] = useState<MarkdownDialect>(() =>
+    getStoredValue<MarkdownDialect>('markdownDialect', 'commonmark')
   )
 
   // Sort and group settings with localStorage persistence
@@ -153,6 +169,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('rightPaneTab', JSON.stringify(tab))
   }
 
+  const setMarkdownBundleImages = (bundle: boolean) => {
+    setMarkdownBundleImagesState(bundle)
+    localStorage.setItem('markdownBundleImages', JSON.stringify(bundle))
+  }
+
+  const setMarkdownDialect = (dialect: MarkdownDialect) => {
+    setMarkdownDialectState(dialect)
+    localStorage.setItem('markdownDialect', JSON.stringify(dialect))
+  }
+
   return (
     <SettingsContext.Provider value={{
       showToolCalls,
@@ -176,6 +202,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setKeyboardMode,
       rightPaneTab,
       setRightPaneTab,
+      markdownBundleImages,
+      setMarkdownBundleImages,
+      markdownDialect,
+      setMarkdownDialect,
     }}>
       {children}
     </SettingsContext.Provider>
