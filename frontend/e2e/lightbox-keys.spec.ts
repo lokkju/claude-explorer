@@ -74,6 +74,78 @@ async function openLightboxWithDetailFocus(page: Page) {
   await page.locator('[data-content-image]').first().click()
 }
 
+test.describe('Image lightbox cross-message navigation (manual finding 2026-05-04)', () => {
+  test('ArrowRight navigates from message A image to message B image', async ({ page, mockBackend }) => {
+    const summaryX = makeSummary({
+      uuid: '00000000-0000-0000-0000-0000000000c9',
+      source: 'CLAUDE_CODE',
+      message_count: 2,
+      project_path: '/fixture/project',
+      project_name: 'project',
+    })
+    const m1 = makeMessage({
+      uuid: 'msg-A',
+      sender: 'human',
+      text: 'first message',
+      content: [
+        { type: 'text', text: 'first message' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: TINY_PNG_B64 } },
+      ],
+    } as Partial<Message> & { uuid: string })
+    const m2 = makeMessage({
+      uuid: 'msg-B',
+      sender: 'assistant',
+      text: 'second message',
+      content: [
+        { type: 'text', text: 'second message' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: TINY_PNG_B64 } },
+      ],
+      parent_message_uuid: 'msg-A',
+    } as Partial<Message> & { uuid: string })
+    const detailX = makeDetail(summaryX, [m1, m2])
+    await mockBackend({ conversations: [summaryX], details: { [summaryX.uuid]: detailX } })
+
+    await page.goto(`/conversations/${summaryX.uuid}`)
+    // Click into the message pane so focusArea === 'detail' (otherwise
+    // the global keyboard handler's gate doesn't apply and the test
+    // doesn't reproduce the user's path).
+    await page.locator('[data-testid="message-stream"]').click({ position: { x: 5, y: 5 } })
+
+    // Open the lightbox by clicking message A's image tile.
+    const firstTile = page.locator('[data-message-uuid="msg-A"] [data-content-image]').first()
+    await expect(firstTile).toBeVisible({ timeout: 5_000 })
+    await firstTile.click()
+
+    const lightbox = page.getByTestId('image-lightbox')
+    await expect(lightbox).toBeVisible({ timeout: 5_000 })
+
+    // The catalog spans the whole conversation, not just msg-A. So
+    // the counter should read "1 / 2" (this image is #1 of all 2 in
+    // the conversation), and ArrowRight should advance to #2.
+    await expect(lightbox).toContainText('1 / 2')
+
+    await page.keyboard.press('ArrowRight')
+    await expect(lightbox).toContainText('2 / 2')
+
+    // The image now showing is from msg-B — the lightbox header
+    // shows the conversation-level filename ("inline-image-2.png" for
+    // the second image we cataloged). We assert via the counter
+    // change since file_name is implementation-detail.
+
+    // Wraps back to 1 / 2.
+    await page.keyboard.press('ArrowRight')
+    await expect(lightbox).toContainText('1 / 2')
+
+    // Backward.
+    await page.keyboard.press('ArrowLeft')
+    await expect(lightbox).toContainText('2 / 2')
+
+    // Esc still closes.
+    await page.keyboard.press('Escape')
+    await expect(lightbox).not.toBeVisible({ timeout: 3_000 })
+  })
+})
+
 test.describe('Image lightbox keyboard + open-original (manual finding 2026-05-04)', () => {
   test('Esc closes the lightbox', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })

@@ -1,9 +1,9 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MessageAttachments } from './MessageAttachments'
-import { ImageLightbox } from './ImageLightbox'
 import { Button } from '@/components/ui/button'
+import { useConversationLightbox } from '@/contexts/ConversationLightboxContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent } from '@/lib/utils'
@@ -59,7 +59,25 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
   // InlineImageBlock / CcImageMarkerText renderers can all hand the
   // same flat index into a single ImageLightbox instance.
   const ccImageEntries = useMemo(() => collectCcImages(message), [message])
-  const [ccLightboxIndex, setCcLightboxIndex] = useState<number | null>(null)
+  // Manual finding 2026-05-04 follow-up: ←/→ in the lightbox should
+  // walk the entire conversation's images, not just this bubble's.
+  // Translate per-bubble click positions to a global catalog index.
+  const conversationLightbox = useConversationLightbox()
+  const ccImageBaseIndex = useMemo(() => {
+    const offset = conversationLightbox.offsetForMessage(message.uuid)
+    if (offset < 0) return offset
+    // The catalog records Desktop file attachments first (if any),
+    // then CC content-block images. Skip past the Desktop count so
+    // localCcIdx → globalIdx works.
+    return offset + imageFiles.length
+  }, [conversationLightbox, message.uuid, imageFiles.length])
+  const onOpenCcImage = useCallback(
+    (localIdx: number) => {
+      if (ccImageBaseIndex < 0) return
+      conversationLightbox.openAt(ccImageBaseIndex + localIdx)
+    },
+    [ccImageBaseIndex, conversationLightbox],
+  )
 
   // Don't render empty bubbles — but a message with image attachments is
   // never empty even if there's no text content.
@@ -165,7 +183,7 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
               showToolCalls={showToolCalls && !bubbleToolsCollapsed}
               expandAll={expandAllTools}
               ccImageEntries={ccImageEntries}
-              onOpenCcImage={setCcLightboxIndex}
+              onOpenCcImage={onOpenCcImage}
             />
           ) : (
             <MarkdownRenderer content={message.text} showToolCalls={showToolCalls && !bubbleToolsCollapsed} />
@@ -174,16 +192,6 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
 
         {/* Image attachments — always rendered (never gated by tool toggle). */}
         {hasImages && <MessageAttachments message={message} bubbleUuid={message.uuid} />}
-
-        {/* Lightbox for CC inline images / image markers. Mounted once
-            per bubble so the keyboard handler is scoped correctly. */}
-        {ccImageEntries.files.length > 0 && (
-          <ImageLightbox
-            files={ccImageEntries.files}
-            index={ccLightboxIndex}
-            onIndexChange={setCcLightboxIndex}
-          />
-        )}
       </div>
     </div>
   )

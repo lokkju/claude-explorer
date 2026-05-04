@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { dedupeImageFiles, imageAltText, thumbnailSrc } from '@/lib/imageFiles'
+import { useConversationLightbox } from '@/contexts/ConversationLightboxContext'
 import type { ImageFile, Message } from '@/lib/types'
-import { ImageLightbox } from './ImageLightbox'
 
 interface MessageAttachmentsProps {
-  message: Pick<Message, 'files' | 'files_v2'>
+  message: Pick<Message, 'files' | 'files_v2'> & { uuid?: string }
   /** Attached id used by parent (e.g. MessageBubble) so external code
    *  can route 'open first image' actions here. Not required. */
   bubbleUuid?: string
@@ -24,8 +24,18 @@ interface MessageAttachmentsProps {
  * hammering on long conversations with many images.
  */
 export function MessageAttachments({ message, bubbleUuid }: MessageAttachmentsProps) {
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const files = dedupeImageFiles(message)
+  // Manual finding 2026-05-04 follow-up: open the conversation-level
+  // lightbox at the right global index so ←/→ walk all conversation
+  // images, not just this bubble's files.
+  const conversationLightbox = useConversationLightbox()
+  const messageUuid = bubbleUuid ?? message.uuid ?? ''
+  const baseIdx = messageUuid ? conversationLightbox.offsetForMessage(messageUuid) : -1
+  const open = (localIdx: number) => {
+    if (baseIdx < 0) return
+    conversationLightbox.openAt(baseIdx + localIdx)
+  }
+
   if (files.length === 0) return null
 
   const isSingle = files.length === 1
@@ -41,20 +51,20 @@ export function MessageAttachments({ message, bubbleUuid }: MessageAttachmentsPr
       data-bubble-uuid={bubbleUuid}
     >
       {isSingle ? (
-        <ImageTile file={files[0]} onOpen={() => setLightboxIndex(0)} variant="single" />
+        <ImageTile file={files[0]} onOpen={() => open(0)} variant="single" />
       ) : (
         <div className="grid grid-cols-2 gap-2">
           {tilesShown.map((file, i) => (
             <ImageTile
               key={file.file_uuid}
               file={file}
-              onOpen={() => setLightboxIndex(i)}
+              onOpen={() => open(i)}
             />
           ))}
           {overflow && (
             <button
               type="button"
-              onClick={() => setLightboxIndex(4)}
+              onClick={() => open(4)}
               className={cn(
                 'relative flex aspect-square items-center justify-center overflow-hidden rounded-md',
                 'border border-zinc-200 bg-zinc-100 text-sm font-medium text-zinc-700',
@@ -68,7 +78,6 @@ export function MessageAttachments({ message, bubbleUuid }: MessageAttachmentsPr
           )}
         </div>
       )}
-      <ImageLightbox files={files} index={lightboxIndex} onIndexChange={setLightboxIndex} />
     </div>
   )
 }

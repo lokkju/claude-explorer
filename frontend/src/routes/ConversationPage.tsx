@@ -12,6 +12,7 @@ import { useSearchPanel } from '@/contexts/SearchPanelContext'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
+import { ConversationLightboxProvider } from '@/contexts/ConversationLightboxContext'
 import { CompactMarker } from '@/components/conversation/CompactMarker'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
@@ -490,6 +491,7 @@ export function ConversationPage() {
       </header>
 
       {/* Messages */}
+      <ConversationLightboxProvider messages={conversation.messages}>
       <div className="relative flex-1 overflow-hidden">
         <div
           ref={scrollAreaRef}
@@ -580,6 +582,7 @@ export function ConversationPage() {
           )}
         </div>
       </div>
+      </ConversationLightboxProvider>
 
       {/* Tree View Modal */}
       {conversation.has_branches && (
