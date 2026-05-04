@@ -41,6 +41,11 @@ interface SearchPanelContextType {
   flatMatches: SearchMatch[]
   results: SearchResult[] // Raw grouped results (for section headers w/ timestamps)
   isLoading: boolean
+  /** True whenever the search is in flight OR the input is debouncing
+   *  toward a new query. SearchPanel uses this to show "Searching…"
+   *  instead of "No matches" while the user waits for slow responses
+   *  (manual finding 2026-05-03). */
+  isSearching: boolean
   open: () => void
   close: () => void
   toggle: () => void
@@ -98,7 +103,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   const [focusRequestSeq, setFocusRequestSeq] = useState(0)
 
   // Fetch search results (updated useSearch signature accepts contextSize)
-  const { data: rawResults, isLoading } = useSearch(
+  const { data: rawResults, isLoading, isSearching } = useSearch(
     query,
     sourceFilter,
     contextSize,
@@ -313,6 +318,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
         flatMatches,
         results,
         isLoading,
+        isSearching,
         open,
         close,
         toggle,

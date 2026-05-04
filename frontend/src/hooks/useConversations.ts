@@ -62,12 +62,42 @@ export function useSearch(
     return () => clearTimeout(id)
   }, [query])
 
-  return useQuery({
+  const queryResult = useQuery({
     queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder),
     queryFn: () => api.search(debouncedQuery, source, contextSize, sort, sortOrder),
     enabled: debouncedQuery.length >= 2,
     staleTime: 60 * 1000, // 1 minute
     placeholderData: keepPreviousData, // keep last results visible while narrowing query
+  })
+
+  // Bug B (2026-05-03): the SearchPanel needs a unified "is the search
+  // in flight or about to be in flight?" signal so it can show a
+  // loading affordance instead of a misleading "No matches".
+  //
+  //   - isLoading: only true on the *first* fetch for a key (TanStack v5).
+  //     Subsequent fetches with `placeholderData: keepPreviousData`
+  //     leave isLoading=false and surface state via isFetching only.
+  //   - isFetching: true whenever any request is in flight (initial OR
+  //     refetch).
+  //   - The 200ms debounce window is also "search is about to fire"
+  //     time, during which we shouldn't claim "No matches" either.
+  //
+  // We OR all three together into a single flag the consumer can rely
+  // on. (We keep the original isLoading on the result so callers that
+  // care about first-fetch-only can still discriminate.)
+  const debouncing = query.trim() !== debouncedQuery.trim() && query.length >= 2
+  const isSearching = queryResult.isLoading || queryResult.isFetching || debouncing
+
+  return { ...queryResult, isSearching }
+}
+
+export function useConfigStats() {
+  // Slower /config/stats endpoint that populates conversation_count.
+  // Use ONLY where the user is willing to wait (e.g. Settings page).
+  return useQuery({
+    queryKey: ['config-stats'],
+    queryFn: () => api.getConfigStats(),
+    staleTime: Infinity,
   })
 }
 

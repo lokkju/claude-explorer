@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon } from 'lucide-react'
+import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, Loader2 } from 'lucide-react'
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
 import { useNavigateToMatch } from '@/components/search/navigateToMatch'
 import { useSettings } from '@/contexts/SettingsContext'
@@ -39,6 +39,7 @@ export function SearchPanel() {
     activeMatchIndex,
     flatMatches,
     isLoading,
+    isSearching,
     close,
     setQuery,
     setContextSize,
@@ -116,12 +117,16 @@ export function SearchPanel() {
     }
   }
 
+  // Bug B (2026-05-03): use the unified `isSearching` flag (covers
+  // first-load + refetch + debounce window) so we never show "No
+  // matches" while a request is actually in flight or about to fire.
   const showEmptyTooShort = query.length < 2
   const showEmptyNoResults =
-    query.length >= 2 && !isLoading && flatMatches.length === 0
-  const showSkeleton = query.length >= 2 && isLoading
-  const showResults =
-    query.length >= 2 && !isLoading && flatMatches.length > 0
+    query.length >= 2 && !isSearching && flatMatches.length === 0
+  const showSkeleton = query.length >= 2 && isSearching && flatMatches.length === 0
+  const showResults = query.length >= 2 && flatMatches.length > 0
+  // Silence unused-var when isLoading falls out of any branch above.
+  void isLoading
 
   return (
     <aside
@@ -311,7 +316,15 @@ export function SearchPanel() {
         )}
 
         {showSkeleton && (
-          <div className="space-y-3">
+          <div data-search-loading className="space-y-3">
+            {/* Explicit "Searching…" copy + spinner so the user knows
+                the request is in flight, not that there are zero
+                results. (Bug B 2026-05-03 — was only skeletons before;
+                e2e relied on visible text.) */}
+            <div className="flex items-center justify-center gap-2 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Searching…</span>
+            </div>
             {[0, 1, 2, 3].map((i) => (
               <div
                 key={i}

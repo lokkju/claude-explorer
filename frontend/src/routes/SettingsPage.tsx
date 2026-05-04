@@ -24,6 +24,14 @@ export function SettingsPage() {
     queryKey: ['config'],
     queryFn: () => api.getConfig(),
   })
+  // /config is fast (no directory walk) and used everywhere; the slow
+  // /config/stats variant populates conversation_count and is fetched
+  // only here on the Settings page where the user is willing to wait.
+  const { data: stats } = useQuery({
+    queryKey: ['config-stats'],
+    queryFn: () => api.getConfigStats(),
+    staleTime: Infinity,
+  })
 
   return (
     <div className="h-full overflow-y-auto">
@@ -163,7 +171,7 @@ export function SettingsPage() {
                   Total Conversations
                 </label>
                 <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                  {config?.conversation_count !== undefined ? config.conversation_count.toLocaleString() : 'Loading...'}
+                  {stats?.conversation_count !== undefined ? stats.conversation_count.toLocaleString() : 'Loading...'}
                 </p>
               </div>
             </div>

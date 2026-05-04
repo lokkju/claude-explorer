@@ -82,6 +82,8 @@ export const api = {
 
   getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),
 
+  getConfigStats: (): Promise<AppConfig> => fetchJson<AppConfig>('/config/stats'),
+
   exportMarkdown: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
     fetch(`${BASE_URL}/conversations/${uuid}/export/markdown?include_tools=${showToolCalls}`),
 
