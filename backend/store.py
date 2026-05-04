@@ -262,7 +262,26 @@ class ConversationStore:
         return by_org + legacy_dedup
 
     def _load_conversation(self, path: Path) -> dict[str, Any] | None:
-        """Load a conversation from a JSON file."""
+        """Load a conversation from a JSON file (with mtime-based cache).
+
+        Issue #0 — full-text search latency.
+        ConversationStore.search() calls get_all_conversations_raw() which
+        re-reads + re-parses every Desktop JSON file on every request. With
+        ~100+ conversations in ~/.claude-exporter/conversations, that adds
+        up to noticeable latency per keystroke. The Claude Code path
+        already used backend.cache.FileCache; reusing the same cache here
+        gives Desktop the same hot-path speedup. Files are only re-read
+        when their mtime changes (on next fetch), so the cache stays
+        consistent without explicit invalidation.
+        """
+        from .cache import get_conversation_cache
+
+        cache = get_conversation_cache()
+        return cache.get_or_load(path, self._load_conversation_uncached)
+
+    @staticmethod
+    def _load_conversation_uncached(path: Path) -> dict[str, Any] | None:
+        """Plain disk-backed loader, called by FileCache on cache miss."""
         try:
             with open(path) as f:
                 return json.load(f)

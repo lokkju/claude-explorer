@@ -170,7 +170,18 @@ def search_conversations(
 
         # Search in messages
         for msg in conv.get("chat_messages", []):
-            text = _extract_searchable_text(msg)
+            # Issue #0 — cache the searchable-text projection on the
+            # message dict itself. The cached conversation dict is the
+            # same instance on every call (via backend.cache.FileCache),
+            # so this memo survives across search requests until the
+            # source file's mtime changes (which invalidates the cache
+            # entry and rebuilds the dict). Profile showed
+            # _stringify_tool_input -> json.dumps was the dominant warm
+            # cost (~0.3s of the ~0.9s search loop).
+            text = msg.get("__search_text__")
+            if text is None:
+                text = _extract_searchable_text(msg)
+                msg["__search_text__"] = text
 
             if not text:
                 continue
