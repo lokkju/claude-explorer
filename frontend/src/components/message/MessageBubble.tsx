@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MessageAttachments } from './MessageAttachments'
@@ -17,7 +17,7 @@ interface MessageBubbleProps {
   conversationSource?: 'CLAUDE_AI' | 'CLAUDE_CODE'
 }
 
-export function MessageBubble({ message, isKeyboardSelected = false, conversationId, conversationSource }: MessageBubbleProps) {
+function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId, conversationSource }: MessageBubbleProps) {
   const isHuman = message.sender === 'human'
   const { showToolCalls, expandAllTools } = useSettings()
   const { isBookmarked, toggleBookmark } = useBookmarks()
@@ -188,6 +188,24 @@ export function MessageBubble({ message, isKeyboardSelected = false, conversatio
     </div>
   )
 }
+
+// Manual finding 2026-05-04: typing into the SearchPanel input felt
+// laggy (~10s) on a 600-message conversation. Root cause: every
+// keystroke updates `query` in SearchPanelContext, which re-renders
+// every component that reads via useSearchPanel(). ConversationPage
+// is one of them; without memo, that cascades to ALL MessageBubble
+// children. Wrap the export in React.memo so a re-render of
+// ConversationPage doesn't re-render every bubble unless the bubble's
+// own props actually changed (message reference, selection flag,
+// conversation id/source).
+export const MessageBubble = memo(MessageBubbleImpl, (prev, next) => {
+  return (
+    prev.message === next.message &&
+    prev.isKeyboardSelected === next.isKeyboardSelected &&
+    prev.conversationId === next.conversationId &&
+    prev.conversationSource === next.conversationSource
+  )
+})
 
 interface CcImageEntries {
   files: ImageFile[]

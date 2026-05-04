@@ -43,29 +43,41 @@ export function ImageLightbox({ files, index, onIndexChange }: ImageLightboxProp
     onIndexChange((index - 1 + files.length) % files.length)
   }, [files.length, index, onIndexChange])
 
-  // Keyboard handler is local to the lightbox so it never fights the
-  // global Vim/Emacs bindings in useKeyboardShortcuts.ts.
+  // Keyboard handler is local to the lightbox. Uses capture phase +
+  // stopPropagation so the lightbox always wins over the global
+  // Vim/Emacs bindings in useKeyboardShortcuts.ts (which also has a
+  // [role="dialog"] guard, but capture phase is defense in depth so a
+  // future global handler regression doesn't immediately break the
+  // lightbox keys).
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      let handled = false
       if (e.key === 'ArrowRight') {
-        e.preventDefault()
         next()
+        handled = true
       } else if (e.key === 'ArrowLeft') {
-        e.preventDefault()
         prev()
+        handled = true
+      } else if (e.key === 'Escape') {
+        close()
+        handled = true
       } else if (e.key === 'd' && file) {
-        e.preventDefault()
         triggerDownload(url, file.file_name)
+        handled = true
       } else if (e.key === 'o' && url) {
+        openOriginalInNewTab(url, file?.file_name ?? 'image')
+        handled = true
+      }
+      if (handled) {
         e.preventDefault()
-        window.open(url, '_blank', 'noopener,noreferrer')
+        e.stopPropagation()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, next, prev, file, url])
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [open, next, prev, close, file, url])
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close() }}>
@@ -103,7 +115,7 @@ export function ImageLightbox({ files, index, onIndexChange }: ImageLightboxProp
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8 text-zinc-200 hover:bg-zinc-800 hover:text-white"
-                  onClick={() => url && window.open(url, '_blank', 'noopener,noreferrer')}
+                  onClick={() => url && openOriginalInNewTab(url, file.file_name)}
                   title="Open original in new tab (o)"
                   aria-label="Open original in new tab"
                   disabled={!url}
@@ -178,4 +190,37 @@ function triggerDownload(url: string | null, filename: string) {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+}
+
+/**
+ * Manual finding 2026-05-04: clicking "Open original in new tab" for a
+ * Claude Code inline base64 image opened an empty tab. Chrome (and
+ * other major browsers) block top-frame navigation to data: URLs as a
+ * phishing-mitigation since 2017 — `window.open('data:...', '_blank')`
+ * silently produces about:blank.
+ *
+ * Fix: convert any data: URI to a blob: URL before passing to
+ * `window.open()`. Real http(s) and `/api/...` URLs pass through as-is.
+ */
+function openOriginalInNewTab(url: string, filename: string) {
+  let target = url
+  if (url.startsWith('data:')) {
+    try {
+      const [meta, b64] = url.split(',', 2)
+      const mime = meta.replace(/^data:/, '').replace(/;base64$/, '') || 'application/octet-stream'
+      const bytes = atob(b64 || '')
+      const buf = new Uint8Array(bytes.length)
+      for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i)
+      const blob = new Blob([buf], { type: mime })
+      target = URL.createObjectURL(blob)
+      // Revoke after 60s so the tab has time to load + cache; we don't
+      // need long-term retention because this is a one-shot view.
+      setTimeout(() => URL.revokeObjectURL(target), 60_000)
+    } catch {
+      // Fall through to original URL — at worst the tab's still empty,
+      // not a regression.
+    }
+  }
+  void filename
+  window.open(target, '_blank', 'noopener,noreferrer')
 }

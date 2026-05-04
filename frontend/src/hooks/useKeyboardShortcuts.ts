@@ -65,6 +65,22 @@ export function useKeyboardShortcuts() {
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // Lightbox / Radix Dialog wins when open. Without this guard, the
+      // global Esc and ArrowLeft handlers below eat the keys before the
+      // dialog's own listener ever runs (manual finding 2026-05-04 —
+      // user reported Esc didn't close the lightbox and ←→ didn't
+      // navigate between images). Detect via Radix's stable
+      // [data-state="open"][role="dialog"] selector.
+      if (
+        document.querySelector('[role="dialog"][data-state="open"]') &&
+        (e.key === 'Escape' ||
+          e.key === 'ArrowLeft' ||
+          e.key === 'ArrowRight' ||
+          e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown')
+      ) {
+        return
+      }
       const cmdOrCtrl = e.metaKey || e.ctrlKey
 
       // Cmd+R to refresh conversation list (prevent browser refresh)
