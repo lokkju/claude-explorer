@@ -303,9 +303,17 @@ export function ConversationPage() {
         focusArea === 'detail' && 'ring-2 ring-inset ring-blue-500/50'
       )}
     >
-      {/* Header */}
-      <header className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-        <div className="flex-1 min-w-0">
+      {/* Header
+          Layout note: at narrow widths (≤1366px) the right-side action
+          cluster (Tools, Expand, Re-download, Hide compact markers,
+          Copy as Markdown, Markdown, PDF) was tall enough that it
+          collided with the conversation metadata row underneath the
+          title. Stack the rows vertically (`flex-col gap-3`) so the
+          title + metadata block can never share horizontal space with
+          the action buttons; the buttons get their own row that
+          `flex-wrap`s to a second line if it still overflows. */}
+      <header className="flex flex-col gap-3 border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+        <div className="min-w-0">
           <h1 className="truncate text-xl font-semibold text-zinc-900 dark:text-zinc-100">
             {conversation.name || 'Untitled'}
           </h1>
@@ -381,7 +389,7 @@ export function ConversationPage() {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant={showToolCalls ? 'default' : 'outline'}
             size="sm"
