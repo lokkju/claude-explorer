@@ -31,6 +31,7 @@ export function ConversationPage() {
   const { isOpen: isSearchPanelOpen } = useSearchPanel()
   const {
     setMessages,
+    setMessagesAndPinSelection,
     messages,
     selectedMessageIndex,
     setSelectedMessageIndex,
@@ -104,7 +105,12 @@ export function ConversationPage() {
     }
   }, [uuid, setSelectedMessageIndex])
 
-  // Register visible messages with keyboard navigation context
+  // Register visible messages with keyboard navigation context.
+  // Issue #2: when the list size changes (e.g. the user toggled the
+  // Tools button so tool-only messages appear/disappear), we use the
+  // pin-selection variant so the selected message UUID stays the
+  // same across the resize instead of drifting to a different
+  // message at the same numeric index.
   useEffect(() => {
     if (conversation?.messages) {
       const messageInfos: MessageInfo[] = conversation.messages
@@ -113,12 +119,12 @@ export function ConversationPage() {
           uuid: msg.uuid,
           sender: msg.sender,
         }))
-      setMessages(messageInfos)
+      setMessagesAndPinSelection(messageInfos)
     }
     return () => {
       setMessages([])
     }
-  }, [conversation?.messages, showToolCalls, setMessages])
+  }, [conversation?.messages, showToolCalls, setMessages, setMessagesAndPinSelection])
 
   // Auto-scroll to selected message
   useEffect(() => {

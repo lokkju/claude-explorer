@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react'
 
 export type FocusArea = 'list' | 'detail' | 'search' | 'none'
 
@@ -18,6 +18,13 @@ interface KeyboardNavigationContextType {
   // List of conversation UUIDs for navigation
   conversationIds: string[]
   setConversationIds: (ids: string[]) => void
+  // Like setMessages, but also pins the current selection by UUID so
+  // that when the visible-messages list shrinks/grows (e.g. the user
+  // toggles "Show tool calls"), the selected message UUID is preserved
+  // and the index is re-anchored. Issue #2: previously the index was
+  // a flat int into the visible list, so a list-size change drifted
+  // the selection to a different message. (Mar 2026.)
+  setMessagesAndPinSelection: (messages: MessageInfo[]) => void
   // Which area has focus
   focusArea: FocusArea
   setFocusArea: (area: FocusArea) => void
@@ -69,6 +76,48 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
   // Message navigation state
   const [selectedMessageIndex, setSelectedMessageIndex] = useState(0)
   const [messages, setMessages] = useState<MessageInfo[]>([])
+
+  // Issue #2: pin selection by message UUID across list resizes.
+  // The detail page calls setMessagesAndPinSelection on every change
+  // to the visible message set; we look up the previously-selected
+  // UUID in the new list and re-anchor selectedMessageIndex to its
+  // new position. If the previously-selected UUID dropped out of the
+  // visible list (e.g. it was a tool-only message and the user just
+  // hid tools), keep the closest neighbor by clamping the old index.
+  //
+  // Read prev state through refs so the callback identity is stable
+  // (no re-creation on every selectedMessageIndex change), which
+  // prevents the consumer's useEffect from firing extra times.
+  const messagesRef = useRef<MessageInfo[]>([])
+  const selectedMessageIndexRef = useRef(0)
+  messagesRef.current = messages
+  selectedMessageIndexRef.current = selectedMessageIndex
+
+  const setMessagesAndPinSelection = useCallback((next: MessageInfo[]) => {
+    const prev = messagesRef.current
+    const prevIdx = selectedMessageIndexRef.current
+    const prevSelectedUuid =
+      prevIdx >= 0 && prevIdx < prev.length ? prev[prevIdx]?.uuid : null
+
+    setMessages(next)
+
+    if (next.length === 0) {
+      setSelectedMessageIndex(0)
+      return
+    }
+
+    if (prevSelectedUuid) {
+      const newIdx = next.findIndex((m) => m.uuid === prevSelectedUuid)
+      if (newIdx !== -1) {
+        setSelectedMessageIndex(newIdx)
+        return
+      }
+      // Previously-selected UUID dropped out (e.g. it was a tool-only
+      // message and Tools just got hidden). Fall back to the same
+      // numeric position, clamped to the new bounds.
+      setSelectedMessageIndex(Math.min(prevIdx, next.length - 1))
+    }
+  }, [])
 
   // Conversation list navigation
   const selectNext = useCallback(() => {
@@ -189,6 +238,7 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
         setSelectedMessageIndex,
         messages,
         setMessages,
+        setMessagesAndPinSelection,
         selectNextMessage,
         selectPreviousMessage,
         selectFirstMessage,
