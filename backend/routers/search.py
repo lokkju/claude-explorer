@@ -26,9 +26,24 @@ async def search(
     sort_order: Literal["asc", "desc"] = Query(
         "desc", description="Sort order"
     ),
+    conversation_uuid: str | None = Query(
+        None, description="Restrict search to this conversation"
+    ),
+    project_path: str | None = Query(
+        None, description="Restrict to conversations with this project_path"
+    ),
+    bookmarks: str | None = Query(
+        None,
+        description="Comma-separated UUIDs to restrict search to bookmarked conversations",
+    ),
 ) -> list[SearchResult]:
     """Search across all conversations."""
     store = ConversationStore()
+    bookmark_set = (
+        {u.strip() for u in bookmarks.split(",") if u.strip()}
+        if bookmarks
+        else None
+    )
     return search_conversations(
         store,
         q,
@@ -36,4 +51,7 @@ async def search(
         context_size=context_size,
         sort=sort,
         sort_order=sort_order,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmark_set,
     )

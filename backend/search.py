@@ -138,8 +138,27 @@ def search_conversations(
     context_size: Literal["snippet", "full"] = "snippet",
     sort: SortField = "updated_at",
     sort_order: SortOrder = "desc",
+    conversation_uuid: str | None = None,
+    project_path: str | None = None,
+    bookmarks: set[str] | None = None,
 ) -> list[SearchResult]:
-    """Search across all conversations for matching messages."""
+    """Search across all conversations for matching messages.
+
+    Scope filters (manual finding 2026-05-04):
+      - ``conversation_uuid``: restrict to a single conversation. Most
+        specific filter; wins over ``project_path`` / ``bookmarks`` when
+        all three are passed.
+      - ``project_path``: restrict to conversations whose project_path
+        matches exactly (CC sessions grouped by their cwd).
+      - ``bookmarks``: restrict to a set of conversation UUIDs (the
+        client passes the bookmark set when the sidebar's Starred filter
+        is active).
+
+    All three are AND'd with the existing ``source`` filter and with each
+    other (when more than one is set). Backend-side because tool_use /
+    tool_result payloads are large; client-side post-filtering would
+    waste bandwidth and break ranking.
+    """
     if not query or len(query.strip()) < 1:
         return []
 
@@ -148,6 +167,15 @@ def search_conversations(
     results = []
 
     for conv in store.get_all_conversations_raw(source=source):
+        if conversation_uuid:
+            # Most specific filter; wins over project_path / bookmarks.
+            if conv.get("uuid") != conversation_uuid:
+                continue
+        else:
+            if project_path and conv.get("project_path") != project_path:
+                continue
+            if bookmarks is not None and conv.get("uuid") not in bookmarks:
+                continue
         matching_messages: list[MessageSnippet] = []
 
         # Search in conversation name
