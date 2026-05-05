@@ -501,11 +501,9 @@ test.describe('Keyboard — data-allow-shortcuts (B18)', () => {
     await page.keyboard.press('Meta+Shift+g')
     await expect(page.locator('text=/2\\s+of\\s+2\\s+matches/')).toBeVisible()
 
-    // Escape clears the query first (per the implementation).
-    await page.keyboard.press('Escape')
-    await expect(searchInput).toHaveValue('')
-    // Second Escape closes the panel (assert via aria-hidden, since the
-    // panel uses a CSS transform rather than unmounting the DOM).
+    // Manual finding 2026-05-04: Esc closes the panel immediately (the
+    // earlier "clear-then-close" two-step was surprising; the user
+    // explicitly asked Esc to keep current selection and just close).
     const searchAside = page.locator('aside[aria-label="Search panel"]')
     await page.keyboard.press('Escape')
     await expect(searchAside).toHaveAttribute('aria-hidden', 'true')

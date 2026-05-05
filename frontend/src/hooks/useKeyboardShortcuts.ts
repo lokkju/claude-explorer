@@ -183,16 +183,29 @@ export function useKeyboardShortcuts() {
       // focus is either outside an input or inside one that opts in
       // (the SearchPanel's own input). This preserves existing Escape
       // behaviors (detail -> list, modal dismissal) when the panel is closed.
+      //
+      // Manual finding 2026-05-04: Esc should close the panel and put
+      // focus on the message the user landed on (the active match), so
+      // they can immediately scroll/read with j/k around the hit. The
+      // previous "Esc clears query, second Esc closes" two-step was
+      // surprising; the user explicitly said Esc should "keep the
+      // current selection".
       if (
         e.key === 'Escape' &&
         searchPanel.isOpen &&
         (!isInputElement(e.target) || allowsShortcuts(e.target))
       ) {
         e.preventDefault()
-        if (searchPanel.query !== '') {
-          searchPanel.setQuery('')
-        } else {
-          searchPanel.close()
+        searchPanel.close()
+        // Move logical focus to the conversation pane so j/k/u/a etc
+        // act on the message the user just landed on.
+        setFocusArea('detail')
+        // Move DOM focus to the message bubble (best-effort; the bubble
+        // is rendered with tabindex=-1 elsewhere, so .focus() works).
+        const selectedId = getSelectedMessageId()
+        if (selectedId) {
+          const el = document.querySelector(`[data-message-uuid="${selectedId}"]`)
+          if (el instanceof HTMLElement) el.focus()
         }
         return
       }
