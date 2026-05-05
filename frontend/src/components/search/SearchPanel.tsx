@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, Loader2 } from 'lucide-react'
+import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, Loader2, Pin } from 'lucide-react'
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
+import { useSearchPin } from '@/contexts/SearchPinContext'
 import { useNavigateToMatch } from '@/components/search/navigateToMatch'
 import { useSettings } from '@/contexts/SettingsContext'
 import { BookmarksPanel } from '@/components/bookmarks/BookmarksPanel'
@@ -51,6 +52,7 @@ export function SearchPanel() {
 
   const navigateToMatch = useNavigateToMatch()
   const { rightPaneTab, setRightPaneTab } = useSettings()
+  const { scope: pinScope, unpin } = useSearchPin()
 
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -210,6 +212,35 @@ export function SearchPanel() {
           </div>
         </div>
 
+        {/* Scope chip — mirrors the conversation-header pin button. */}
+        {pinScope.kind !== 'none' && (
+          <div
+            className="mt-2 inline-flex max-w-full items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300"
+            data-testid="search-scope-chip"
+            data-scope-kind={pinScope.kind}
+          >
+            <Pin className="h-3 w-3 shrink-0" />
+            <span className="truncate">
+              In:{' '}
+              <span className="font-medium">
+                {pinScope.kind === 'conversation' ? pinScope.name || 'this conversation' : pinScope.name}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                unpin()
+                inputRef.current?.focus()
+              }}
+              aria-label="Clear search pin"
+              className="ml-1 rounded p-0.5 hover:bg-blue-100 dark:hover:bg-blue-900"
+              data-testid="search-scope-chip-clear"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+
         {/* Sort controls — mirror left sidebar; default updated_at + desc. */}
         <div className="mt-3 flex items-center gap-1">
           <Select
@@ -303,6 +334,19 @@ export function SearchPanel() {
         </div>
       )}
 
+      {/* aria-live region: Cmd+G changes the active match without moving
+          DOM focus; SR users would otherwise miss it. */}
+      <div
+        role="status"
+        aria-live="polite"
+        className="sr-only"
+        data-testid="search-match-aria-live"
+      >
+        {activeMatchIndex >= 0 && flatMatches.length > 0
+          ? `Match ${activeMatchIndex + 1} of ${flatMatches.length}`
+          : ''}
+      </div>
+
       {/* Results area */}
       <div
         ref={listRef}
@@ -346,7 +390,28 @@ export function SearchPanel() {
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
                 &ldquo;{query}&rdquo;
               </span>
+              {pinScope.kind !== 'none' && (
+                <>
+                  {' '}in{' '}
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                    {pinScope.name || 'this scope'}
+                  </span>
+                </>
+              )}
             </p>
+            {pinScope.kind !== 'none' && (
+              <button
+                type="button"
+                onClick={() => {
+                  unpin()
+                  inputRef.current?.focus()
+                }}
+                className="mt-2 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                data-testid="search-unpin-and-search-all"
+              >
+                Unpin and search all →
+              </button>
+            )}
           </div>
         )}
 

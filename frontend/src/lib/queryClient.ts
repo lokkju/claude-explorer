@@ -31,7 +31,8 @@ export const queryKeys = {
     source?: string,
     contextSize?: string,
     sort?: string,
-    sortOrder?: string
-  ) => ['search', query, source, contextSize, sort, sortOrder] as const,
+    sortOrder?: string,
+    scope?: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] }
+  ) => ['search', query, source, contextSize, sort, sortOrder, scope] as const,
   config: ['config'] as const,
 }

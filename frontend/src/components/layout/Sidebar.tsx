@@ -21,6 +21,7 @@ import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useOrgs } from '@/hooks/useOrgs'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
+import { useSearchPin } from '@/contexts/SearchPinContext'
 import { cn } from '@/lib/utils'
 import type { SourceFilter, SortField } from '@/lib/types'
 
@@ -39,6 +40,7 @@ export function Sidebar({ className }: SidebarProps) {
   const urlFilters = useUrlFilters()
   const { activeFilters } = useFilters()
   const [searchQuery, setSearchQuery] = useState(urlFilters.q)
+  const { scope: pinScope, unpin: unpinSearch } = useSearchPin()
 
   // Keep the search box synced with the URL so deep-links and back/forward both work.
   useEffect(() => {
@@ -118,8 +120,17 @@ export function Sidebar({ className }: SidebarProps) {
           <Input
             placeholder="Search titles..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value
+              setSearchQuery(next)
+              // Title search is global by construction (titles span all
+              // conversations). The user typing here signals "broaden",
+              // so clear any sticky search-scope pin. (Manual finding
+              // 2026-05-04: title-search-clears-pin.)
+              if (next && pinScope.kind !== 'none') unpinSearch()
+            }}
             className="pl-9"
+            data-testid="sidebar-title-search"
           />
         </div>
         <Select value={sourceFilter} onValueChange={(v: string) => setSourceFilter(v as SourceFilter)}>

@@ -70,13 +70,19 @@ export const api = {
     source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all',
     contextSize: 'snippet' | 'full' = 'snippet',
     sort: SortField = 'updated_at',
-    sortOrder: SortOrder = 'desc'
+    sortOrder: SortOrder = 'desc',
+    scope?: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] }
   ): Promise<SearchResult[]> => {
     const params = new URLSearchParams({ q: query })
     if (source !== 'all') params.set('source', source)
     if (contextSize !== 'snippet') params.set('context_size', contextSize)
     if (sort !== 'updated_at') params.set('sort', sort)
     if (sortOrder !== 'desc') params.set('sort_order', sortOrder)
+    if (scope?.conversationUuid) params.set('conversation_uuid', scope.conversationUuid)
+    if (scope?.projectPath) params.set('project_path', scope.projectPath)
+    if (scope?.bookmarks && scope.bookmarks.length > 0) {
+      params.set('bookmarks', scope.bookmarks.join(','))
+    }
     return fetchJson<SearchResult[]>(`/search?${params.toString()}`)
   },
 

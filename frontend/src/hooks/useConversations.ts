@@ -53,7 +53,8 @@ export function useSearch(
   source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all',
   contextSize: 'snippet' | 'full' = 'snippet',
   sort: SortField = 'updated_at',
-  sortOrder: SortOrder = 'desc'
+  sortOrder: SortOrder = 'desc',
+  scope?: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] }
 ) {
   const [debouncedQuery, setDebouncedQuery] = useState(query)
 
@@ -63,8 +64,8 @@ export function useSearch(
   }, [query])
 
   const queryResult = useQuery({
-    queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder),
-    queryFn: () => api.search(debouncedQuery, source, contextSize, sort, sortOrder),
+    queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder, scope),
+    queryFn: () => api.search(debouncedQuery, source, contextSize, sort, sortOrder, scope),
     enabled: debouncedQuery.length >= 2,
     staleTime: 60 * 1000, // 1 minute
     placeholderData: keepPreviousData, // keep last results visible while narrowing query

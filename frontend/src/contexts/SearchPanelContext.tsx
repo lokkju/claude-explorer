@@ -9,6 +9,8 @@ import {
 } from 'react'
 import { useSearch } from '@/hooks/useConversations'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
+import { useSearchPin } from '@/contexts/SearchPinContext'
+import { useBookmarks } from '@/contexts/BookmarkContext'
 import type { SearchResult, SortField, SortOrder } from '@/lib/types'
 
 export interface SearchMatch {
@@ -83,6 +85,8 @@ function getStoredValue<T>(key: string, fallback: T): T {
 
 export function SearchPanelProvider({ children }: { children: ReactNode }) {
   const { sourceFilter } = useSourceFilter()
+  const { scope: pinScope } = useSearchPin()
+  const { bookmarks } = useBookmarks()
 
   const [isOpen, setIsOpen] = useState<boolean>(() =>
     getStoredValue<boolean>('searchPanel.isOpen', false)
@@ -102,13 +106,25 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // focus-input useEffect even when isOpen hasn't changed.
   const [focusRequestSeq, setFocusRequestSeq] = useState(0)
 
+  // Pin scope passed to useSearch. Pinned conversation/project is the
+  // explicit user signal and always wins over the sidebar Source filter.
+  // Bookmarks-as-scope plumbing exists end-to-end (api.search /
+  // /api/search) for a future Starred sidebar value; not wired here yet.
+  const scope = useMemo(() => {
+    if (pinScope.kind === 'conversation') return { conversationUuid: pinScope.uuid }
+    if (pinScope.kind === 'project') return { projectPath: pinScope.path }
+    return undefined
+  }, [pinScope])
+  void bookmarks
+
   // Fetch search results (updated useSearch signature accepts contextSize)
   const { data: rawResults, isLoading, isSearching } = useSearch(
     query,
     sourceFilter,
     contextSize,
     sortField,
-    sortOrder
+    sortOrder,
+    scope
   )
 
   // Client-side filter: while the user keeps typing (debounced query hasn't

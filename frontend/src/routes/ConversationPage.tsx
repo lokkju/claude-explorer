@@ -16,6 +16,7 @@ import { ConversationLightboxProvider } from '@/contexts/ConversationLightboxCon
 import { CompactMarker } from '@/components/conversation/CompactMarker'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
+import { PinScopeButton } from '@/components/search/PinScopeButton'
 import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
 
@@ -344,9 +345,17 @@ export function ConversationPage() {
           `flex-wrap`s to a second line if it still overflows. */}
       <header className="flex flex-col gap-3 border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
         <div className="min-w-0">
-          <h1 className="truncate text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-            {conversation.name || 'Untitled'}
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+              {conversation.name || 'Untitled'}
+            </h1>
+            <PinScopeButton
+              conversationUuid={conversation.uuid}
+              conversationName={conversation.name || 'Untitled'}
+              projectPath={conversation.project_path}
+              projectName={conversation.project_path?.split('/').filter(Boolean).pop() || null}
+            />
+          </div>
           <div className="mt-1 flex items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
             {conversation.source === 'CLAUDE_CODE' ? (
               <Badge variant="secondary" className="flex items-center gap-1 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">

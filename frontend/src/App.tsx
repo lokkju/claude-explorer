@@ -6,6 +6,7 @@ import { queryClient } from '@/lib/queryClient'
 import { SettingsProvider, useSettings } from '@/contexts/SettingsContext'
 import { SourceFilterProvider } from '@/contexts/SourceFilterContext'
 import { SearchPanelProvider } from '@/contexts/SearchPanelContext'
+import { SearchPinProvider } from '@/contexts/SearchPinContext'
 import { KeyboardNavigationProvider } from '@/contexts/KeyboardNavigationContext'
 import { FilterProvider } from '@/contexts/FilterContext'
 import { BookmarkProvider } from '@/contexts/BookmarkContext'
@@ -45,9 +46,10 @@ function App() {
           <SourceFilterProvider>
             <FilterProvider>
             <BookmarkProvider>
-            <SearchPanelProvider>
             <FetchPipelineProvider>
               <BrowserRouter>
+                <SearchPinProvider>
+                <SearchPanelProvider>
                 <KeyboardNavigationProvider>
                   <KeyboardShortcutHandler />
                   <KeyboardHelpModal />
@@ -61,11 +63,12 @@ function App() {
                   </Route>
                   </Routes>
                 </KeyboardNavigationProvider>
+                </SearchPanelProvider>
+                </SearchPinProvider>
               </BrowserRouter>
               <Toaster position="top-center" richColors closeButton />
               <ConnectionStatus />
             </FetchPipelineProvider>
-            </SearchPanelProvider>
             </BookmarkProvider>
             </FilterProvider>
           </SourceFilterProvider>

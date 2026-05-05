@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn, formatDate } from '@/lib/utils'
 import { applyFilters, patternMatches, type Filter, type FilterMode } from '@/lib/filterEngine'
 import { useFilters } from '@/contexts/FilterContext'
+import { useSearchPin } from '@/contexts/SearchPinContext'
 import type { ConversationSummary, SubagentSummary, SourceFilter, SortField, SortOrder } from '@/lib/types'
 
 interface ConversationListProps {
@@ -42,6 +43,13 @@ export function ConversationList({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const { selectedIndex, setSelectedIndex, setConversationIds, focusArea, setNavSource } = useKeyboardNavigation()
   const { clearAllActive } = useFilters()
+  const { scope: pinScope } = useSearchPin()
+
+  const isInScope = (conv: ConversationSummary): boolean => {
+    if (pinScope.kind === 'none') return true
+    if (pinScope.kind === 'conversation') return conv.uuid === pinScope.uuid
+    return (conv.project_path ?? '') === pinScope.path
+  }
   const filters = {
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
@@ -237,6 +245,7 @@ export function ConversationList({
                       isKeyboardSelected={isKeyboardSelected(conv.uuid)}
                       onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
                       showProject={false}
+                      outOfScope={!isInScope(conv)}
                     />
                   ))}
                   {unstarredInGroup.map((conv) => (
@@ -247,6 +256,7 @@ export function ConversationList({
                       isKeyboardSelected={isKeyboardSelected(conv.uuid)}
                       onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
                       showProject={false}
+                      outOfScope={!isInScope(conv)}
                     />
                   ))}
                 </div>
@@ -273,6 +283,7 @@ export function ConversationList({
               isSelected={conv.uuid === selectedUuid}
               isKeyboardSelected={isKeyboardSelected(conv.uuid)}
               onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
+              outOfScope={!isInScope(conv)}
             />
           ))}
           <div className="mx-4 my-2 border-t border-zinc-200 dark:border-zinc-800" />
@@ -285,6 +296,7 @@ export function ConversationList({
           isSelected={conv.uuid === selectedUuid}
           isKeyboardSelected={isKeyboardSelected(conv.uuid)}
           onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
+          outOfScope={!isInScope(conv)}
         />
       ))}
     </div>
@@ -297,6 +309,7 @@ interface ConversationListItemProps {
   isKeyboardSelected: boolean
   onClick: () => void
   showProject?: boolean
+  outOfScope?: boolean
 }
 
 function ConversationListItem({
@@ -305,6 +318,7 @@ function ConversationListItem({
   isKeyboardSelected,
   onClick,
   showProject = true,
+  outOfScope = false,
 }: ConversationListItemProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const itemRef = useRef<HTMLDivElement>(null)
@@ -339,10 +353,12 @@ function ConversationListItem({
             onClick()
           }
         }}
+        data-out-of-scope={outOfScope ? 'true' : 'false'}
         className={cn(
           'flex w-full cursor-pointer flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800',
           isSelected && 'bg-zinc-100 dark:bg-zinc-800',
-          isKeyboardSelected && 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500'
+          isKeyboardSelected && 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500',
+          outOfScope && 'opacity-60'
         )}
       >
         <div className="flex items-start gap-2">
