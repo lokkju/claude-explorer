@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from 'react'
-import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star } from 'lucide-react'
+import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star, ImageOff } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MessageAttachments } from './MessageAttachments'
 import { Button } from '@/components/ui/button'
@@ -372,28 +372,69 @@ function CcImageMarkerText({ content, showToolCalls, startCcIndex, onOpenCcImage
         const url = `/api/cc-image?path=${encodeURIComponent(seg.path)}`
         const ccIndex = startCcIndex + imageOrdinal
         imageOrdinal += 1
+        const filename = seg.path.split('/').pop() || 'image'
         return (
-          <button
+          <CcImageMarkerTile
             key={i}
-            type="button"
-            onClick={() => onOpenCcImage(ccIndex)}
-            className="my-2 block overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-zinc-800 dark:bg-zinc-800"
-            aria-label={`Open ${seg.path.split('/').pop() || 'image'} in lightbox`}
-            data-cc-image-marker
-            data-cc-image-path={seg.path}
-          >
-            <img
-              src={url}
-              alt={seg.path.split('/').pop() || 'Image'}
-              loading="lazy"
-              decoding="async"
-              draggable={false}
-              className="block max-h-96 max-w-full object-contain"
-            />
-          </button>
+            url={url}
+            filename={filename}
+            path={seg.path}
+            onOpen={() => onOpenCcImage(ccIndex)}
+          />
         )
       })}
     </>
+  )
+}
+
+function CcImageMarkerTile({
+  url,
+  filename,
+  path,
+  onOpen,
+}: {
+  url: string
+  filename: string
+  path: string
+  onOpen: () => void
+}) {
+  const [errored, setErrored] = useState(false)
+  if (errored) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        className="my-2 flex items-center gap-2 rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+        aria-label={`${filename} (unavailable)`}
+        title="Image unavailable"
+        data-cc-image-marker
+        data-cc-image-broken
+        data-cc-image-path={path}
+      >
+        <ImageOff className="h-4 w-4 shrink-0" />
+        <span className="truncate font-mono">{filename}</span>
+      </button>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="my-2 block overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-zinc-800 dark:bg-zinc-800"
+      aria-label={`Open ${filename} in lightbox`}
+      data-cc-image-marker
+      data-cc-image-path={path}
+    >
+      <img
+        src={url}
+        alt={filename}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        onError={() => setErrored(true)}
+        className="block max-h-96 max-w-full object-contain"
+      />
+    </button>
   )
 }
 
@@ -448,9 +489,26 @@ function InlineImageBlock({
   source: ContentBlock['source']
   onOpen: () => void
 }) {
+  const [errored, setErrored] = useState(false)
   if (!source) return null
   const src = imageSourceUrl(source)
   if (!src) return null
+  if (errored) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        className="my-2 flex items-center gap-2 rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+        aria-label="Inline image (unavailable)"
+        title="Image unavailable"
+        data-content-image
+        data-content-image-broken
+      >
+        <ImageOff className="h-4 w-4 shrink-0" />
+        <span className="truncate font-mono">inline image</span>
+      </button>
+    )
+  }
   return (
     <button
       type="button"
@@ -465,6 +523,7 @@ function InlineImageBlock({
         loading="lazy"
         decoding="async"
         draggable={false}
+        onError={() => setErrored(true)}
         className="block max-h-96 max-w-full object-contain"
       />
     </button>

@@ -300,21 +300,26 @@ test.describe('Claude Code [Image: source: <path>] text markers (Pattern B)', ()
 
     // The literal "[Image: source: ..." text MUST NOT be visible in
     // the rendered bubble — that's the bug we're fixing. The marker
-    // should be replaced with an <img>.
+    // should be replaced with an <img> (or a friendly broken-image
+    // fallback when the backend 404s, which is what happens here since
+    // /fixture/cc-image-cache/... is not on disk).
     await expect(bubble).not.toContainText('[Image: source:')
 
-    // An <img> tag must be rendered for the cached file. Either as a
-    // backend proxy URL, OR a content-block image (the preprocessor's
-    // choice — assert the structural outcome, not the implementation).
-    const img = bubble.locator('img').first()
-    await expect(img).toBeVisible()
-    const src = await img.getAttribute('src')
-    expect(src).toBeTruthy()
-    // The src should point at SOMETHING that proxies the cached path
-    // — an /api/... URL, a data: URI, or similar — but NOT the raw
-    // file:// path which the browser can't fetch.
-    expect(src).not.toMatch(/^\/Users\//)
-    expect(src).not.toMatch(/^file:/)
+    // The marker is replaced with an image-rendering tile — either an
+    // actual <img> (success path) OR a fallback button with the
+    // ImageOff glyph (manual finding 2026-05-04 broken-image fallback).
+    const tile = bubble.locator('[data-cc-image-marker]').first()
+    await expect(tile).toBeVisible()
+
+    // If rendered as <img>, the src must NOT be the raw absolute path
+    // that the browser can't fetch.
+    const imgCount = await tile.locator('img').count()
+    if (imgCount > 0) {
+      const src = await tile.locator('img').first().getAttribute('src')
+      expect(src).toBeTruthy()
+      expect(src).not.toMatch(/^\/Users\//)
+      expect(src).not.toMatch(/^file:/)
+    }
   })
 
   test('multiple [Image: source:] markers in one message render multiple <img>s', async ({ page, mockBackend }) => {
