@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import conversations, search, export, config, fetch, bookmarks, orgs, files
+from .routers import conversations, search, export, config, fetch, bookmarks, orgs, files, preferences
 
 
 log = logging.getLogger(__name__)
@@ -190,6 +190,7 @@ app.include_router(export.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
 app.include_router(fetch.router, prefix="/api")
 app.include_router(bookmarks.router, prefix="/api")
+app.include_router(preferences.router, prefix="/api")
 app.include_router(orgs.router, prefix="/api")
 app.include_router(files.router, prefix="/api")
 
