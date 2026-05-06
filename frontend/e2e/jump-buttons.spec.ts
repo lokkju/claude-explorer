@@ -1,19 +1,48 @@
-import { test, expect } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
 
 /**
  * Build-3: Jump-to-top + Jump-to-bottom buttons that don't get obscured
  * by the right-side search panel.
  *
- * Targets the long fixture conversation (30 messages) so there's always
- * enough vertical scroll to trigger both buttons.
+ * Targets a long conversation (30 messages) so there's always enough
+ * vertical scroll to trigger both buttons.
  */
 
 const LONG_TITLE = 'Phase 5 fixture: TLS handshakes (long)';
+const LONG_UUID = '0f415a45-9c62-8671-d4ad-53b84acb7e1a';
+
+function buildLongConversation() {
+  const summary = makeSummary({
+    uuid: LONG_UUID,
+    name: LONG_TITLE,
+    message_count: 30,
+    human_message_count: 15,
+  });
+
+  // 30 alternating human/assistant messages with enough text per message
+  // to guarantee the stream overflows vertically (so jump buttons appear).
+  const filler =
+    'Lorem ipsum dolor sit amet, consectetur adipiscing elit. '.repeat(15);
+  const messages = [];
+  let prev: string | null = null;
+  for (let i = 0; i < 30; i++) {
+    const uuid = `msg-${i.toString().padStart(2, '0')}`;
+    const sender = i % 2 === 0 ? 'human' : 'assistant';
+    messages.push(
+      makeMessage({
+        uuid,
+        sender,
+        text: `Message ${i}: ${filler}`,
+        parent_message_uuid: prev,
+      }),
+    );
+    prev = uuid;
+  }
+  return { summary, detail: makeDetail(summary, messages) };
+}
 
 async function openLongConversation(page: import('@playwright/test').Page) {
   await page.goto('/');
-  await waitForConnection(page);
   const row = page.getByText(LONG_TITLE);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();
@@ -24,6 +53,14 @@ async function openLongConversation(page: import('@playwright/test').Page) {
 }
 
 test.describe('Jump buttons', () => {
+  test.beforeEach(async ({ mockBackend }) => {
+    const { summary, detail } = buildLongConversation();
+    await mockBackend({
+      conversations: [summary],
+      details: { [LONG_UUID]: detail },
+    });
+  });
+
   test('shows both jump-to-top and jump-to-bottom buttons when scrolled', async ({ page }) => {
     const messageStream = await openLongConversation(page);
     // Scroll to mid — both buttons should appear (not at top, not at bottom).
