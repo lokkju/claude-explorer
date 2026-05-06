@@ -1,16 +1,28 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
+
+/**
+ * M5.5: converted to `./fixtures` `mockBackend`. Without mocked
+ * `/api/config` the ConnectionStatus modal's overlay intercepts pointer
+ * events on the sidebar Refresh button, timing the test out at 60s.
+ * The per-test `/api/fetch/refresh*` mock stays authoritative via
+ * `extraRoutes` (LIFO).
+ */
 
 test.describe('Toast position must not be occluded by the search panel', () => {
-  test('toast remains visible when the right-side search panel is open', async ({ page }) => {
-    await page.route('**/api/fetch/refresh*', async (route) => {
-      const body =
-        'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
-        'data: {"type":"error","kind":"TRANSIENT","retryable":true,"message":"Network problem reaching claude.ai. Retry?"}\n\n'
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream',
-        body,
-      })
+  test('toast remains visible when the right-side search panel is open', async ({ page, mockBackend }) => {
+    await mockBackend({
+      extraRoutes: async (p) => {
+        await p.route('**/api/fetch/refresh*', async (route) => {
+          const body =
+            'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
+            'data: {"type":"error","kind":"TRANSIENT","retryable":true,"message":"Network problem reaching claude.ai. Retry?"}\n\n'
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body,
+          })
+        })
+      },
     })
 
     await page.goto('/')
