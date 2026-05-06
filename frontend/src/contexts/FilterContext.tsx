@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react'
 import type { Filter } from '@/lib/filterEngine'
+import { usePreferences } from '@/hooks/usePreferences'
 
 interface FilterContextType {
   filters: Filter[]
@@ -17,26 +18,6 @@ const FilterContext = createContext<FilterContextType | null>(null)
 const STORAGE_FILTERS = 'savedFilters'
 const STORAGE_ACTIVE_PINNED = 'activeFilterIds'
 
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    if (typeof localStorage === 'undefined' || typeof localStorage.getItem !== 'function') return fallback
-    const v = localStorage.getItem(key)
-    if (v) return JSON.parse(v) as T
-  } catch {
-    // ignore
-  }
-  return fallback
-}
-
-function writeJson(key: string, value: unknown): void {
-  try {
-    if (typeof localStorage === 'undefined' || typeof localStorage.setItem !== 'function') return
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // ignore
-  }
-}
-
 function newId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID()
@@ -45,49 +26,64 @@ function newId(): string {
 }
 
 export function FilterProvider({ children }: { children: ReactNode }) {
-  const [filters, setFilters] = useState<Filter[]>(() => readJson<Filter[]>(STORAGE_FILTERS, []))
-  // Pinned filters auto-active on load. Unpinned active state is per-session only.
-  const [activeFilterIds, setActiveFilterIds] = useState<string[]>(() => {
-    const stored = readJson<string[]>(STORAGE_ACTIVE_PINNED, [])
-    if (stored.length > 0) return stored
-    return readJson<Filter[]>(STORAGE_FILTERS, []).filter((f) => f.pinned).map((f) => f.id)
-  })
+  // P3f: dual-read/dual-write via usePreferences. Server-of-record with a
+  // synchronous localStorage mirror. The hook reads server -> local ->
+  // fallback on first paint, and PATCHes the server (plus mirrors locally)
+  // on every setValue.
+  const [filters, setFiltersPref] = usePreferences<Filter[]>(STORAGE_FILTERS, [])
+  const [activeFilterIds, setActiveFilterIdsPref] = usePreferences<string[]>(STORAGE_ACTIVE_PINNED, [])
 
+  // Auto-activate pinned filters on first mount when nothing is currently
+  // active. Mirrors the legacy fallback behavior for sessions that have
+  // never persisted an explicit active set yet.
+  const didSeedActiveRef = useRef(false)
   useEffect(() => {
-    writeJson(STORAGE_FILTERS, filters)
+    if (didSeedActiveRef.current) return
+    if (activeFilterIds.length > 0) {
+      didSeedActiveRef.current = true
+      return
+    }
+    const pinned = filters.filter((f) => f.pinned).map((f) => f.id)
+    if (pinned.length > 0) {
+      didSeedActiveRef.current = true
+      setActiveFilterIdsPref(pinned)
+    }
+    // We deliberately do not list setActiveFilterIdsPref / activeFilterIds
+    // in deps beyond the initial filters arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters])
-
-  useEffect(() => {
-    // Persist only the pinned-active subset; unpinned-active is session-only.
-    const persistableActive = activeFilterIds.filter((id) => filters.find((f) => f.id === id)?.pinned)
-    writeJson(STORAGE_ACTIVE_PINNED, persistableActive)
-  }, [activeFilterIds, filters])
 
   const addFilter = useCallback((partial: Omit<Filter, 'id'>): Filter => {
     const filter: Filter = { id: newId(), ...partial }
-    setFilters((prev) => [...prev, filter])
-    if (filter.pinned) {
-      setActiveFilterIds((prev) => (prev.includes(filter.id) ? prev : [...prev, filter.id]))
+    const nextFilters = [...filters, filter]
+    setFiltersPref(nextFilters)
+    if (filter.pinned && !activeFilterIds.includes(filter.id)) {
+      setActiveFilterIdsPref([...activeFilterIds, filter.id])
     }
     return filter
-  }, [])
+  }, [filters, activeFilterIds, setFiltersPref, setActiveFilterIdsPref])
 
   const updateFilter = useCallback((id: string, partial: Partial<Filter>) => {
-    setFilters((prev) => prev.map((f) => (f.id === id ? { ...f, ...partial } : f)))
-  }, [])
+    setFiltersPref(filters.map((f) => (f.id === id ? { ...f, ...partial } : f)))
+  }, [filters, setFiltersPref])
 
   const removeFilter = useCallback((id: string) => {
-    setFilters((prev) => prev.filter((f) => f.id !== id))
-    setActiveFilterIds((prev) => prev.filter((x) => x !== id))
-  }, [])
+    setFiltersPref(filters.filter((f) => f.id !== id))
+    if (activeFilterIds.includes(id)) {
+      setActiveFilterIdsPref(activeFilterIds.filter((x) => x !== id))
+    }
+  }, [filters, activeFilterIds, setFiltersPref, setActiveFilterIdsPref])
 
   const toggleActive = useCallback((id: string) => {
-    setActiveFilterIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
-  }, [])
+    const next = activeFilterIds.includes(id)
+      ? activeFilterIds.filter((x) => x !== id)
+      : [...activeFilterIds, id]
+    setActiveFilterIdsPref(next)
+  }, [activeFilterIds, setActiveFilterIdsPref])
 
   const clearAllActive = useCallback(() => {
-    setActiveFilterIds([])
-  }, [])
+    setActiveFilterIdsPref([])
+  }, [setActiveFilterIdsPref])
 
   const activeFilters = useMemo(
     () => activeFilterIds.map((id) => filters.find((f) => f.id === id)).filter((f): f is Filter => Boolean(f)),

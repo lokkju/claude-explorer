@@ -22,6 +22,29 @@ async function mockBackend(page: import('@playwright/test').Page) {
       body: JSON.stringify({ data_dir: '/tmp', conversation_count: conversations.length }),
     });
   });
+  // P3f: FilterContext now reads/writes /api/preferences. Without an
+  // in-memory mock these tests would (a) inherit stale prefs from earlier
+  // runs and (b) write filter state back to the real preferences.json,
+  // contaminating subsequent specs. Mock with a per-test, isolated store.
+  await mockEmptyPreferences(page);
+}
+
+async function mockEmptyPreferences(page: import('@playwright/test').Page) {
+  const data: Record<string, unknown> = {};
+  await page.route('**/api/preferences', (route: Route) => {
+    const req = route.request();
+    if (req.method() === 'PATCH') {
+      try {
+        const body = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> };
+        Object.assign(data, body.data ?? {});
+      } catch {
+        /* ignore */
+      }
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: 1, data }) });
+      return;
+    }
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ version: 1, data }) });
+  });
 }
 
 test.describe('Sidebar filters (Build-5)', () => {
@@ -196,6 +219,8 @@ test.describe('Sidebar title search scope (P1.2)', () => {
         body: JSON.stringify({ authenticated: true, orgs: [] }),
       });
     });
+    // P3f: isolate per-test preferences (FilterContext now reads/writes server prefs).
+    await mockEmptyPreferences(page);
   }
 
   test('summary-only match is excluded', async ({ page }) => {
