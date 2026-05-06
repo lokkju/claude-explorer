@@ -1,5 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect, type Page } from './fixtures';
 
 /**
  * Build-9 Bug 1: the Details modal opened from the Refresh toast must
@@ -35,7 +34,8 @@ async function clickDetailsToastAction(page: Page) {
 }
 
 test.describe('Details modal: live pipeline state (Bug 1)', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -67,7 +67,6 @@ test.describe('Details modal: live pipeline state (Bug 1)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     // Wait for the toast to appear, then open the Details modal.
@@ -100,7 +99,6 @@ test.describe('Details modal: live pipeline state (Bug 1)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     await expect(page.locator('[data-sonner-toast]').first()).toBeVisible({
@@ -120,7 +118,6 @@ test.describe('Details modal: live pipeline state (Bug 1)', () => {
     // Build-9 (the toast does), so this test asserts the cached behavior
     // by opening the dialog and asserting against the static existing_count.
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
 
     // We open the modal indirectly by triggering a refresh and clicking
     // Details, but using a never-started SSE so the pipeline stays in
