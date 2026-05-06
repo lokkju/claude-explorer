@@ -1,10 +1,41 @@
-import { test, expect } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import type { Route } from '@playwright/test'
+import type { SearchResult } from '../src/lib/types'
+
+const TLS_TITLE = 'Phase 5 fixture: TLS handshakes (long)';
+const TLS_UUID = '0f415a45-9c62-8671-d4ad-53b84acb7e1a';
+
+function tlsConversation() {
+  const summary = makeSummary({
+    uuid: TLS_UUID,
+    name: TLS_TITLE,
+    message_count: 2,
+    human_message_count: 1,
+  });
+  const messages = [
+    makeMessage({
+      uuid: 'tls-m1',
+      sender: 'human',
+      text: "Hi! Let's talk about TLS. NEEDLE_HANDSHAKE",
+    }),
+    makeMessage({
+      uuid: 'tls-m2',
+      sender: 'assistant',
+      text: 'Sure, TLS handshakes are a great topic.',
+      parent_message_uuid: 'tls-m1',
+    }),
+  ];
+  return { summary, detail: makeDetail(summary, messages) };
+}
 
 test.describe('Command Palette Full-Text Search', () => {
-  test('opens command palette with Cmd+K', async ({ page }) => {
+  test('opens command palette with Cmd+K', async ({ page, mockBackend }) => {
+    const { summary, detail } = tlsConversation();
+    await mockBackend({
+      conversations: [summary],
+      details: { [TLS_UUID]: detail },
+    });
     await page.goto('/');
-    await waitForConnection(page);
 
     // Press Cmd+K (or Ctrl+K on Windows/Linux)
     await page.keyboard.press('Meta+k');
@@ -13,7 +44,8 @@ test.describe('Command Palette Full-Text Search', () => {
     await expect(page.getByPlaceholder('Search messages...')).toBeVisible();
   });
 
-  test('shows hint for short queries', async ({ page }) => {
+  test('shows hint for short queries', async ({ page, mockBackend }) => {
+    await mockBackend();
     await page.goto('/');
 
     // Open command palette
@@ -29,9 +61,20 @@ test.describe('Command Palette Full-Text Search', () => {
     await expect(page.getByText(/Type at least 2 characters/i)).toBeVisible();
   });
 
-  test('searches message content', async ({ page }) => {
+  test('searches message content', async ({ page, mockBackend }) => {
+    const { summary, detail } = tlsConversation();
+    await mockBackend({
+      conversations: [summary],
+      details: { [TLS_UUID]: detail },
+      // Override the default empty `/api/search` so that the query
+      // 'test' surfaces no matches but does not throw.
+      extraRoutes: async (p) => {
+        await p.route('**/api/search**', (route: Route) => {
+          route.fulfill({ contentType: 'application/json', body: '[]' });
+        });
+      },
+    });
     await page.goto('/');
-    await waitForConnection(page);
 
     // Open command palette
     await page.keyboard.press('Meta+k');
@@ -48,14 +91,54 @@ test.describe('Command Palette Full-Text Search', () => {
       .toBe(true);
   });
 
-  test('navigates to conversation when result is clicked', async ({ page }) => {
+  test('navigates to conversation when result is clicked', async ({ page, mockBackend }) => {
+    const { summary, detail } = tlsConversation();
+    await mockBackend({
+      conversations: [summary],
+      details: { [TLS_UUID]: detail },
+      // For NEEDLE_HANDSHAKE specifically, return a single matching
+      // SearchResult pointing at the TLS conversation. Other queries
+      // return [] so this is deterministic.
+      extraRoutes: async (p) => {
+        await p.route('**/api/search**', (route: Route) => {
+          const url = route.request().url();
+          const params = new URL(url).searchParams;
+          const q = params.get('q') ?? '';
+          if (q.includes('NEEDLE_HANDSHAKE')) {
+            // Strictly type so any backend schema change to SearchResult
+            // surfaces as a TS error instead of silent mock drift.
+            const results: SearchResult[] = [
+              {
+                conversation_uuid: TLS_UUID,
+                conversation_name: TLS_TITLE,
+                conversation_updated_at: summary.updated_at,
+                conversation_created_at: summary.created_at,
+                project_name: null,
+                matching_messages: [
+                  {
+                    message_uuid: 'tls-m1',
+                    sender: 'human',
+                    snippet: "Let's talk about TLS. NEEDLE_HANDSHAKE",
+                    match_start: 23,
+                    match_end: 39,
+                    created_at: '2026-04-01T10:00:00Z',
+                  },
+                ],
+              },
+            ];
+            route.fulfill({
+              contentType: 'application/json',
+              body: JSON.stringify(results),
+            });
+            return;
+          }
+          route.fulfill({ contentType: 'application/json', body: '[]' });
+        });
+      },
+    });
     await page.goto('/');
-    await waitForConnection(page);
 
-    // The fixture suite ships a long TLS conversation containing the
-    // `NEEDLE_HANDSHAKE` token — a unique searchable string we control,
-    // so this test is deterministic regardless of the contributor's
-    // local data.
+    // The TLS conversation is in the sidebar.
     await expect(page.getByText(/Phase 5 fixture: TLS handshakes/)).toBeVisible({
       timeout: 10000,
     });
@@ -72,7 +155,8 @@ test.describe('Command Palette Full-Text Search', () => {
     await expect(page).toHaveURL(/\/conversations\/[a-f0-9-]+/);
   });
 
-  test('closes command palette via keyboard (Escape)', async ({ page }) => {
+  test('closes command palette via keyboard (Escape)', async ({ page, mockBackend }) => {
+    await mockBackend();
     await page.goto('/');
 
     // Open command palette.
@@ -86,7 +170,8 @@ test.describe('Command Palette Full-Text Search', () => {
     await expect(searchAside).toHaveAttribute('aria-hidden', 'true');
   });
 
-  test('Cmd+K toggles open and closed', async ({ page }) => {
+  test('Cmd+K toggles open and closed', async ({ page, mockBackend }) => {
+    await mockBackend();
     await page.goto('/');
 
     const searchAside = page.locator('aside[aria-label="Search panel"]');
@@ -96,7 +181,8 @@ test.describe('Command Palette Full-Text Search', () => {
     await expect(searchAside).toHaveAttribute('aria-hidden', 'true');
   });
 
-  test('shows keyboard hint in sidebar', async ({ page }) => {
+  test('shows keyboard hint in sidebar', async ({ page, mockBackend }) => {
+    await mockBackend();
     await page.goto('/');
 
     // Should show the Cmd+K hint
