@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
  *
  * The suite runs in **fixture mode by default**: the backend is booted
  * with `CLAUDE_EXPORTER_DATA_DIR` and `CLAUDE_DIR` pointing at
- * `tests/fixtures/`, which contains a small set of synthetic
+ * `backend/tests/fixtures/`, which contains a small set of synthetic
  * conversations checked into the repo. This means external
  * contributors can clone the repo and run `npm run test:e2e` without
  * needing Raymond's `~/.claude-exporter/` or `~/.claude/` on disk.
@@ -21,8 +21,8 @@ const __dirname = path.dirname(__filename);
  * home dir.
  */
 const REPO_ROOT = path.resolve(__dirname, '..');
-const FIXTURES_DESKTOP = path.join(REPO_ROOT, 'tests', 'fixtures', 'desktop');
-const FIXTURES_CLAUDE = path.join(REPO_ROOT, 'tests', 'fixtures', 'claude');
+const FIXTURES_DESKTOP = path.join(REPO_ROOT, 'backend', 'tests', 'fixtures', 'desktop');
+const FIXTURES_CLAUDE = path.join(REPO_ROOT, 'backend', 'tests', 'fixtures', 'claude');
 const USE_FIXTURES = !process.env.PLAYWRIGHT_LIVE_DATA;
 
 const backendEnv = USE_FIXTURES
@@ -71,9 +71,9 @@ export default defineConfig({
   webServer: [
     {
       // Fixture-mode boot: env vars override the backend's data + claude
-      // dirs to point at tests/fixtures/. In live mode (the original
-      // behavior) backendEnv is empty and the backend falls back to
-      // ~/.claude-exporter/conversations + ~/.claude.
+      // dirs to point at backend/tests/fixtures/. In live mode (the
+      // original behavior) backendEnv is empty and the backend falls
+      // back to ~/.claude-exporter/conversations + ~/.claude.
       command: `cd .. && ${backendEnv} DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --port 8000`,
       url: 'http://localhost:8000/api/config',
       // In CI we want a fresh backend boot each run (so env vars take

@@ -63,9 +63,9 @@ jobs:
           # produce byte-identical files. Catch out-of-date fixtures
           # (or accidental hand-edits) before the e2e suite even runs.
           uv run python scripts/generate_e2e_fixtures.py
-          if ! git diff --quiet tests/fixtures; then
+          if ! git diff --quiet backend/tests/fixtures; then
             echo "::error::Fixtures are out of date. Run 'uv run python scripts/generate_e2e_fixtures.py' and commit the result."
-            git diff tests/fixtures
+            git diff backend/tests/fixtures
             exit 1
           fi
 
