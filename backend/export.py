@@ -40,11 +40,77 @@ TOOL_PLACEHOLDER = "This block is not supported on your current device yet."
 
 
 def filter_tool_placeholders(text: str) -> str:
-    """Remove tool placeholder blocks from markdown text."""
-    # Match code blocks containing the placeholder (with optional whitespace)
-    pattern = r"```\s*\n?\s*This block is not supported on your current device yet\.\s*\n?\s*```"
-    filtered = re.sub(pattern, "", text)
-    # Clean up excess newlines
+    """Strip Claude Desktop's TOOL_PLACEHOLDER everywhere in ``text``.
+
+    Mirrors the frontend canonical algorithm in
+    ``frontend/src/components/message/MarkdownRenderer.tsx::stripToolPlaceholderText``
+    (P1.3a/P1.3b — keep the two in sync).
+
+    Behaviour:
+
+    * Walks the text line-by-line, tracking whether we're inside a
+      fenced code block (toggled by any line whose first non-whitespace
+      content is ``\`\`\``).
+    * **Outside a fence**: drop ALL occurrences of TOOL_PLACEHOLDER
+      anywhere on the line (line-anchored OR mid-paragraph). If the
+      line was non-empty before the strip but whitespace-only after,
+      drop the whole line so we don't leave a phantom blank paragraph.
+    * **Inside a fence**: the frontend leaves the placeholder intact
+      so its ``code`` component can render a friendly badge in its
+      place. The backend export surfaces (Markdown + PDF) have no such
+      badge — the literal string would just leak to the recipient — so
+      we strip it inside fences too. If after stripping the fence
+      block is empty (``\`\`\`\n\n\`\`\``-like), the surrounding fence
+      lines are left in place; downstream renderers handle empty code
+      blocks fine.
+
+    After the line walk we collapse 3-or-more consecutive newlines
+    down to a single paragraph break, matching the frontend.
+    """
+    if TOOL_PLACEHOLDER not in text:
+        return text
+
+    lines = text.split("\n")
+    out: list[str] = []
+    in_fence = False
+    fence_open_idx: int | None = None  # index in `out` of the most recent ``` we kept
+
+    for line in lines:
+        stripped_line = line.lstrip()
+        is_fence_marker = stripped_line.startswith("```")
+
+        if is_fence_marker:
+            if not in_fence:
+                in_fence = True
+                fence_open_idx = len(out)
+                out.append(line)
+            else:
+                in_fence = False
+                # If the fence we're closing wrapped only stripped /
+                # blank content, drop the whole fence (open + body +
+                # close) so we don't leave an empty ``` ``` block
+                # behind. This is the common Claude Desktop shape.
+                if fence_open_idx is not None:
+                    body = out[fence_open_idx + 1 :]
+                    if all(b.strip() == "" for b in body):
+                        del out[fence_open_idx:]
+                        fence_open_idx = None
+                        continue
+                fence_open_idx = None
+                out.append(line)
+            continue
+
+        # Non-fence line: strip ALL occurrences regardless of fence
+        # state (see docstring re: backend has no badge surface).
+        had_content = line.strip() != ""
+        stripped = line.replace(TOOL_PLACEHOLDER, "")
+        if had_content and stripped.strip() == "":
+            # Line was only the placeholder (plus whitespace) — drop it.
+            continue
+        out.append(stripped)
+
+    filtered = "\n".join(out)
+    # Collapse runs of blank lines to a single paragraph break.
     filtered = re.sub(r"\n{3,}", "\n\n", filtered)
     return filtered
 
@@ -56,7 +122,10 @@ def render_content_block(
     prefix = "  " * indent
 
     if block.type == "text" and block.text:
-        return block.text
+        # Always strip TOOL_PLACEHOLDER from text content blocks
+        # (P1.3b — the placeholder must never reach the recipient
+        # regardless of include_tools).
+        return filter_tool_placeholders(block.text)
 
     if block.type == "tool_use":
         if not include_tools:
@@ -160,11 +229,10 @@ def message_to_markdown(message: Message, include_tools: bool = True) -> str:
             if rendered:
                 lines.append(rendered)
     elif message.text:
-        text = message.text
-        # Filter out tool placeholders if include_tools is False
-        if not include_tools:
-            text = filter_tool_placeholders(text)
-        lines.append(text)
+        # Always strip TOOL_PLACEHOLDER (P1.3b — it represents an
+        # uncaptured tool call/artifact and the recipient should never
+        # see the literal string, regardless of include_tools).
+        lines.append(filter_tool_placeholders(message.text))
 
     # Image attachments (always rendered, regardless of include_tools).
     image_md = _image_markdown(message)
@@ -306,10 +374,8 @@ def conversation_to_html(
             for block in message.content:
                 content_html += render_content_block_html(block, include_tools)
         elif message.text:
-            text = message.text
-            # Filter out tool placeholders if include_tools is False
-            if not include_tools:
-                text = filter_tool_placeholders(text)
+            # Always strip TOOL_PLACEHOLDER before HTML escape (P1.3b).
+            text = filter_tool_placeholders(message.text)
             content_html = escape_html(text)
 
         # Append image attachments (always, never gated by include_tools).
@@ -380,7 +446,8 @@ def _image_html(message: Message) -> str:
 def render_content_block_html(block: ContentBlock, include_tools: bool = True) -> str:
     """Render a content block to HTML."""
     if block.type == "text" and block.text:
-        return escape_html(block.text)
+        # Always strip TOOL_PLACEHOLDER (P1.3b).
+        return escape_html(filter_tool_placeholders(block.text))
 
     if block.type == "tool_use":
         if not include_tools:
@@ -493,7 +560,8 @@ def _bundle_block_to_markdown(
                 return _markdown_image_ref(rel, alt, dialect)
             return f"_(image not bundled: {match.group(1).strip()})_"
 
-        return CC_IMAGE_MARKER_RE.sub(_swap, block.text)
+        # Always strip TOOL_PLACEHOLDER from bundled text (P1.3b).
+        return CC_IMAGE_MARKER_RE.sub(_swap, filter_tool_placeholders(block.text))
 
     if block.type == "image":
         # Inline image content block. The bundle index keys these by the
@@ -568,9 +636,8 @@ def _bundle_message_to_markdown(
             if rendered:
                 lines.append(rendered)
     elif message.text:
-        text = message.text
-        if not include_tools:
-            text = filter_tool_placeholders(text)
+        # Always strip TOOL_PLACEHOLDER (P1.3b).
+        text = filter_tool_placeholders(message.text)
         # Run marker substitution on plain text too.
         def _swap(match: re.Match[str]) -> str:
             key = f"marker:{match.group(1).strip()}"
