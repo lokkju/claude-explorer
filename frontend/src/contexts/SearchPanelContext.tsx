@@ -11,6 +11,7 @@ import { useSearch } from '@/hooks/useConversations'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
+import { usePreferences } from '@/hooks/usePreferences'
 import type { SearchResult, SortField, SortOrder } from '@/lib/types'
 
 export interface SearchMatch {
@@ -70,38 +71,34 @@ interface SearchPanelContextType {
 
 const SearchPanelContext = createContext<SearchPanelContextType | null>(null)
 
-// Helper to read from localStorage with fallback
-function getStoredValue<T>(key: string, fallback: T): T {
-  try {
-    const stored = localStorage.getItem(key)
-    if (stored !== null) {
-      return JSON.parse(stored) as T
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return fallback
-}
-
 export function SearchPanelProvider({ children }: { children: ReactNode }) {
   const { sourceFilter } = useSourceFilter()
   const { scope: pinScope } = useSearchPin()
   const { bookmarks } = useBookmarks()
 
-  const [isOpen, setIsOpen] = useState<boolean>(() =>
-    getStoredValue<boolean>('searchPanel.isOpen', false)
+  // P3e: dual-read/dual-write via usePreferences. The hook resolves
+  // value as server.data[key] ?? localStorage[key] ?? fallback, and
+  // setValue mirrors to BOTH server (PATCH /api/preferences) and
+  // localStorage under the SAME legacy key — so existing browser
+  // sessions keep working without a key rename.
+  const [isOpen, setIsOpenPref] = usePreferences<boolean>(
+    'searchPanel.isOpen',
+    false,
   )
-  const [contextSize, setContextSizeState] = useState<SearchContextSize>(() =>
-    getStoredValue<SearchContextSize>('searchPanel.contextSize', 'snippet')
+  const [contextSize, setContextSizePref] = usePreferences<SearchContextSize>(
+    'searchPanel.contextSize',
+    'snippet',
+  )
+  const [sortField, setSortFieldPref] = usePreferences<SortField>(
+    'searchPanel.sortField',
+    'updated_at',
+  )
+  const [sortOrder, setSortOrderPref] = usePreferences<SortOrder>(
+    'searchPanel.sortOrder',
+    'desc',
   )
   const [query, setQueryState] = useState<string>('')
   const [activeMatchIndex, setActiveMatchIndexState] = useState<number>(-1)
-  const [sortField, setSortFieldState] = useState<SortField>(() =>
-    getStoredValue<SortField>('searchPanel.sortField', 'updated_at')
-  )
-  const [sortOrder, setSortOrderState] = useState<SortOrder>(() =>
-    getStoredValue<SortOrder>('searchPanel.sortOrder', 'desc')
-  )
   // Cmd+F focus-request counter. Bumping it triggers SearchPanel's
   // focus-input useEffect even when isOpen hasn't changed.
   const [focusRequestSeq, setFocusRequestSeq] = useState(0)
@@ -252,41 +249,41 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   }, [query])
 
   const open = useCallback(() => {
-    setIsOpen(true)
-    localStorage.setItem('searchPanel.isOpen', JSON.stringify(true))
-  }, [])
+    setIsOpenPref(true)
+  }, [setIsOpenPref])
 
   const close = useCallback(() => {
-    setIsOpen(false)
-    localStorage.setItem('searchPanel.isOpen', JSON.stringify(false))
-  }, [])
+    setIsOpenPref(false)
+  }, [setIsOpenPref])
 
   const toggle = useCallback(() => {
-    setIsOpen((prev) => {
-      const next = !prev
-      localStorage.setItem('searchPanel.isOpen', JSON.stringify(next))
-      return next
-    })
-  }, [])
+    setIsOpenPref(!isOpen)
+  }, [isOpen, setIsOpenPref])
 
   const setQuery = useCallback((q: string) => {
     setQueryState(q)
   }, [])
 
-  const setContextSize = useCallback((s: SearchContextSize) => {
-    setContextSizeState(s)
-    localStorage.setItem('searchPanel.contextSize', JSON.stringify(s))
-  }, [])
+  const setContextSize = useCallback(
+    (s: SearchContextSize) => {
+      setContextSizePref(s)
+    },
+    [setContextSizePref],
+  )
 
-  const setSortField = useCallback((f: SortField) => {
-    setSortFieldState(f)
-    localStorage.setItem('searchPanel.sortField', JSON.stringify(f))
-  }, [])
+  const setSortField = useCallback(
+    (f: SortField) => {
+      setSortFieldPref(f)
+    },
+    [setSortFieldPref],
+  )
 
-  const setSortOrder = useCallback((o: SortOrder) => {
-    setSortOrderState(o)
-    localStorage.setItem('searchPanel.sortOrder', JSON.stringify(o))
-  }, [])
+  const setSortOrder = useCallback(
+    (o: SortOrder) => {
+      setSortOrderPref(o)
+    },
+    [setSortOrderPref],
+  )
 
   const setActiveMatchIndex = useCallback((i: number) => {
     setActiveMatchIndexState(i)
@@ -312,15 +309,11 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     // Open the panel if it's closed (so the input is mounted) and bump
     // the focus-request counter so SearchPanel's effect refocuses the
     // input even when isOpen was already true.
-    setIsOpen((prev) => {
-      if (!prev) {
-        localStorage.setItem('searchPanel.isOpen', JSON.stringify(true))
-        return true
-      }
-      return prev
-    })
+    if (!isOpen) {
+      setIsOpenPref(true)
+    }
     setFocusRequestSeq((n) => n + 1)
-  }, [])
+  }, [isOpen, setIsOpenPref])
 
   return (
     <SearchPanelContext.Provider
