@@ -81,7 +81,7 @@ export function PinScopeButton({
       >
         {isAnyActive ? <Pin className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
         <span className="ml-2">
-          {isPinnedToThisConv ? 'Pinned: conversation' : isPinnedToThisProject ? 'Pinned: project' : 'Pin search'}
+          {isPinnedToThisConv ? 'Pinned: conversation' : isPinnedToThisProject ? 'Pinned: project' : 'Search scope'}
         </span>
         <ChevronDown className="ml-1 h-3 w-3 opacity-60" />
       </Button>
