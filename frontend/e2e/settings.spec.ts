@@ -1,7 +1,8 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test.describe('Settings Page', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    await mockBackend()
     await page.goto('/')
   })
 
