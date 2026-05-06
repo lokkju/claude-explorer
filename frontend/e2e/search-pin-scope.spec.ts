@@ -97,6 +97,10 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
 
     const rowB = page.locator(`[data-out-of-scope="true"]`).filter({ hasText: 'ProjectA session 2' }).first()
     await expect(rowB).toBeVisible({ timeout: 3000 })
+
+    // P1.1: dim level must be <= 0.4 (was 0.6 — not visually distinct enough).
+    const opacity = await rowB.evaluate((el) => window.getComputedStyle(el).opacity)
+    expect(parseFloat(opacity)).toBeLessThanOrEqual(0.4)
   })
 
   test('Pinning project dims sessions outside the project', async ({ page, mockBackend }) => {
