@@ -203,6 +203,38 @@ def _dedupe_image_files(message: Message) -> list[dict[str, Any]]:
     return list(by_uuid.values())
 
 
+def _dedupe_non_image_files(message: Message) -> list[dict[str, Any]]:
+    """Merge files + files_v2 and dedupe by file_uuid; non-image files only.
+
+    Non-image entries (PDFs, .txt, .docx, etc.) ship as ``file_kind`` values
+    other than ``"image"`` (typically ``"document"``). These are bundled
+    under ``attachments/`` in the Markdown bundle export.
+    """
+    merged: list[dict[str, Any]] = []
+    for raw in (message.files or []) + (getattr(message, "files_v2", None) or []):
+        if isinstance(raw, dict) and raw.get("file_kind") and raw.get("file_kind") != "image":
+            merged.append(raw)
+    by_uuid: dict[str, dict[str, Any]] = {}
+    for f in merged:
+        uuid = f.get("file_uuid") or f.get("uuid") or f.get("file_name") or ""
+        existing = by_uuid.get(uuid)
+        if not existing:
+            by_uuid[uuid] = f
+            continue
+        # Prefer the entry whose document_asset/url surface is populated
+        # (the v2 shape often has the live URL the v1 shape lacks).
+        def _has_doc_url(d: dict[str, Any]) -> bool:
+            return bool(
+                d.get("document_url")
+                or (d.get("document_asset") or {}).get("url")
+                or d.get("local_document")
+            )
+
+        if not _has_doc_url(existing) and _has_doc_url(f):
+            by_uuid[uuid] = f
+    return list(by_uuid.values())
+
+
 def _image_markdown(message: Message) -> str:
     """Render image attachments as Markdown image refs (after content)."""
     images = _dedupe_image_files(message)
@@ -881,6 +913,8 @@ def _bundle_message_to_markdown(
     bundle_index: dict[str, str],
     bundled_alts: dict[str, str],
     dialect: MarkdownDialect,
+    attachment_refs: list[tuple[str, str]] | None = None,  # [(rel, display_name), ...]
+    missing_attachments: list[str] | None = None,  # display names skipped
 ) -> str:
     """Render one message for the bundle, swapping CC image refs for
     bundle-relative paths and inserting inline-image refs at their
@@ -928,6 +962,20 @@ def _bundle_message_to_markdown(
         for img in _dedupe_image_files(message):
             name = img.get("file_name") or "image"
             lines.append(f"_(Desktop image attachment not bundled: {name})_")
+
+    # Phase 6: non-image attachments (PDF, .txt, .docx, ...). Successfully
+    # bundled entries are rendered as Markdown links to the
+    # attachments/<filename> entry inside the zip. Entries with no
+    # on-disk cached copy are surfaced as a textual placeholder so the
+    # recipient sees what they're missing (no dangling /api/... URLs).
+    if attachment_refs:
+        lines.append("")
+        for rel, display_name in attachment_refs:
+            lines.append(_markdown_attachment_ref(rel, display_name, dialect))
+    if missing_attachments:
+        lines.append("")
+        for name in missing_attachments:
+            lines.append(f"_(attachment not bundled: {name})_")
 
     lines.append("")
     lines.append("---")
@@ -987,8 +1035,65 @@ def create_markdown_bundle(
 
     # Pass 1: scan messages, collect bytes + decide image filenames.
     inline_refs_per_message: dict[str, dict[int, str]] = {}
+    # Phase 6: per-message non-image attachment plan. Each entry is a
+    # list of (zip_rel_path, display_name) tuples for successfully
+    # cached attachments, plus a parallel list of display names whose
+    # bytes weren't on disk so we can footnote them.
+    attachment_refs_per_message: dict[str, list[tuple[str, str]]] = {}
+    missing_attachments_per_message: dict[str, list[str]] = {}
+    seen_attachment_uuids: set[str] = set()
+    used_attachment_names: set[str] = set()
+
+    def _unique_attachment_name(stem: str, suffix: str) -> str:
+        base = sanitize_filename(stem) or "attachment"
+        candidate = f"{base}{suffix}"
+        i = 2
+        while candidate in used_attachment_names:
+            candidate = f"{base}-{i}{suffix}"
+            i += 1
+        used_attachment_names.add(candidate)
+        return candidate
 
     for message in conversation.messages:
+        # Phase 6: walk non-image attachments regardless of whether the
+        # message has structured content blocks (Desktop messages
+        # frequently ship `files` with no `content`).
+        msg_attachment_refs: list[tuple[str, str]] = []
+        msg_missing_attachments: list[str] = []
+        for f in _dedupe_non_image_files(message):
+            file_uuid = f.get("file_uuid") or f.get("uuid") or ""
+            if not file_uuid or file_uuid in seen_attachment_uuids:
+                continue
+            seen_attachment_uuids.add(file_uuid)
+            display_name = f.get("file_name") or f"{file_uuid}.bin"
+            resolved = _resolve_bundle_attachment_path(conversation.uuid, file_uuid)
+            if resolved is None:
+                msg_missing_attachments.append(display_name)
+                continue
+            try:
+                data = resolved.read_bytes()
+            except OSError:
+                msg_missing_attachments.append(display_name)
+                continue
+            # Use the original filename (sanitized) so the recipient sees
+            # a recognisable name; fall back to the on-disk variant
+            # extension if the source filename has none.
+            stem, _, ext = display_name.rpartition(".")
+            if stem and ext:
+                bundled_name = _unique_attachment_name(stem, "." + ext.lower())
+            else:
+                bundled_name = _unique_attachment_name(
+                    display_name or resolved.stem,
+                    resolved.suffix or "",
+                )
+            rel = f"attachments/{bundled_name}"
+            files_to_write.append((rel, data))
+            msg_attachment_refs.append((rel, display_name))
+        if msg_attachment_refs:
+            attachment_refs_per_message[message.uuid] = msg_attachment_refs
+        if msg_missing_attachments:
+            missing_attachments_per_message[message.uuid] = msg_missing_attachments
+
         if not message.content:
             # Walk text for marker images.
             if message.text:
@@ -1041,7 +1146,11 @@ def create_markdown_bundle(
         "",
     ]
     for message in conversation.messages:
-        if not message_has_visible_content(message, include_tools):
+        has_attachments = (
+            message.uuid in attachment_refs_per_message
+            or message.uuid in missing_attachments_per_message
+        )
+        if not message_has_visible_content(message, include_tools) and not has_attachments:
             continue
         md_lines.append(
             _bundle_message_to_markdown(
@@ -1051,6 +1160,8 @@ def create_markdown_bundle(
                 bundle_index=bundle_index,
                 bundled_alts=bundled_alts,
                 dialect=dialect,
+                attachment_refs=attachment_refs_per_message.get(message.uuid),
+                missing_attachments=missing_attachments_per_message.get(message.uuid),
             )
         )
     md = "\n".join(md_lines)
@@ -1062,6 +1173,32 @@ def create_markdown_bundle(
 
     buffer.seek(0)
     return buffer.read()
+
+
+def _markdown_attachment_ref(rel_path: str, name: str, dialect: MarkdownDialect) -> str:
+    """Render an attachment ref in the chosen Markdown dialect.
+
+    CommonMark: ``[<name>](attachments/<file>)``
+    Obsidian:   ``[[attachments/<file>]]`` (wikilink — Obsidian renders
+    the file's display name itself).
+    """
+    if dialect == "obsidian":
+        return f"[[{rel_path}]]"
+    return f"[{name}]({rel_path})"
+
+
+def _resolve_bundle_attachment_path(conv_uuid: str, file_uuid: str) -> Path | None:
+    """Locate the cached on-disk copy of a non-image attachment for the
+    bundle export. Tries the ``document`` variant first (per fetcher
+    contract for ``file_kind == 'document'``), then ``original``.
+
+    Returns ``None`` if no cached copy exists.
+    """
+    for variant in ("document", "original"):
+        resolved = _resolve_attachment_path(conv_uuid, file_uuid, variant)
+        if resolved is not None:
+            return resolved
+    return None
 
 
 def _maybe_bundle_marker(
