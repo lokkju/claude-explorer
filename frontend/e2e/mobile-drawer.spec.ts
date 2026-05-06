@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures'
 
 /**
  * Mobile responsive layout (Build-8 #9).
@@ -10,7 +10,8 @@ import { test, expect } from '@playwright/test';
 test.describe('Mobile responsive layout', () => {
   test.use({ viewport: { width: 375, height: 667 } });
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    await mockBackend();
     await page.goto('/');
   });
 
