@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react'
 import type { SortField, SortOrder } from '@/lib/types'
+import { usePreferences } from '@/hooks/usePreferences'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type KeyboardMode = 'emacs' | 'vim'
@@ -41,19 +42,6 @@ interface SettingsContextType {
 
 const SettingsContext = createContext<SettingsContextType | null>(null)
 
-// Helper to read from localStorage with fallback
-function getStoredValue<T>(key: string, fallback: T): T {
-  try {
-    const stored = localStorage.getItem(key)
-    if (stored !== null) {
-      return JSON.parse(stored) as T
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return fallback
-}
-
 // Natural sort order for each field
 function getDefaultSortOrder(field: SortField): SortOrder {
   switch (field) {
@@ -69,41 +57,55 @@ function getDefaultSortOrder(field: SortField): SortOrder {
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+  // Ephemeral (per-session) toggles — not persisted anywhere.
   const [showToolCalls, setShowToolCalls] = useState(false)
   const [expandAllTools, setExpandAllTools] = useState(false)
   const [showPhantomSessions, setShowPhantomSessions] = useState(false)
-  const [hideCompactMarkers, setHideCompactMarkersState] = useState<boolean>(() =>
-    getStoredValue<boolean>('hideCompactMarkers', false)
+
+  // P3c — persisted prefs migrated to dual-read/dual-write via
+  // usePreferences. The localStorage *keys* are the same legacy strings
+  // (e.g. 'theme', 'keyboardMode') so existing browser sessions keep
+  // working seamlessly. The local mirror is kept on purpose during the
+  // soak window — the hook PATCHes the server AND writes localStorage.
+  const [hideCompactMarkers, setHideCompactMarkers] = usePreferences<boolean>(
+    'hideCompactMarkers',
+    false,
   )
-  const [rightPaneTab, setRightPaneTabState] = useState<'search' | 'bookmarks'>(() =>
-    getStoredValue<'search' | 'bookmarks'>('rightPaneTab', 'search')
+  const [rightPaneTab, setRightPaneTab] = usePreferences<'search' | 'bookmarks'>(
+    'rightPaneTab',
+    'search',
+  )
+  const [markdownBundleImages, setMarkdownBundleImages] = usePreferences<boolean>(
+    'markdownBundleImages',
+    false,
+  )
+  const [markdownDialect, setMarkdownDialect] = usePreferences<MarkdownDialect>(
+    'markdownDialect',
+    'commonmark',
+  )
+  const [sortField, setSortFieldRaw] = usePreferences<SortField>(
+    'sortField',
+    'updated_at',
+  )
+  const [sortOrder, setSortOrder] = usePreferences<SortOrder>('sortOrder', 'desc')
+  const [groupByProject, setGroupByProject] = usePreferences<boolean>(
+    'groupByProject',
+    false,
+  )
+  const [theme, setTheme] = usePreferences<Theme>('theme', 'system')
+  const [keyboardMode, setKeyboardMode] = usePreferences<KeyboardMode>(
+    'keyboardMode',
+    'emacs',
   )
 
-  // Issue #4 — Markdown export bundle preferences. Default off so the
-  // existing single-file Markdown export behavior is preserved for
-  // returning users; opt-in via Settings.
-  const [markdownBundleImages, setMarkdownBundleImagesState] = useState<boolean>(() =>
-    getStoredValue<boolean>('markdownBundleImages', false)
-  )
-  const [markdownDialect, setMarkdownDialectState] = useState<MarkdownDialect>(() =>
-    getStoredValue<MarkdownDialect>('markdownDialect', 'commonmark')
-  )
+  // Setting sortField also flips sortOrder to its natural direction —
+  // preserve that legacy UX. Both writes go through usePreferences, so
+  // both PATCH the server and mirror localStorage.
+  const setSortField = (field: SortField) => {
+    setSortFieldRaw(field)
+    setSortOrder(getDefaultSortOrder(field))
+  }
 
-  // Sort and group settings with localStorage persistence
-  const [sortField, setSortFieldState] = useState<SortField>(() =>
-    getStoredValue<SortField>('sortField', 'updated_at')
-  )
-  const [sortOrder, setSortOrderState] = useState<SortOrder>(() =>
-    getStoredValue<SortOrder>('sortOrder', 'desc')
-  )
-  const [groupByProject, setGroupByProjectState] = useState<boolean>(() =>
-    getStoredValue<boolean>('groupByProject', false)
-  )
-
-  // Theme settings
-  const [theme, setThemeState] = useState<Theme>(() =>
-    getStoredValue<Theme>('theme', 'system')
-  )
   const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
   )
@@ -123,61 +125,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     return theme
   }, [theme, systemPrefersDark])
-
-  // Keyboard mode settings
-  const [keyboardMode, setKeyboardModeState] = useState<KeyboardMode>(() =>
-    getStoredValue<KeyboardMode>('keyboardMode', 'emacs')
-  )
-
-  // Persist to localStorage when values change
-  const setSortField = (field: SortField) => {
-    setSortFieldState(field)
-    localStorage.setItem('sortField', JSON.stringify(field))
-    // Automatically set natural sort order for the field
-    const naturalOrder = getDefaultSortOrder(field)
-    setSortOrderState(naturalOrder)
-    localStorage.setItem('sortOrder', JSON.stringify(naturalOrder))
-  }
-
-  const setSortOrder = (order: SortOrder) => {
-    setSortOrderState(order)
-    localStorage.setItem('sortOrder', JSON.stringify(order))
-  }
-
-  const setGroupByProject = (group: boolean) => {
-    setGroupByProjectState(group)
-    localStorage.setItem('groupByProject', JSON.stringify(group))
-  }
-
-  const setTheme = (newTheme: Theme) => {
-    setThemeState(newTheme)
-    localStorage.setItem('theme', JSON.stringify(newTheme))
-  }
-
-  const setKeyboardMode = (mode: KeyboardMode) => {
-    setKeyboardModeState(mode)
-    localStorage.setItem('keyboardMode', JSON.stringify(mode))
-  }
-
-  const setHideCompactMarkers = (hide: boolean) => {
-    setHideCompactMarkersState(hide)
-    localStorage.setItem('hideCompactMarkers', JSON.stringify(hide))
-  }
-
-  const setRightPaneTab = (tab: 'search' | 'bookmarks') => {
-    setRightPaneTabState(tab)
-    localStorage.setItem('rightPaneTab', JSON.stringify(tab))
-  }
-
-  const setMarkdownBundleImages = (bundle: boolean) => {
-    setMarkdownBundleImagesState(bundle)
-    localStorage.setItem('markdownBundleImages', JSON.stringify(bundle))
-  }
-
-  const setMarkdownDialect = (dialect: MarkdownDialect) => {
-    setMarkdownDialectState(dialect)
-    localStorage.setItem('markdownDialect', JSON.stringify(dialect))
-  }
 
   return (
     <SettingsContext.Provider value={{
