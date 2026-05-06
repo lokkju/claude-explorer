@@ -29,6 +29,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-httpx>=0.30",
     "respx>=0.21",
+    "pypdf>=4.0",
 ]
 
 [tool.pytest.ini_options]

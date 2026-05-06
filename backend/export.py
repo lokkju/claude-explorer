@@ -2,13 +2,19 @@
 
 import base64
 import io
+import logging
+import mimetypes
 import re
+import urllib.parse
 import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from .models import ConversationDetail, Message, ContentBlock
+
+
+log = logging.getLogger(__name__)
 
 
 # Issue #4 — Markdown export dialects for the bundled-zip variant.
@@ -374,9 +380,10 @@ def conversation_to_html(
             for block in message.content:
                 content_html += render_content_block_html(block, include_tools)
         elif message.text:
-            # Always strip TOOL_PLACEHOLDER before HTML escape (P1.3b).
+            # Always strip TOOL_PLACEHOLDER before HTML escape (P1.3b),
+            # then rewrite cc-image markers to <img> tags.
             text = filter_tool_placeholders(message.text)
-            content_html = escape_html(text)
+            content_html = _rewrite_cc_image_markers_to_html(text)
 
         # Append image attachments (always, never gated by include_tools).
         # Mirrors the Markdown export's _image_markdown helper so the PDF
@@ -443,11 +450,80 @@ def _image_html(message: Message) -> str:
     return "".join(parts)
 
 
+def _rewrite_cc_image_markers_to_html(text: str) -> str:
+    """Convert ``[Image: source: <abs-path>]`` markers in ``text`` to
+    ``<img>`` tags, escaping the surrounding text as HTML.
+
+    The marker syntax is the source of truth shared with the frontend
+    and ``backend/cc_image_cache.py``. Output ``src`` uses the same
+    ``/api/cc-image?path=<urlquoted-abs>`` URL the viewer uses; the PDF
+    pass resolves it through ``_pdf_url_fetcher`` (no HTTP server
+    needed). Malformed markers are left intact (and HTML-escaped) so
+    we don't silently drop content.
+    """
+    out_parts: list[str] = []
+    last = 0
+    for match in CC_IMAGE_MARKER_RE.finditer(text):
+        out_parts.append(escape_html(text[last : match.start()]))
+        abs_path = match.group(1).strip()
+        if not abs_path:
+            out_parts.append(escape_html(match.group(0)))
+        else:
+            quoted = urllib.parse.quote(abs_path, safe="")
+            name = Path(abs_path).name or "image"
+            out_parts.append(
+                f'<img src="/api/cc-image?path={quoted}" '
+                f'alt="{escape_html(name)}" '
+                f'style="max-width:100%;max-height:480px;height:auto;display:block;" />'
+            )
+        last = match.end()
+    out_parts.append(escape_html(text[last:]))
+    return "".join(out_parts)
+
+
+def _render_image_block_html(block: ContentBlock) -> str:
+    """Render a ``type == "image"`` content block.
+
+    Common Claude Code shapes:
+      * ``{"source": {"type": "base64", "media_type": "image/png", "data": "..."}}``
+        → emit a ``data:`` URL (works natively in WeasyPrint).
+      * ``{"source": {"type": "url", "url": "/api/cc-image?path=..."}}``
+        → emit the URL verbatim (resolved via ``_pdf_url_fetcher``).
+    """
+    src = block.source
+    if not isinstance(src, dict):
+        return ""
+    src_type = src.get("type")
+    if src_type == "base64":
+        media = src.get("media_type") or "image/png"
+        data = src.get("data") or ""
+        if not data:
+            return ""
+        return (
+            f'<img src="data:{escape_html(media)};base64,{escape_html(data)}" '
+            f'alt="inline image" '
+            f'style="max-width:100%;max-height:480px;height:auto;display:block;" />'
+        )
+    if src_type == "url":
+        url = src.get("url") or ""
+        if not url:
+            return ""
+        return (
+            f'<img src="{escape_html(url)}" alt="inline image" '
+            f'style="max-width:100%;max-height:480px;height:auto;display:block;" />'
+        )
+    return ""
+
+
 def render_content_block_html(block: ContentBlock, include_tools: bool = True) -> str:
     """Render a content block to HTML."""
     if block.type == "text" and block.text:
-        # Always strip TOOL_PLACEHOLDER (P1.3b).
-        return escape_html(filter_tool_placeholders(block.text))
+        # Always strip TOOL_PLACEHOLDER (P1.3b), then rewrite cc-image
+        # markers to <img> tags before HTML escape.
+        return _rewrite_cc_image_markers_to_html(filter_tool_placeholders(block.text))
+
+    if block.type == "image":
+        return _render_image_block_html(block)
 
     if block.type == "tool_use":
         if not include_tools:
@@ -478,8 +554,194 @@ def render_content_block_html(block: ContentBlock, include_tools: bool = True) -
     return ""
 
 
+# 1x1 transparent PNG used as a placeholder when an image referenced by
+# the conversation HTML can't be resolved on disk. WeasyPrint requires
+# the url_fetcher to return *some* bytes; raising here would abort the
+# entire PDF render.
+_TRANSPARENT_1x1_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+    "890000000d49444154789c6300010000000500010d0a2db40000000049454e44"
+    "ae426082"
+)
+
+
+_CC_IMAGE_PATH_RE = re.compile(r"/api/cc-image\b")
+_FILES_PROXY_PATH_RE = re.compile(r"/api/[^/]+/files/([0-9a-fA-F-]+)/(thumbnail|preview)")
+_ATTACHMENTS_PATH_RE = re.compile(
+    r"/api/attachments/([0-9a-fA-F-]+)/([0-9a-fA-F-]+)/(thumbnail|preview|original|document)"
+)
+
+
+def _resolve_cc_image_path(abs_path: str) -> Path | None:
+    """Find on-disk bytes for a ``/api/cc-image?path=<abs>`` URL.
+
+    Order:
+      1. The original absolute path (Claude Code's live cache).
+      2. The permanent cache populated at fetch time
+         (``~/.claude-exporter/cc-images/*/<sess>--<N>.*.<ext>`` —
+         pick newest mtime).
+
+    Returns None if neither exists.
+    """
+    if not abs_path:
+        return None
+    try:
+        candidate = Path(abs_path).expanduser()
+    except (OSError, ValueError):
+        return None
+    if candidate.is_file():
+        return candidate
+
+    # Fallback to the permanent cache. Mirrors backend.routers.files.get_cc_image.
+    try:
+        from .cc_image_cache import cache_dir
+    except Exception:  # pragma: no cover — defensive
+        return None
+    sess = candidate.parent.name
+    n = candidate.stem
+    ext = candidate.suffix.lstrip(".") or "png"
+    cache_root = cache_dir()
+    if not cache_root.exists():
+        return None
+    matches = list(cache_root.glob(f"*/{sess}--{n}.*.{ext}"))
+    if not matches:
+        return None
+    return max(matches, key=lambda x: x.stat().st_mtime)
+
+
+def _resolve_attachment_path(conv_uuid: str, file_uuid: str, variant: str) -> Path | None:
+    """Find on-disk bytes for a cached desktop attachment."""
+    try:
+        from .config import get_settings
+    except Exception:  # pragma: no cover
+        return None
+    data_dir = get_settings().data_dir
+    files_root = data_dir.parent / "files" if data_dir.name == "conversations" else data_dir / "files"
+    file_dir = files_root / conv_uuid / file_uuid
+    if not file_dir.is_dir():
+        return None
+    matches = sorted(file_dir.glob(f"{variant}.*"))
+    if not matches:
+        bare = file_dir / variant
+        if bare.is_file():
+            return bare
+        return None
+    return matches[0]
+
+
+def _guess_mime(path: Path) -> str:
+    mime, _ = mimetypes.guess_type(str(path))
+    return mime or "image/png"
+
+
+def _build_pdf_url_fetcher(conversation: ConversationDetail) -> Any:
+    """Build a WeasyPrint ``url_fetcher`` that resolves the URL shapes
+    our HTML emits to on-disk bytes.
+
+    Handled URL shapes:
+      * ``/api/cc-image?path=<abs>`` (and ``http(s)://.../api/cc-image?...``)
+      * ``/api/<org>/files/<uuid>/{thumbnail,preview}`` — Desktop attachment
+        proxy. Resolved against the per-conv files cache using
+        ``conversation.uuid`` from this closure.
+      * ``/api/attachments/<conv>/<file>/<variant>`` — local cached attachment.
+      * ``data:`` URLs — defer to WeasyPrint's default fetcher.
+      * Anything else — defer to the default fetcher (which will raise
+        for non-data, non-file schemes; that's fine, it's external).
+
+    Missing files emit a 1x1 transparent PNG placeholder so the PDF
+    render never aborts on a single broken image.
+    """
+    conv_uuid = conversation.uuid
+
+    def fetcher(url: str) -> dict[str, Any]:
+        if url.startswith("data:"):
+            from weasyprint.urls import default_url_fetcher
+
+            return default_url_fetcher(url)
+
+        # /api/cc-image?path=<abs>
+        if _CC_IMAGE_PATH_RE.search(url):
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query)
+            path_values = qs.get("path", [])
+            abs_path = path_values[0] if path_values else ""
+            resolved = _resolve_cc_image_path(abs_path)
+            if resolved is not None:
+                try:
+                    return {
+                        "string": resolved.read_bytes(),
+                        "mime_type": _guess_mime(resolved),
+                    }
+                except OSError as exc:
+                    log.warning("PDF url_fetcher: read failed for %s: %s", resolved, exc)
+            else:
+                log.warning("PDF url_fetcher: cc-image not found on disk: %s", abs_path)
+            return {"string": _TRANSPARENT_1x1_PNG, "mime_type": "image/png"}
+
+        # /api/<org>/files/<uuid>/{variant}
+        files_match = _FILES_PROXY_PATH_RE.search(url)
+        if files_match:
+            file_uuid = files_match.group(1)
+            variant = files_match.group(2)
+            resolved = _resolve_attachment_path(conv_uuid, file_uuid, variant)
+            if resolved is not None:
+                try:
+                    return {
+                        "string": resolved.read_bytes(),
+                        "mime_type": _guess_mime(resolved),
+                    }
+                except OSError as exc:
+                    log.warning("PDF url_fetcher: read failed for %s: %s", resolved, exc)
+            else:
+                log.warning(
+                    "PDF url_fetcher: attachment not cached for %s/%s/%s",
+                    conv_uuid, file_uuid, variant,
+                )
+            return {"string": _TRANSPARENT_1x1_PNG, "mime_type": "image/png"}
+
+        # /api/attachments/<conv>/<file>/<variant>
+        att_match = _ATTACHMENTS_PATH_RE.search(url)
+        if att_match:
+            ac_uuid = att_match.group(1)
+            file_uuid = att_match.group(2)
+            variant = att_match.group(3)
+            resolved = _resolve_attachment_path(ac_uuid, file_uuid, variant)
+            if resolved is not None:
+                try:
+                    return {
+                        "string": resolved.read_bytes(),
+                        "mime_type": _guess_mime(resolved),
+                    }
+                except OSError as exc:
+                    log.warning("PDF url_fetcher: read failed for %s: %s", resolved, exc)
+            else:
+                log.warning(
+                    "PDF url_fetcher: attachment not cached for %s/%s/%s",
+                    ac_uuid, file_uuid, variant,
+                )
+            return {"string": _TRANSPARENT_1x1_PNG, "mime_type": "image/png"}
+
+        # Anything else: defer to the default fetcher. Most non-data,
+        # non-file URLs will raise; that's the right behavior for
+        # external resources we shouldn't be trying to fetch from a PDF
+        # render.
+        from weasyprint.urls import default_url_fetcher
+
+        return default_url_fetcher(url)
+
+    return fetcher
+
+
 def create_pdf(conversation: ConversationDetail, include_tools: bool = True) -> bytes:
-    """Create a PDF from a conversation using WeasyPrint."""
+    """Create a PDF from a conversation using WeasyPrint.
+
+    Image embedding: the HTML pass emits ``<img>`` tags whose ``src``
+    points at our local API URL shapes (``/api/cc-image?path=...``,
+    ``/api/<org>/files/<uuid>/{variant}``). The PDF pass has no HTTP
+    server context, so we plumb a ``url_fetcher`` that reads bytes
+    directly from disk (with a placeholder for missing images so a
+    single broken reference doesn't abort the whole render).
+    """
     try:
         from weasyprint import HTML
     except ImportError:
@@ -488,7 +750,15 @@ def create_pdf(conversation: ConversationDetail, include_tools: bool = True) -> 
         )
 
     html_content = conversation_to_html(conversation, include_tools)
-    pdf_bytes = HTML(string=html_content).write_pdf()
+    fetcher = _build_pdf_url_fetcher(conversation)
+    # base_url is required for WeasyPrint to resolve our root-relative
+    # URLs (``/api/cc-image?path=...``) before invoking the fetcher.
+    # The scheme/host don't matter — the fetcher matches on path.
+    pdf_bytes = HTML(
+        string=html_content,
+        url_fetcher=fetcher,
+        base_url="http://claude-explorer.local/",
+    ).write_pdf()
     return pdf_bytes
 
 
