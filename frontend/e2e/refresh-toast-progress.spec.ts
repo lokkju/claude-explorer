@@ -1,5 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect, type Page } from './fixtures';
 
 /**
  * Build-9 Bug 2: Toast text MUST update with each `progress` SSE event
@@ -26,7 +25,8 @@ async function clickRefresh(page: Page) {
 }
 
 test.describe('Refresh toast: live progress text (Bug 2)', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -57,7 +57,6 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -89,7 +88,6 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -113,7 +111,6 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     // Wait for at least one toast.
@@ -144,7 +141,6 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -184,7 +180,6 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
