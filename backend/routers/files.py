@@ -169,12 +169,17 @@ _ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 def get_cc_image(path: str = Query(..., description="Absolute path under ~/.claude/image-cache/")) -> FileResponse:
     """Serve a Claude Code cached image from disk.
 
-    Path must be a *resolved* absolute path inside the configured
-    image-cache root, and must end in a known image extension.
+    Path must be an absolute path inside the configured image-cache
+    root, and must end in a known image extension. If the original file
+    has been rotated away by Claude Code, fall back to the permanent
+    cache populated at fetch time (P4b).
     """
+    # Resolve lexically so we can still validate the path against the
+    # cache root + extension allow-list when the original is gone.
+    candidate = Path(path).expanduser()
     try:
-        candidate = Path(path).expanduser().resolve(strict=True)
-    except (FileNotFoundError, OSError) as exc:
+        candidate = candidate.resolve(strict=False)
+    except OSError as exc:
         raise HTTPException(status_code=404, detail=f"image not found: {exc}") from exc
 
     root = _image_cache_root().resolve()
@@ -193,8 +198,28 @@ def get_cc_image(path: str = Query(..., description="Absolute path under ~/.clau
         )
 
     media_type = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
-    return FileResponse(
-        candidate,
-        media_type=media_type,
-        headers={"cache-control": "public, max-age=86400, stale-while-revalidate=604800"},
-    )
+    cache_headers = {
+        "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+    }
+
+    if candidate.is_file():
+        return FileResponse(candidate, media_type=media_type, headers=cache_headers)
+
+    # P4b: original is gone — try the permanent cache. The cached
+    # filename embeds <sess>--<N>.<sha8>.<ext>, so look up by parent
+    # dir name (sess) + stem (N), and glob for any sha8 variant in any
+    # conv-uuid subdir. Multiple candidates (re-fetch with different
+    # bytes) → pick the newest mtime.
+    from ..cc_image_cache import cache_dir
+
+    sess = candidate.parent.name
+    n = candidate.stem
+    ext = candidate.suffix.lstrip(".") or "png"
+    cache_root = cache_dir()
+    if cache_root.exists():
+        candidates = list(cache_root.glob(f"*/{sess}--{n}.*.{ext}"))
+        if candidates:
+            best = max(candidates, key=lambda x: x.stat().st_mtime)
+            return FileResponse(best, media_type=media_type, headers=cache_headers)
+
+    raise HTTPException(status_code=404, detail=f"image not found: {candidate}")

@@ -203,3 +203,98 @@ def test_marker_with_missing_file_logged_not_raised(cc_env, caplog):
     assert any("conv-missing" in r.message or str(bogus) in r.message for r in caplog.records), [
         r.message for r in caplog.records
     ]
+
+
+# ----------------------------------------------------------------------
+# P4b — /api/cc-image fallback to permanent cache when source is gone
+# ----------------------------------------------------------------------
+
+
+class TestApiCcImagePermanentCacheFallback:
+    """When the original on-disk file is gone, /api/cc-image must look it
+    up in the permanent cache and serve those bytes."""
+
+    def test_api_cc_image_falls_back_to_permanent_cache_when_source_gone(
+        self, cc_env
+    ):
+        from fastapi.testclient import TestClient
+
+        from backend import cc_image_cache
+        from backend.main import app
+
+        sess = "sess-fallback"
+        conv_uuid = "conv-fallback"
+        original = _write_cc_image(
+            cc_env["claude_dir"], sess, "14.png", TINY_PNG_BYTES
+        )
+        conv = _conv_with_marker(conv_uuid, original)
+
+        # Cache the bytes into the permanent cache.
+        written = cc_image_cache.cache_all_markers(conv)
+        assert len(written) == 1
+        cached = written[0]
+        assert cached.exists()
+
+        # Simulate Claude Code rotation: the original is gone.
+        original.unlink()
+        assert not original.exists()
+
+        client = TestClient(app)
+        resp = client.get("/api/cc-image", params={"path": str(original)})
+        assert resp.status_code == 200, resp.text
+        assert resp.content == TINY_PNG_BYTES
+        assert resp.headers["content-type"].startswith("image/png")
+
+    def test_api_cc_image_404_when_neither_source_nor_cache(self, cc_env):
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+
+        # The "image-cache" parent must exist so that the path-validation
+        # against the cache root can be done; but the file itself is
+        # absent and was NEVER cached.
+        (cc_env["claude_dir"] / "image-cache" / "ghost-sess").mkdir(
+            parents=True
+        )
+        ghost = (
+            cc_env["claude_dir"] / "image-cache" / "ghost-sess" / "42.png"
+        )
+
+        client = TestClient(app)
+        resp = client.get("/api/cc-image", params={"path": str(ghost)})
+        assert resp.status_code == 404
+
+    def test_api_cc_image_serves_original_when_present(self, cc_env):
+        """If the original is on disk, serve it directly (don't go via cache).
+
+        Use a distinct byte signature for the cached copy vs. the
+        original so we can prove which file was returned.
+        """
+        from fastapi.testclient import TestClient
+
+        from backend import cc_image_cache
+        from backend.main import app
+
+        sess = "sess-prefer-original"
+        conv_uuid = "conv-prefer-original"
+        original = _write_cc_image(
+            cc_env["claude_dir"], sess, "5.png", TINY_PNG_BYTES
+        )
+        conv = _conv_with_marker(conv_uuid, original)
+
+        # Populate the permanent cache.
+        written = cc_image_cache.cache_all_markers(conv)
+        assert len(written) == 1
+        cached = written[0]
+
+        # Now overwrite the cached bytes so they differ from the
+        # original. This simulates "if the route ever fell back when it
+        # shouldn't, the served bytes would be the cached ones".
+        sentinel = b"NOT-THE-ORIGINAL-BYTES"
+        cached.write_bytes(sentinel)
+        assert original.read_bytes() == TINY_PNG_BYTES
+
+        client = TestClient(app)
+        resp = client.get("/api/cc-image", params={"path": str(original)})
+        assert resp.status_code == 200, resp.text
+        assert resp.content == TINY_PNG_BYTES, "must serve original, not cache"
