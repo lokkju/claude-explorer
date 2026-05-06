@@ -1,4 +1,5 @@
 import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import type { Message } from '../src/lib/types'
 
 /**
  * P1.3a — Frontend must hide the literal Claude Desktop "tool placeholder"
@@ -58,5 +59,42 @@ test.describe('P1.3a — Tool placeholder text is hidden in the viewer', () => {
 
     // The literal Claude Desktop placeholder string MUST NOT appear.
     await expect(bubble).not.toContainText('This block is not supported')
+  })
+
+  test('placeholder INSIDE a fenced code block renders the friendly badge (not stripped)', async ({ page, mockBackend }) => {
+    const summary = makeSummary({ uuid: CD, source: 'CLAUDE_CODE', message_count: 1 })
+    const m = makeMessage({
+      uuid: 'fenced-placeholder',
+      sender: 'human',
+      text: '```typescript\nThis block is not supported on your current device yet.\n```',
+      content: [{ type: 'text', text: '```typescript\nThis block is not supported on your current device yet.\n```' }],
+    } as Partial<Message> & { uuid: string })
+    const detail = makeDetail(summary, [m])
+    await mockBackend({ conversations: [summary], details: { [CD]: detail } })
+    await page.goto(`/conversations/${CD}`)
+
+    const bubble = page.locator('[data-message-uuid="fenced-placeholder"]')
+    await expect(bubble).toBeVisible()
+    // Friendly badge should appear.
+    await expect(bubble).toContainText('Tool call or artifact not captured in export')
+  })
+
+  test('placeholder mid-paragraph is also hidden', async ({ page, mockBackend }) => {
+    const summary = makeSummary({ uuid: CD, source: 'CLAUDE_CODE', message_count: 1 })
+    const m = makeMessage({
+      uuid: 'mid-para-placeholder',
+      sender: 'human',
+      text: 'Hello. This block is not supported on your current device yet. Goodbye.',
+      content: [{ type: 'text', text: 'Hello. This block is not supported on your current device yet. Goodbye.' }],
+    } as Partial<Message> & { uuid: string })
+    const detail = makeDetail(summary, [m])
+    await mockBackend({ conversations: [summary], details: { [CD]: detail } })
+    await page.goto(`/conversations/${CD}`)
+
+    const bubble = page.locator('[data-message-uuid="mid-para-placeholder"]')
+    await expect(bubble).toBeVisible()
+    await expect(bubble).not.toContainText('This block is not supported')
+    await expect(bubble).toContainText('Hello.')
+    await expect(bubble).toContainText('Goodbye.')
   })
 })

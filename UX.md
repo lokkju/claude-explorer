@@ -266,19 +266,34 @@ The literal string
 This block is not supported on your current device yet.
 ```
 
-(usually wrapped in a fenced code block) is filtered out of every rendered
-view. This MUST happen consistently in:
+is what Claude Desktop emits in place of tool calls and artifacts that
+its current renderer cannot display. We surface it consistently across
+every export path and the in-app viewer — but the viewer and the
+exports diverge intentionally on _how_ they handle it:
 
-- The conversation viewer (frontend `MarkdownRenderer` exports
-  `TOOL_PLACEHOLDER` and strips it before render).
-- Single-file Markdown export (`backend/export.py:filter_tool_placeholders`).
-- Markdown bundle export (CommonMark and Obsidian).
-- PDF export.
-- The MCP server's exported markdown.
+- **Conversation viewer (`frontend/src/components/message/MarkdownRenderer.tsx`)**
+  - The strip is **fenced-aware**: when the placeholder is inside a
+    fenced code block (the canonical Claude Desktop shape), it is
+    **not** stripped. Instead the fenced-code renderer detects it and
+    swaps in the friendly inline badge "Tool call or artifact not
+    captured in export." The badge is shown regardless of the
+    Tools-visibility toggle, because it is a breadcrumb for missing
+    content, not a captured tool call.
+  - Outside a fence (mid-paragraph or as a bare line) the literal
+    string is stripped wherever it appears. Lines that contained
+    nothing but the placeholder are dropped entirely so we don't leave
+    phantom blank paragraphs; runs of 3+ newlines collapse back to a
+    single paragraph break.
+- **Single-file Markdown export (`backend/export.py:filter_tool_placeholders`).**
+- **Markdown bundle export (CommonMark and Obsidian).**
+- **PDF export.**
+- **The MCP server's exported markdown.**
 
 The frontend constant `TOOL_PLACEHOLDER` and the backend's
-`filter_tool_placeholders` MUST stay textually in sync — the same string,
-the same fenced-code regex.
+`filter_tool_placeholders` MUST stay textually in sync on the
+placeholder string itself. The viewer's strip behavior intentionally
+goes further than the backend regex (mid-paragraph hits + fenced-block
+preservation for the badge); the exports are a flat regex by design.
 
 ---
 

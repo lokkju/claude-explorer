@@ -1,3 +1,4 @@
+import { Children, isValidElement, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
@@ -12,31 +13,76 @@ import 'highlight.js/styles/github-dark.css'
 // `filter_tool_placeholders`). Keep both in sync — see P1.3a.
 export const TOOL_PLACEHOLDER = 'This block is not supported on your current device yet.'
 
-// Strip whole lines that are nothing but the placeholder. The backend
-// regex (`filter_tool_placeholders`) only catches the placeholder when
-// it is wrapped in ``` fences; the viewer used to inherit that gap and
-// leak the literal string when Claude Desktop emitted the placeholder
-// as bare paragraph text. Matching as a full line (with optional
-// leading whitespace) lets us collapse the surrounding blank lines too,
-// so "Hello\n\n<placeholder>\n\nWorld" renders as "Hello\n\nWorld"
-// instead of leaving a phantom blank paragraph.
-const TOOL_PLACEHOLDER_LINE_RE = /^[ \t]*This block is not supported on your current device yet\.[ \t]*\r?\n?/gm
-
+// Strip the placeholder OUTSIDE of fenced code blocks. Inside a fenced
+// code block the `code` component below renders a friendly badge
+// ("Tool call or artifact not captured in export"), so we must leave
+// the placeholder text intact so ReactMarkdown can hand it to that
+// component. Outside a fence we drop the placeholder wherever it
+// appears (line-anchored OR mid-paragraph) — Claude Desktop emits the
+// literal string both ways. We track fenced state by toggling on each
+// line that opens with ``` (with optional language tag).
 function stripToolPlaceholderText(content: string): string {
   if (!content.includes(TOOL_PLACEHOLDER)) return content
-  // Drop placeholder lines, then collapse any 3+ consecutive newlines
-  // the removal may have produced back down to a paragraph break.
-  const stripped = content.replace(TOOL_PLACEHOLDER_LINE_RE, '')
-  return stripped.replace(/\n{3,}/g, '\n\n')
+  const lines = content.split('\n')
+  const out: string[] = []
+  let inFence = false
+  for (const line of lines) {
+    // Fence open/close: ``` at start of line (optional indent + language).
+    if (/^[ \t]*```/.test(line)) {
+      inFence = !inFence
+      out.push(line)
+      continue
+    }
+    if (inFence) {
+      out.push(line)
+      continue
+    }
+    // Outside a fence: drop ALL occurrences anywhere on the line.
+    const stripped = line.split(TOOL_PLACEHOLDER).join('')
+    // If the line was non-empty before but is whitespace-only after
+    // (i.e. the placeholder was the only content on the line), drop
+    // the entire line so we don't leave a phantom blank paragraph.
+    if (stripped.trim() === '' && line.trim() !== '') continue
+    out.push(stripped)
+  }
+  // Collapse 3+ consecutive newlines down to a single paragraph break.
+  return out.join('\n').replace(/\n{3,}/g, '\n\n')
+}
+
+// Recursively flatten the text content of React children. We need this
+// because rehype-highlight wraps code-block contents in nested <span>
+// elements (one per token) before our `code` component sees them, so a
+// naive `String(children)` produces "[object Object]" rather than the
+// raw source text. Walking the tree lets us still detect the
+// TOOL_PLACEHOLDER string regardless of syntax-highlight wrapping.
+function extractTextFromChildren(children: ReactNode): string {
+  let text = ''
+  Children.forEach(children, (child) => {
+    if (typeof child === 'string' || typeof child === 'number') {
+      text += String(child)
+      return
+    }
+    if (isValidElement(child)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const props = (child as any).props
+      if (props && props.children !== undefined) {
+        text += extractTextFromChildren(props.children)
+      }
+    }
+  })
+  return text
 }
 
 interface MarkdownRendererProps {
   content: string
   className?: string
+  /** Reserved for future per-bubble tool-call gating. The unsupported
+   *  placeholder badge is intentionally always visible regardless of
+   *  this flag — see the `code` handler below. */
   showToolCalls?: boolean
 }
 
-export function MarkdownRenderer({ content, className, showToolCalls = true }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
   const cleanedContent = stripToolPlaceholderText(content)
   return (
     <ReactMarkdown
@@ -48,14 +94,17 @@ export function MarkdownRenderer({ content, className, showToolCalls = true }: M
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || '')
           const isInline = !match
-          const text = String(children).trim()
+          // rehype-highlight wraps tokens in spans, so String(children)
+          // alone is unreliable. Recurse to gather the raw text.
+          const text = extractTextFromChildren(children).trim()
 
-          // Detect Claude Desktop's "unsupported block" placeholder
+          // Detect Claude Desktop's "unsupported block" placeholder.
+          // The badge is informational — it tells the user a tool call
+          // or artifact existed in the original session but was not
+          // captured in the export. We surface it regardless of the
+          // showToolCalls toggle (the toggle hides captured tool calls
+          // and tool results, not breadcrumbs of missing ones).
           if (text === TOOL_PLACEHOLDER) {
-            // Hide completely when showToolCalls is false
-            if (!showToolCalls) {
-              return null
-            }
             return (
               <span className="my-2 flex items-center gap-2 rounded-md border border-zinc-300 bg-zinc-100 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
                 <AlertCircle className="h-4 w-4 shrink-0" />
