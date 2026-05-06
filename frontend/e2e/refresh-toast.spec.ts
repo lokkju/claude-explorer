@@ -1,5 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect, type Page } from './fixtures';
 
 /**
  * Build-1: Refresh-button toast notifications + credentials-expired handling.
@@ -14,7 +13,8 @@ async function clickRefresh(page: Page) {
 }
 
 test.describe('Refresh toast', () => {
-  test('shows in-progress toast immediately on click', async ({ page }) => {
+  test('shows in-progress toast immediately on click', async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -42,14 +42,14 @@ test.describe('Refresh toast', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     await expect(page.locator('[data-sonner-toast]').first()).toBeVisible({ timeout: 5000 });
     expect(sseClosed).toBe(true);
   });
 
-  test('shows sticky error toast on session-expired SSE event', async ({ page }) => {
+  test('shows sticky error toast on session-expired SSE event', async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -74,7 +74,6 @@ test.describe('Refresh toast', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const errorToast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -85,7 +84,8 @@ test.describe('Refresh toast', () => {
     await expect(errorToast).toBeVisible();
   });
 
-  test('toast Details link opens full progress dialog', async ({ page }) => {
+  test('toast Details link opens full progress dialog', async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -116,7 +116,6 @@ test.describe('Refresh toast', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
