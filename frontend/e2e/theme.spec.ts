@@ -1,7 +1,8 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test.describe('Theme Functionality', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    await mockBackend()
     // Clear localStorage before each test
     await page.goto('/')
     await page.evaluate(() => localStorage.clear())
