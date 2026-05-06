@@ -1,7 +1,17 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
+
+/**
+ * M5.5: converted to `./fixtures` `mockBackend`. Without mocked
+ * `/api/config` the ConnectionStatus modal pops up and intercepts
+ * pointer events on the sidebar Refresh button, so every test in this
+ * file failed under the Python-free run. The per-test
+ * `/api/fetch/refresh*` mocks remain authoritative — they're registered
+ * after `mockBackend` (via `extraRoutes`) so LIFO grants them priority
+ * over the fixture's default refresh handler.
+ */
 
 test.describe('Header Refresh button (Sidebar)', () => {
-  test('clicking the header Refresh button hits the /api/fetch/refresh SSE pipeline', async ({ page }) => {
+  test('clicking the header Refresh button hits the /api/fetch/refresh SSE pipeline', async ({ page, mockBackend }) => {
     const refreshRequests: string[] = []
     page.on('request', (req) => {
       const url = req.url()
@@ -10,15 +20,19 @@ test.describe('Header Refresh button (Sidebar)', () => {
       }
     })
 
-    await page.route('**/api/fetch/refresh*', async (route) => {
-      const body =
-        'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
-        'data: {"type":"complete","message":"Fetched 0 conversations successfully.","current":0,"total":0}\n\n'
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream',
-        body,
-      })
+    await mockBackend({
+      extraRoutes: async (p) => {
+        await p.route('**/api/fetch/refresh*', async (route) => {
+          const body =
+            'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
+            'data: {"type":"complete","message":"Fetched 0 conversations successfully.","current":0,"total":0}\n\n'
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body,
+          })
+        })
+      },
     })
 
     await page.goto('/')
@@ -38,26 +52,33 @@ test.describe('Header Refresh button (Sidebar)', () => {
   // the conversation-list query is invalidated so React Query refetches
   // /api/conversations — this is what surfaces both newly-fetched Desktop
   // sessions and any newly-discovered CC sessions in one visible action.
-  test('header Refresh re-lists conversations after the SSE pipeline completes (B5)', async ({ page }) => {
+  test('header Refresh re-lists conversations after the SSE pipeline completes (B5)', async ({ page, mockBackend }) => {
     let listRequestCount = 0
-    await page.route('**/api/conversations*', (route) => {
-      const url = new URL(route.request().url())
-      // Only count list requests, not detail/tree.
-      if (!/\/api\/conversations\/[^/?]+/.test(url.pathname)) {
-        listRequestCount += 1
-      }
-      route.fulfill({ contentType: 'application/json', body: '[]' })
-    })
-
-    await page.route('**/api/fetch/refresh*', async (route) => {
-      const body =
-        'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
-        'data: {"type":"complete","message":"Fetched 0 conversations successfully.","current":0,"total":0}\n\n'
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream',
-        body,
-      })
+    await mockBackend({
+      extraRoutes: async (p) => {
+        await p.route('**/api/conversations*', (route) => {
+          const url = new URL(route.request().url())
+          // Only count list requests, not detail/tree. Non-list requests
+          // fall back to mockBackend's defaults so future detail/tree
+          // assertions can't get a malformed `[]` body.
+          if (!/\/api\/conversations\/[^/?]+/.test(url.pathname)) {
+            listRequestCount += 1
+            route.fulfill({ contentType: 'application/json', body: '[]' })
+          } else {
+            route.fallback()
+          }
+        })
+        await p.route('**/api/fetch/refresh*', async (route) => {
+          const body =
+            'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
+            'data: {"type":"complete","message":"Fetched 0 conversations successfully.","current":0,"total":0}\n\n'
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body,
+          })
+        })
+      },
     })
 
     await page.goto('/')
@@ -74,16 +95,20 @@ test.describe('Header Refresh button (Sidebar)', () => {
     await expect.poll(() => listRequestCount).toBeGreaterThan(before)
   })
 
-  test('clicking the header Refresh button shows an error toast for at least 5 seconds when the SSE errors', async ({ page }) => {
-    await page.route('**/api/fetch/refresh*', async (route) => {
-      const body =
-        'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
-        'data: {"type":"error","message":"Network problem reaching claude.ai. Retry?","kind":"TRANSIENT","retryable":true}\n\n'
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream',
-        body,
-      })
+  test('clicking the header Refresh button shows an error toast for at least 5 seconds when the SSE errors', async ({ page, mockBackend }) => {
+    await mockBackend({
+      extraRoutes: async (p) => {
+        await p.route('**/api/fetch/refresh*', async (route) => {
+          const body =
+            'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
+            'data: {"type":"error","message":"Network problem reaching claude.ai. Retry?","kind":"TRANSIENT","retryable":true}\n\n'
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body,
+          })
+        })
+      },
     })
 
     await page.goto('/')
