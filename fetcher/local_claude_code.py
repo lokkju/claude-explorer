@@ -273,6 +273,22 @@ def import_claude_code_sessions(
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(conversation, f, indent=2)
 
+            # P4a: copy any [Image: source: <abs-path>] referenced files
+            # from ~/.claude/image-cache/ into the permanent
+            # ~/.claude-exporter/cc-images/<conv-uuid>/ cache so the
+            # viewer keeps working after Claude Code rotates the
+            # originals. Best-effort — failures are logged, never raised.
+            try:
+                from backend.cc_image_cache import cache_all_markers
+
+                cache_all_markers(conversation)
+            except Exception as e:
+                click.echo(
+                    f"  Warning: could not cache CC images for "
+                    f"{conversation.get('uuid')}: {e}",
+                    err=True,
+                )
+
             imported += 1
             name = conversation.get("name", "Untitled")[:50]
             click.echo(f"[{imported}] Imported: {name}")
