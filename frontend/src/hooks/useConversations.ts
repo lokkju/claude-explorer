@@ -14,13 +14,17 @@ export function useConversations(filters?: ConversationFilters) {
     staleTime: 5 * 60 * 1000, // 5 minutes
   })
 
-  // Filter client-side — no network round-trip per keystroke
+  // Filter client-side — no network round-trip per keystroke.
+  // Scope: title (`name`) OR `project_path` only. Intentionally NOT
+  // `summary`, because users typing in the sidebar's "Search titles
+  // and projects" input expect the placeholder's promise: matches must
+  // come from the title or the project path, not the body summary.
+  // (P1.2, 2026-05-04.)
   const data = useMemo(() => {
     if (!search?.trim() || !query.data) return query.data
     const lower = search.toLowerCase()
     return query.data.filter(c =>
       c.name.toLowerCase().includes(lower) ||
-      (c.summary ?? '').toLowerCase().includes(lower) ||
       (c.project_path ?? '').toLowerCase().includes(lower)
     )
   }, [query.data, search])

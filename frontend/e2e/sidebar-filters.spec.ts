@@ -118,3 +118,109 @@ test.describe('Sidebar filters (Build-5)', () => {
     await expect(page.getByRole('button', { name: /clear all filters/i })).toBeVisible();
   });
 });
+
+/**
+ * P1.2 — sidebar title-search scope.
+ *
+ * The sidebar's "Search titles..." input must filter on `name` OR
+ * `project_path` only. It MUST NOT match the `summary` field. User report:
+ * typing "polish" matched conversations whose title did not contain
+ * "polish" because `summary` was also being scanned.
+ *
+ * Two tests pin the contract from both sides:
+ *   (a) summary-only match -> excluded
+ *   (b) project_path-only match -> included
+ */
+test.describe('Sidebar title search scope (P1.2)', () => {
+  const summaryOnlyMatch = {
+    uuid: 'sum-1',
+    name: 'Quarterly review draft',
+    model: 'claude',
+    source: 'CLAUDE_AI',
+    is_starred: false,
+    is_temporary: false,
+    message_count: 4,
+    human_message_count: 2,
+    has_branches: false,
+    summary: 'Notes about polish on the deck',
+    created_at: '2026-04-01T10:00:00Z',
+    updated_at: '2026-04-01T10:00:00Z',
+    project_path: '/p/reviews',
+    project_name: 'reviews',
+    git_branch: 'main',
+    organization_id: null,
+    organization_name: null,
+    subagents: [],
+  };
+
+  const projectPathMatch = {
+    uuid: 'proj-1',
+    name: 'Build pipeline rework',
+    model: 'claude',
+    source: 'CLAUDE_CODE',
+    is_starred: false,
+    is_temporary: false,
+    message_count: 4,
+    human_message_count: 2,
+    has_branches: false,
+    summary: 'unrelated content',
+    created_at: '2026-04-02T10:00:00Z',
+    updated_at: '2026-04-02T10:00:00Z',
+    project_path: '/Users/me/Source/polish-app',
+    project_name: 'polish-app',
+    git_branch: 'main',
+    organization_id: null,
+    organization_name: null,
+    subagents: [],
+  };
+
+  async function mockOnly(page: import('@playwright/test').Page, rows: unknown[]) {
+    await page.route('**/api/conversations**', (route: Route) => {
+      const url = new URL(route.request().url());
+      // Skip detail and tree URLs.
+      if (/\/api\/conversations\/[^/?]+(\/tree)?($|\?)/.test(url.pathname)) {
+        route.fulfill({ contentType: 'application/json', body: '{}' });
+        return;
+      }
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify(rows) });
+    });
+    await page.route('**/api/config', (route) => {
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data_dir: '/tmp', conversation_count: rows.length }),
+      });
+    });
+    await page.route('**/api/orgs', (route) => {
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ authenticated: true, orgs: [] }),
+      });
+    });
+  }
+
+  test('summary-only match is excluded', async ({ page }) => {
+    await mockOnly(page, [summaryOnlyMatch]);
+    await page.goto('/');
+    // Row visible before typing (sanity).
+    await expect(page.getByText(summaryOnlyMatch.name)).toBeVisible();
+
+    const searchInput = page.getByTestId('sidebar-title-search');
+    await searchInput.fill('polish');
+
+    // Title and project_path do NOT contain "polish"; only summary does.
+    // The row must be hidden.
+    await expect(page.getByText(summaryOnlyMatch.name)).toHaveCount(0);
+  });
+
+  test('project_path-only match is included', async ({ page }) => {
+    await mockOnly(page, [projectPathMatch]);
+    await page.goto('/');
+    await expect(page.getByText(projectPathMatch.name)).toBeVisible();
+
+    const searchInput = page.getByTestId('sidebar-title-search');
+    await searchInput.fill('polish');
+
+    // project_path contains "polish" -> row stays visible.
+    await expect(page.getByText(projectPathMatch.name)).toBeVisible();
+  });
+});

@@ -118,7 +118,7 @@ export function Sidebar({ className }: SidebarProps) {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <Input
-            placeholder="Search titles..."
+            placeholder="Search titles and projects"
             value={searchQuery}
             onChange={(e) => {
               const next = e.target.value
