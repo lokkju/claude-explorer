@@ -400,6 +400,13 @@ function CcImageMarkerTile({
   onOpen: () => void
 }) {
   const [errored, setErrored] = useState(false)
+  const [retried, setRetried] = useState(false)
+  // P4d: on the first <img> error, swap to a cache-busted URL and let the
+  // browser retry once. The backend /api/cc-image already falls back to
+  // the permanent on-disk cache (see P4b, commit 4032c5a), so this also
+  // catches transient network hiccups before showing the friendly
+  // fallback tile.
+  const finalUrl = retried ? `${url}${url.includes('?') ? '&' : '?'}retry=1` : url
   if (errored) {
     return (
       <button
@@ -427,12 +434,18 @@ function CcImageMarkerTile({
       data-cc-image-path={path}
     >
       <img
-        src={url}
+        src={finalUrl}
         alt={filename}
         loading="lazy"
         decoding="async"
         draggable={false}
-        onError={() => setErrored(true)}
+        onError={() => {
+          if (!retried) {
+            setRetried(true)
+          } else {
+            setErrored(true)
+          }
+        }}
         className="block max-h-96 max-w-full object-contain"
       />
     </button>
@@ -491,9 +504,16 @@ function InlineImageBlock({
   onOpen: () => void
 }) {
   const [errored, setErrored] = useState(false)
+  const [retried, setRetried] = useState(false)
   if (!source) return null
   const src = imageSourceUrl(source)
   if (!src) return null
+  // P4d: retry once with a cache-buster on the first error, but only for
+  // network URLs — base64 / data: URLs can't be cache-busted, so for
+  // those we skip straight to the fallback as before.
+  const isNetworkUrl = !src.startsWith('data:')
+  const finalSrc =
+    retried && isNetworkUrl ? `${src}${src.includes('?') ? '&' : '?'}retry=1` : src
   if (errored) {
     return (
       <button
@@ -519,12 +539,18 @@ function InlineImageBlock({
       data-content-image
     >
       <img
-        src={src}
+        src={finalSrc}
         alt="Inline image"
         loading="lazy"
         decoding="async"
         draggable={false}
-        onError={() => setErrored(true)}
+        onError={() => {
+          if (!retried && isNetworkUrl) {
+            setRetried(true)
+          } else {
+            setErrored(true)
+          }
+        }}
         className="block max-h-96 max-w-full object-contain"
       />
     </button>

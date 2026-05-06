@@ -96,6 +96,53 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
     await expect(fallback).toBeVisible({ timeout: 5000 })
     await expect(fallback.locator('img')).toHaveCount(0)
   })
-})
 
-void TINY_PNG_B64
+  test('<img> auto-retries once via cache-busting URL before showing fallback tile', async ({
+    page,
+    mockBackend,
+  }) => {
+    const m = makeMessage({
+      uuid: 'cc-marker-retry',
+      sender: 'human',
+      text: 'image marker that 404s once then succeeds',
+      content: [
+        {
+          type: 'text',
+          text: 'before [Image: source: /Users/rpeck/.claude/image-cache/sess/1.png] after',
+        },
+      ],
+    } as Partial<Message> & { uuid: string })
+    const detail = makeDetail(summary, [m])
+    await mockBackend({ conversations: [summary], details: { [C]: detail } })
+
+    // First request 404s; second request (with cache-buster) returns 200
+    // with valid PNG bytes. P4d spec: the tile retries silently before
+    // giving up, so the user never sees the broken-image fallback.
+    let calls = 0
+    const tinyPng = Buffer.from(TINY_PNG_B64, 'base64')
+    await page.route('**/api/cc-image**', (route: Route) => {
+      calls += 1
+      if (calls === 1) {
+        route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'missing' }),
+        })
+      } else {
+        route.fulfill({
+          status: 200,
+          contentType: 'image/png',
+          body: tinyPng,
+        })
+      }
+    })
+
+    await page.goto(`/conversations/${C}`)
+
+    const tile = page.locator('[data-cc-image-marker]').first()
+    await expect(tile).toBeVisible({ timeout: 5000 })
+    await expect(tile.locator('img')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('[data-cc-image-marker][data-cc-image-broken]')).toHaveCount(0)
+    expect(calls).toBeGreaterThanOrEqual(2)
+  })
+})
