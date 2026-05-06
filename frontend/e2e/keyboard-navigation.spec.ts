@@ -1,10 +1,57 @@
-import { test, expect } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures';
+import type { ConversationSummary, ConversationDetail } from '../src/lib/types';
+
+/**
+ * Keyboard / accessibility coverage. Drives the SPA off a small TS-built
+ * fixture set so the tests no longer depend on a live backend or on
+ * fixture-mode JSON files on disk.
+ *
+ * The TLS fixture below mirrors the long TLS conversation that the old
+ * fixture-mode backend used to serve, so the "Enter selects focused
+ * conversation" test still has a deterministic row to focus by name.
+ */
+
+const TLS_TITLE = 'Phase 5 fixture: TLS handshakes (long)';
+const TLS_UUID = '0f415a45-9c62-8671-d4ad-53b84acb7e1a';
+
+function buildFixtures(): {
+  conversations: ConversationSummary[];
+  details: Record<string, ConversationDetail>;
+} {
+  const tlsSummary = makeSummary({
+    uuid: TLS_UUID,
+    name: TLS_TITLE,
+    message_count: 30,
+    human_message_count: 15,
+  });
+  const tlsMessages = [];
+  let prev: string | null = null;
+  for (let i = 0; i < 30; i++) {
+    const uuid = `tls-${i.toString().padStart(2, '0')}`;
+    const sender = i % 2 === 0 ? 'human' : 'assistant';
+    const text =
+      i === 0
+        ? "Hi! Let's talk about TLS. NEEDLE_HANDSHAKE"
+        : sender === 'human'
+          ? `Follow-up question ${i} about TLS handshakes.`
+          : `Answer ${i}: more on TLS handshakes.`;
+    tlsMessages.push(
+      makeMessage({ uuid, sender, text, parent_message_uuid: prev }),
+    );
+    prev = uuid;
+  }
+  const tlsDetail = makeDetail(tlsSummary, tlsMessages);
+  return {
+    conversations: [tlsSummary],
+    details: { [TLS_UUID]: tlsDetail },
+  };
+}
 
 test.describe('Keyboard Navigation', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    const { conversations, details } = buildFixtures();
+    await mockBackend({ conversations, details });
     await page.goto('/');
-    await waitForConnection(page);
     // Wait for conversations to load
     await expect(page.locator('[role="button"]').first()).toBeVisible({
       timeout: 10000,
@@ -65,7 +112,7 @@ test.describe('Keyboard Navigation', () => {
   test('keyboard does not trigger in input fields', async ({ page }) => {
     // Focus the sidebar search input by exact placeholder (avoids
     // ambiguity with the SearchPanel input which uses "Search messages...").
-    const searchInput = page.getByPlaceholder('Search titles...');
+    const searchInput = page.getByPlaceholder('Search titles and projects');
     await searchInput.focus();
 
     // Type '?' - should go into input, not open help modal
@@ -81,7 +128,7 @@ test.describe('Keyboard Navigation', () => {
   test('Enter selects focused conversation', async ({ page }) => {
     // Click on conversation list to focus a row. In fixture mode the
     // first deterministic row to look for is the long TLS conversation.
-    const row = page.getByText('Phase 5 fixture: TLS handshakes (long)');
+    const row = page.getByText(TLS_TITLE);
     await expect(row).toBeVisible({ timeout: 10000 });
     await row.focus();
 
@@ -93,7 +140,7 @@ test.describe('Keyboard Navigation', () => {
   });
 
   test('search input accepts text', async ({ page }) => {
-    const searchInput = page.getByPlaceholder('Search titles...');
+    const searchInput = page.getByPlaceholder('Search titles and projects');
 
     // Type something
     await searchInput.fill('test query');
@@ -105,7 +152,7 @@ test.describe('Keyboard Navigation', () => {
   });
 
   test('clicking on sidebar search focuses input', async ({ page }) => {
-    const searchInput = page.getByPlaceholder('Search titles...');
+    const searchInput = page.getByPlaceholder('Search titles and projects');
 
     // Click on search input
     await searchInput.click();
@@ -116,7 +163,9 @@ test.describe('Keyboard Navigation', () => {
 });
 
 test.describe('Vim Mode', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    const { conversations, details } = buildFixtures();
+    await mockBackend({ conversations, details });
     // Switch to Vim mode
     await page.goto('/settings');
     // Wait for the Vim label to be visible before clicking
@@ -126,7 +175,6 @@ test.describe('Vim Mode', () => {
     // Wait for setting to be saved in localStorage
     await page.waitForTimeout(500);
     await page.goto('/');
-    await waitForConnection(page);
   });
 
   test('help modal shows Vim shortcuts', async ({ page }) => {
@@ -147,21 +195,21 @@ test.describe('Vim Mode', () => {
     await page.keyboard.press('/');
 
     // Search input should be focused
-    const searchInput = page.getByPlaceholder('Search titles...');
+    const searchInput = page.getByPlaceholder('Search titles and projects');
     await expect(searchInput).toBeFocused();
   });
 });
 
 test.describe('Emacs Mode', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    const { conversations, details } = buildFixtures();
+    await mockBackend({ conversations, details });
     // Ensure Emacs mode is selected
     await page.goto('/settings');
-    await waitForConnection(page, { waitForConversations: false });
     await page.click('label:has-text("Emacs")');
     // Wait for setting to be saved
     await page.waitForTimeout(500);
     await page.goto('/');
-    await waitForConnection(page);
   });
 
   test('help modal shows Emacs shortcuts', async ({ page }) => {
@@ -180,15 +228,16 @@ test.describe('Emacs Mode', () => {
     await page.keyboard.press('Control+s');
 
     // Search input should be focused
-    const searchInput = page.getByPlaceholder('Search titles...');
+    const searchInput = page.getByPlaceholder('Search titles and projects');
     await expect(searchInput).toBeFocused();
   });
 });
 
 test.describe('Accessibility', () => {
-  test('page has proper heading structure', async ({ page }) => {
+  test('page has proper heading structure', async ({ page, mockBackend }) => {
+    const { conversations, details } = buildFixtures();
+    await mockBackend({ conversations, details });
     await page.goto('/');
-    await waitForConnection(page);
 
     // Wait for page to load
     await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
@@ -206,9 +255,10 @@ test.describe('Accessibility', () => {
     expect(headings).toBeGreaterThan(0);
   });
 
-  test('interactive elements are keyboard accessible', async ({ page }) => {
+  test('interactive elements are keyboard accessible', async ({ page, mockBackend }) => {
+    const { conversations, details } = buildFixtures();
+    await mockBackend({ conversations, details });
     await page.goto('/');
-    await waitForConnection(page);
 
     // Wait for page to load
     await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
@@ -228,9 +278,10 @@ test.describe('Accessibility', () => {
     }
   });
 
-  test('conversation list items have accessible names', async ({ page }) => {
+  test('conversation list items have accessible names', async ({ page, mockBackend }) => {
+    const { conversations, details } = buildFixtures();
+    await mockBackend({ conversations, details });
     await page.goto('/');
-    await waitForConnection(page);
 
     // Wait for conversations
     await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
@@ -247,11 +298,12 @@ test.describe('Accessibility', () => {
     }
   });
 
-  test('form inputs have associated labels or placeholders', async ({ page }) => {
+  test('form inputs have associated labels or placeholders', async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.goto('/');
 
     // Search input should have placeholder
-    const searchInput = page.getByPlaceholder('Search titles...');
+    const searchInput = page.getByPlaceholder('Search titles and projects');
     await expect(searchInput).toBeVisible();
 
     // Placeholder serves as accessible name
@@ -263,7 +315,8 @@ test.describe('Accessibility', () => {
   // invalidation of the conversation list rather than a full browser
   // reload. The article calls this out (line 135) because losing the
   // single-page state on every refresh is the classic SPA gotcha.
-  test('Cmd+R invalidates the conversation list query without a browser reload (B9)', async ({ page }) => {
+  test('Cmd+R invalidates the conversation list query without a browser reload (B9)', async ({ page, mockBackend }) => {
+    await mockBackend({});
     let listRequestCount = 0
     await page.route('**/api/conversations*', (route) => {
       const url = new URL(route.request().url())
