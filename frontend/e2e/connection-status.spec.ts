@@ -1,4 +1,13 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
+
+// M5.5: converted to `./fixtures`. Tests 1-7 deliberately block all
+// `/api/**` to exercise the offline-backend UX, so they don't need
+// mockBackend at all. Test 8 ("dialog closes automatically") needs the
+// mocked backend to be reachable AFTER the initial block lifts —
+// previously it used `route.continue()`, which would leak to the live
+// backend on :8000. With mockBackend installed first, the per-test
+// `/api` route can use `route.fallback()` to delegate to the fixture
+// mocks once `blockRequests=false`.
 
 test.describe('Connection Status', () => {
   test('shows connecting dialog when backend is unavailable', async ({ page }) => {
@@ -121,16 +130,22 @@ test.describe('Connection Status', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible();
   });
 
-  test('dialog closes automatically when backend becomes available', async ({ page }) => {
+  test('dialog closes automatically when backend becomes available', async ({ page, mockBackend }) => {
+    // Install the mocked backend FIRST so its routes exist when we lift
+    // the per-test block. Once `blockRequests=false`, the per-test
+    // `**/api/**` handler falls through (via `route.fallback()`) to the
+    // mockBackend defaults — never to the live :8000 backend.
+    await mockBackend({});
+
     let blockRequests = true;
 
-    // Initially block API requests
+    // Initially block API requests. Registered AFTER mockBackend so this
+    // handler runs first (LIFO); when unblocked, falls through.
     await page.route('**/api/**', async (route) => {
       if (blockRequests) {
         await route.abort('connectionrefused');
       } else {
-        // Allow requests through by fetching normally
-        await route.continue();
+        await route.fallback();
       }
     });
 
