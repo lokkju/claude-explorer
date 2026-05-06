@@ -60,7 +60,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   // Ephemeral (per-session) toggles — not persisted anywhere.
   const [showToolCalls, setShowToolCalls] = useState(false)
   const [expandAllTools, setExpandAllTools] = useState(false)
-  const [showPhantomSessions, setShowPhantomSessions] = useState(false)
+
+  // P3d: showPhantomSessions persists via usePreferences (was ephemeral
+  // useState before). Server PATCH + localStorage mirror under
+  // 'showPhantomSessions'.
+  const [showPhantomSessions, setShowPhantomSessions] = usePreferences<boolean>(
+    'showPhantomSessions',
+    false,
+  )
 
   // P3c — persisted prefs migrated to dual-read/dual-write via
   // usePreferences. The localStorage *keys* are the same legacy strings

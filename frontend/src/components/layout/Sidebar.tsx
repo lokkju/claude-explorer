@@ -232,6 +232,7 @@ export function Sidebar({ className }: SidebarProps) {
                 checked={showPhantomSessions}
                 onChange={(e) => setShowPhantomSessions(e.target.checked)}
                 className="h-3 w-3 rounded border-zinc-300"
+                data-testid="show-phantom-sessions-toggle"
               />
               <span>Empty</span>
             </label>

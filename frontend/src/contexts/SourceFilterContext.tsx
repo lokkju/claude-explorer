@@ -1,5 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 import type { SourceFilter } from '@/lib/types'
+import { usePreferences } from '@/hooks/usePreferences'
 
 interface SourceFilterContextType {
   sourceFilter: SourceFilter
@@ -12,34 +13,23 @@ interface SourceFilterContextType {
 
 const SourceFilterContext = createContext<SourceFilterContextType | null>(null)
 
+// Legacy key kept verbatim so existing browser sessions keep working
+// without a rename. usePreferences PATCHes the server under this same
+// key string AND mirrors the value into localStorage[key].
 const ORG_FILTER_STORAGE_KEY = 'claude-explorer.organizationFilter'
 
 export function SourceFilterProvider({ children }: { children: ReactNode }) {
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
-  const [organizationId, setOrganizationIdState] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null
-    try {
-      const v = window.localStorage.getItem(ORG_FILTER_STORAGE_KEY)
-      return v === '' ? null : v
-    } catch {
-      return null
-    }
-  })
-
-  // Persist organizationId across reloads.
-  useEffect(() => {
-    try {
-      if (organizationId === null) {
-        window.localStorage.removeItem(ORG_FILTER_STORAGE_KEY)
-      } else {
-        window.localStorage.setItem(ORG_FILTER_STORAGE_KEY, organizationId)
-      }
-    } catch {
-      // localStorage may be unavailable in private browsing.
-    }
-  }, [organizationId])
-
-  const setOrganizationId = (orgId: string | null) => setOrganizationIdState(orgId)
+  // P3d: dual-read/dual-write via usePreferences. sourceFilter was
+  // ephemeral useState before this commit — now persisted so a Claude
+  // Code-only user doesn't have to re-pick the filter every reload.
+  const [sourceFilter, setSourceFilter] = usePreferences<SourceFilter>(
+    'sourceFilter',
+    'all',
+  )
+  const [organizationId, setOrganizationId] = usePreferences<string | null>(
+    ORG_FILTER_STORAGE_KEY,
+    null,
+  )
 
   return (
     <SourceFilterContext.Provider
