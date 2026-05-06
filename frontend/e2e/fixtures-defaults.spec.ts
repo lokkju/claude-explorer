@@ -64,22 +64,23 @@ test.describe('mockBackend default routes (M1)', () => {
     await page.goto('http://localhost:5173/__bootstrap__')
   })
 
-  test('GET /api/config returns AppConfig JSON', async ({ page, mockBackend }) => {
+  test('GET /api/config returns AppConfig JSON without conversation_count', async ({ page, mockBackend }) => {
     await mockBackend({})
     const r = await fetchOnPage(page, '/api/config')
     expect(r.status).toBe(200)
     expect(r.contentType).toMatch(/application\/json/)
     const body = JSON.parse(r.body)
     expect(body).toHaveProperty('data_dir')
-    expect(body).toHaveProperty('conversation_count')
+    expect(body).not.toHaveProperty('conversation_count')
   })
 
-  test('GET /api/config/stats returns AppConfig JSON', async ({ page, mockBackend }) => {
+  test('GET /api/config/stats returns AppConfigStats JSON with conversation_count', async ({ page, mockBackend }) => {
     await mockBackend({})
     const r = await fetchOnPage(page, '/api/config/stats')
     expect(r.status).toBe(200)
     const body = JSON.parse(r.body)
     expect(body).toHaveProperty('data_dir')
+    expect(body).toHaveProperty('conversation_count')
   })
 
   test('GET /api/orgs returns OrgsResponse', async ({ page, mockBackend }) => {

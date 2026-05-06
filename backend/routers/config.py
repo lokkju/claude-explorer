@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from ..models import AppConfig
+from ..models import AppConfig, AppConfigStats
 from ..config import get_settings
 
 router = APIRouter(tags=["config"])
@@ -23,20 +23,18 @@ async def get_config() -> AppConfig:
     loop, which manifested as the "Connecting to Backend" modal
     cycling through retries.
 
-    Conversation count moved to a separate endpoint
-    (``/config/stats``) that callers use only when actually needed
-    (Settings page).
+    The conversation count moved to a separate endpoint
+    (``/config/stats``) and the field was REMOVED from this response
+    entirely (2026-05-06): keeping a hardcoded 0 was misleading to
+    anyone curling the endpoint directly.
     """
     settings = get_settings()
-    return AppConfig(
-        data_dir=str(settings.data_dir),
-        conversation_count=0,
-    )
+    return AppConfig(data_dir=str(settings.data_dir))
 
 
-@router.get("/config/stats", response_model=AppConfig)
-async def get_config_stats() -> AppConfig:
-    """Same as /config but populates conversation_count.
+@router.get("/config/stats", response_model=AppConfigStats)
+async def get_config_stats() -> AppConfigStats:
+    """`/config` plus the populated conversation count.
 
     Slow on cold cache; intended for the Settings page where the user
     is willing to wait.
@@ -45,7 +43,7 @@ async def get_config_stats() -> AppConfig:
 
     settings = get_settings()
     store = ConversationStore()
-    return AppConfig(
+    return AppConfigStats(
         data_dir=str(settings.data_dir),
         conversation_count=store.count_conversations(),
     )

@@ -187,6 +187,9 @@ export interface Bookmark {
 
 export interface AppConfig {
   data_dir: string
+}
+
+export interface AppConfigStats extends AppConfig {
   conversation_count: number
 }
 

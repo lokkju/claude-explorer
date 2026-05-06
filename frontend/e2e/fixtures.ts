@@ -1,6 +1,7 @@
 import { test as base, expect, type Page, type Route } from '@playwright/test'
 import type {
   AppConfig,
+  AppConfigStats,
   ConversationDetail,
   ConversationSummary,
   ConversationTree,
@@ -153,8 +154,11 @@ export const test = base.extend<Fixtures>({
       const orgs = opts.orgs ?? DEFAULT_ORGS
       const config: AppConfig = {
         data_dir: '/tmp',
-        conversation_count: conversations.length,
         ...(opts.config ?? {}),
+      }
+      const configStats: AppConfigStats = {
+        ...config,
+        conversation_count: conversations.length,
       }
 
       // Per-test mutable preferences state. Deep-copy seed so callers
@@ -196,7 +200,7 @@ export const test = base.extend<Fixtures>({
       })
 
       await page.route('**/api/config/stats', (route: Route) => {
-        route.fulfill({ contentType: 'application/json', body: JSON.stringify(config) })
+        route.fulfill({ contentType: 'application/json', body: JSON.stringify(configStats) })
       })
 
       // -----------------------------------------------------------------

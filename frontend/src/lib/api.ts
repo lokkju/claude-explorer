@@ -8,6 +8,7 @@ import type {
   SortField,
   SortOrder,
   AppConfig,
+  AppConfigStats,
   Bookmark,
   ApiError as ApiErrorType,
 } from './types'
@@ -88,7 +89,7 @@ export const api = {
 
   getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),
 
-  getConfigStats: (): Promise<AppConfig> => fetchJson<AppConfig>('/config/stats'),
+  getConfigStats: (): Promise<AppConfigStats> => fetchJson<AppConfigStats>('/config/stats'),
 
   exportMarkdown: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
     fetch(`${BASE_URL}/conversations/${uuid}/export/markdown?include_tools=${showToolCalls}`),

@@ -194,7 +194,6 @@ export const mockSearchResults: SearchResult[] = [
 // Mock app config
 export const mockConfig: AppConfig = {
   data_dir: '/Users/test/.claude-exporter/conversations',
-  conversation_count: 72,
 };
 
 // Mock conversation tree with branches

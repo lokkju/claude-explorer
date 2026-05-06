@@ -141,7 +141,22 @@ class SearchResult(BaseModel):
 
 
 class AppConfig(BaseModel):
-    """Application configuration for the frontend."""
+    """Application configuration for the frontend.
+
+    Lightweight: returned by `/api/config`, polled on every page load.
+    Anything that requires walking the conversation directory belongs
+    on `AppConfigStats` (served by `/api/config/stats`).
+    """
 
     data_dir: str
+
+
+class AppConfigStats(AppConfig):
+    """`AppConfig` plus stats that require disk I/O.
+
+    Returned by `/api/config/stats`. Slow on cold cache (~2.5s for ~600
+    conversations); call only from screens where the user is willing to
+    wait (Settings).
+    """
+
     conversation_count: int
