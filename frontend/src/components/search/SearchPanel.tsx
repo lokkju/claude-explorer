@@ -198,6 +198,41 @@ export function SearchPanel() {
         </button>
       </div>
 
+      {/* Scope chip — mirrors the conversation-header pin button.
+          Rendered OUTSIDE the per-tab gate (P2 2026-05-04 finding):
+          pin state is global, and users whose persisted right-pane tab
+          is 'bookmarks' would otherwise never see the chip when they
+          open the panel — making it look like the pin had no effect. */}
+      {pinScope.kind !== 'none' && (
+        <div className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+          <div
+            className="inline-flex max-w-full items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300"
+            data-testid="search-scope-chip"
+            data-scope-kind={pinScope.kind}
+          >
+            <Pin className="h-3 w-3 shrink-0" />
+            <span className="truncate">
+              In:{' '}
+              <span className="font-medium">
+                {pinScope.kind === 'conversation' ? pinScope.name || 'this conversation' : pinScope.name}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                unpin()
+                inputRef.current?.focus()
+              }}
+              aria-label="Clear search pin"
+              className="ml-1 rounded p-0.5 hover:bg-blue-100 dark:hover:bg-blue-900"
+              data-testid="search-scope-chip-clear"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {rightPaneTab === 'bookmarks' && <BookmarksPanel />}
 
       {rightPaneTab === 'search' && (
@@ -225,35 +260,6 @@ export function SearchPanel() {
             />
           </div>
         </div>
-
-        {/* Scope chip — mirrors the conversation-header pin button. */}
-        {pinScope.kind !== 'none' && (
-          <div
-            className="mt-2 inline-flex max-w-full items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300"
-            data-testid="search-scope-chip"
-            data-scope-kind={pinScope.kind}
-          >
-            <Pin className="h-3 w-3 shrink-0" />
-            <span className="truncate">
-              In:{' '}
-              <span className="font-medium">
-                {pinScope.kind === 'conversation' ? pinScope.name || 'this conversation' : pinScope.name}
-              </span>
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                unpin()
-                inputRef.current?.focus()
-              }}
-              aria-label="Clear search pin"
-              className="ml-1 rounded p-0.5 hover:bg-blue-100 dark:hover:bg-blue-900"
-              data-testid="search-scope-chip-clear"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-        )}
 
         {/* Sort controls — mirror left sidebar; default updated_at + desc. */}
         <div className="mt-3 flex items-center gap-1">
