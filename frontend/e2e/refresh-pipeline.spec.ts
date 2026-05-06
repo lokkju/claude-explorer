@@ -1,5 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect, type Page } from './fixtures';
 
 /**
  * Build-9: One-button Refresh — capture + fetch pipeline.
@@ -26,7 +25,8 @@ async function clickRefresh(page: Page) {
 }
 
 test.describe('Refresh pipeline (capture + fetch)', () => {
-  test('toast walks through capture phases on missing credentials', async ({ page }) => {
+  test('toast walks through capture phases on missing credentials', async ({ page, mockBackend }) => {
+    await mockBackend({});
     // Status reports no credentials so the pipeline starts with capture.
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
@@ -56,7 +56,6 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -65,7 +64,8 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
     await expect(toast).toContainText(/Fetched 3 conversations/i, { timeout: 5000 });
   });
 
-  test('refresh button is disabled while pipeline is running', async ({ page }) => {
+  test('refresh button is disabled while pipeline is running', async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -93,7 +93,6 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
 
     const refreshButton = page.locator('aside button[title="Refresh conversation list"]');
     await refreshButton.click();
@@ -102,7 +101,8 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
     await expect(refreshButton).toBeDisabled({ timeout: 1000 });
   });
 
-  test('sticky error toast on capture failure exposes a Retry action', async ({ page }) => {
+  test('sticky error toast on capture failure exposes a Retry action', async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -128,7 +128,6 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const errorToast = page.locator('[data-sonner-toast][data-type="error"]').first();
