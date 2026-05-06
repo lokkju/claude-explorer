@@ -17,6 +17,7 @@ import { CompactMarker } from '@/components/conversation/CompactMarker'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
 import { PinScopeButton } from '@/components/search/PinScopeButton'
+import { MarkdownExportDialog } from '@/components/conversation/MarkdownExportDialog'
 import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
 
@@ -33,8 +34,6 @@ export function ConversationPage() {
     setExpandAllTools,
     hideCompactMarkers,
     setHideCompactMarkers,
-    markdownBundleImages,
-    markdownDialect,
   } = useSettings()
   const { toggleBookmark } = useBookmarks()
   const queryClient = useQueryClient()
@@ -52,6 +51,7 @@ export function ConversationPage() {
     setFocusArea,
   } = useKeyboardNavigation()
   const [isTreeOpen, setIsTreeOpen] = useState(false)
+  const [markdownDialogOpen, setMarkdownDialogOpen] = useState(false)
   const [copiedAll, setCopiedAll] = useState(false)
   const [copiedUuid, setCopiedUuid] = useState(false)
   const [copiedPath, setCopiedPath] = useState(false)
@@ -271,26 +271,6 @@ export function ConversationPage() {
     )
   }
 
-  const handleExportMarkdown = async () => {
-    // Issue #4: when Settings → "Bundle images as a zip" is on, hit
-    // the bundle endpoint that ships conversation.md + images/ in a
-    // self-contained zip with relative refs. Otherwise emit the
-    // single-file .md (default behavior).
-    if (markdownBundleImages) {
-      const response = await api.exportMarkdownBundle(
-        conversation.uuid,
-        showToolCalls,
-        markdownDialect,
-      )
-      const blob = await response.blob()
-      downloadBlob(blob, `${sanitizeFilename(conversation.name)}.zip`)
-      return
-    }
-    const response = await api.exportMarkdown(conversation.uuid, showToolCalls)
-    const blob = await response.blob()
-    downloadBlob(blob, `${sanitizeFilename(conversation.name)}.md`)
-  }
-
   const handleExportPdf = async () => {
     const response = await api.exportPdf(conversation.uuid, showToolCalls)
     const blob = await response.blob()
@@ -498,7 +478,7 @@ export function ConversationPage() {
             )}
             <span className="ml-2">Copy as Markdown</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExportMarkdown}>
+          <Button variant="outline" size="sm" onClick={() => setMarkdownDialogOpen(true)}>
             <FileText className="h-4 w-4" />
             <span className="ml-2">Markdown</span>
           </Button>
@@ -602,6 +582,13 @@ export function ConversationPage() {
         </div>
       </div>
       </ConversationLightboxProvider>
+
+      <MarkdownExportDialog
+        open={markdownDialogOpen}
+        onOpenChange={setMarkdownDialogOpen}
+        conversationUuid={conversation.uuid}
+        conversationName={conversation.name || 'conversation'}
+      />
 
       {/* Tree View Modal */}
       {conversation.has_branches && (
