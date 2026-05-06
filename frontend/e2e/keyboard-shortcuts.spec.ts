@@ -412,11 +412,12 @@ test.describe('Keyboard — Vim navigation (B15, article-corrected)', () => {
     await expect(page).toHaveURL(new RegExp(`/conversations/${C1}`))
 
     // '/' focuses the sidebar search input.
-    // The sidebar search has placeholder "Search titles...".
-    // Click the sidebar to set focusArea to 'list' first.
+    // The sidebar search placeholder is "Search titles and projects"
+    // (renamed when project filtering shipped). Click the sidebar to
+    // set focusArea to 'list' first.
     await page.locator('aside.w-80').click()
     await page.keyboard.press('/')
-    const sidebarSearch = page.getByPlaceholder('Search titles...')
+    const sidebarSearch = page.getByPlaceholder('Search titles and projects')
     await expect(sidebarSearch).toBeFocused()
   })
 })
