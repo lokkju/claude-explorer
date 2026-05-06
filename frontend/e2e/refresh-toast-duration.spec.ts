@@ -1,5 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect, type Page } from './fixtures';
 
 /**
  * Bug C: Error toasts must remain visible long enough for the user to
@@ -25,7 +24,8 @@ async function clickRefresh(page: Page) {
 }
 
 test.describe('Refresh error toast duration (Bug C)', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    await mockBackend({});
     await page.route('**/api/fetch/status', async (route) => {
       await route.fulfill({
         status: 200,
@@ -54,7 +54,6 @@ test.describe('Refresh error toast duration (Bug C)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -79,7 +78,6 @@ test.describe('Refresh error toast duration (Bug C)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -106,7 +104,6 @@ test.describe('Refresh error toast duration (Bug C)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -132,7 +129,6 @@ test.describe('Refresh error toast duration (Bug C)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -155,7 +151,6 @@ test.describe('Refresh error toast duration (Bug C)', () => {
     });
 
     await page.goto('/');
-    await waitForConnection(page, { waitForConversations: false });
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
