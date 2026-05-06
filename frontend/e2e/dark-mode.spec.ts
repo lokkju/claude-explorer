@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures'
 
 /**
  * Dark-mode runtime application (Build-8 #7).
@@ -10,7 +10,8 @@ import { test, expect } from '@playwright/test';
  */
 
 test.describe('Dark mode runtime', () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, mockBackend }) => {
+    await mockBackend();
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
