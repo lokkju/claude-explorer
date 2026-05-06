@@ -110,21 +110,18 @@ export function PinScopeButton({
               testId="pin-this-project"
             />
           )}
-          {isAnyActive && (
-            <>
-              <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-700" />
-              <button
-                type="button"
-                role="menuitem"
-                onClick={onUnpin}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                data-testid="pin-unpin"
-              >
-                <PinOff className="h-4 w-4" />
-                Unpin search scope
-              </button>
-            </>
-          )}
+          <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-700" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={onUnpin}
+            disabled={!isAnyActive}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent dark:disabled:hover:bg-transparent"
+            data-testid="pin-unpin"
+          >
+            <PinOff className="h-4 w-4" />
+            Unpin search scope
+          </button>
         </div>
       )}
     </div>

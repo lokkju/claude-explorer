@@ -201,6 +201,17 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
     await expect(page).not.toHaveURL(/[?&]pin=/, { timeout: 3000 })
   })
 
+  test('Unpin item is always visible in dropdown (disabled when no pin)', async ({ page, mockBackend }) => {
+    await mockBackend({ conversations: summaries, details })
+    await page.goto(`/conversations/${A}`)
+    // Open dropdown WITHOUT pinning anything.
+    await page.getByTestId('pin-scope-button').click()
+    await expect(page.getByTestId('pin-scope-menu')).toBeVisible()
+    const unpin = page.getByTestId('pin-unpin')
+    await expect(unpin).toBeVisible()
+    await expect(unpin).toBeDisabled()
+  })
+
   test('Pin survives reload via URL param', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
     await page.goto(`/conversations/${A}?pin=conv:${A}`)

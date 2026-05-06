@@ -178,7 +178,12 @@ navigating with arrow keys.
 - Opens a dropdown with three items, in this order:
   1. **Pin this conversation**
   2. **Pin this project**
-  3. **Unpin** — always visible; disabled when nothing is pinned.
+  3. **Unpin** — always rendered in the dropdown (the divider + button
+     are NOT conditional on an active pin). When no pin is active, the
+     button is disabled (`opacity-50`, `cursor-not-allowed`, and the
+     native `disabled` attribute so clicks are ignored). This keeps the
+     Unpin affordance discoverable so users learn the gesture before
+     they need it.
 
 ### Cmd+G honors the scope
 
