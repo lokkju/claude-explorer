@@ -338,7 +338,25 @@ test.describe('Claude Code [Image: source: <path>] text markers (Pattern B)', ()
       ],
     } as Partial<Message> & { uuid: string })
     const detail = makeDetail(summary, [m])
-    await mockBackend({ conversations: [summary], details: { [C]: detail } })
+    // M5.5: this test asserts EXACTLY two <img> elements remain after the
+    // markers render. The fixture default for `/api/cc-image` is 404,
+    // which causes <img onError> to swap to the broken-image fallback
+    // button (no <img>) — flaky under load. Override to serve real PNG
+    // bytes so both markers stay as <img>s, matching the success path
+    // a developer would see when the on-disk cache has the file.
+    await mockBackend({
+      conversations: [summary],
+      details: { [C]: detail },
+      extraRoutes: async (p) => {
+        await p.route('**/api/cc-image**', (route: Route) => {
+          route.fulfill({
+            status: 200,
+            contentType: 'image/png',
+            body: PNG_BYTES,
+          })
+        })
+      },
+    })
 
     await page.goto(`/conversations/${C}`)
     const bubble = page.locator('[data-message-uuid="cc-multi-marker"]')
