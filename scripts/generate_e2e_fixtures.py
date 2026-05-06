@@ -344,18 +344,6 @@ backend/tests/fixtures/
 | `Phase 5 fixture: Tool calls` | Desktop (tool_use + tool_result) | `NEEDLE_TOOL` | search.spec.ts (tool-block search) |
 | `Hi! NEEDLE_CC — fixture session ...` | Claude Code | `NEEDLE_CC` | conversations.spec.ts (CC source) |
 
-## Live mode
-
-To run the suite against your own real data instead of the fixtures:
-
-```bash
-cd frontend && npm run test:e2e:live
-```
-
-This unsets the env vars so the backend boots against
-`~/.claude-exporter/conversations` and `~/.claude/projects` as in
-production.
-
 ## Refreshing
 
 After changing the generator:
