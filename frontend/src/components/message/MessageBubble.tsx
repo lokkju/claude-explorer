@@ -413,14 +413,16 @@ function CcImageMarkerTile({
         type="button"
         onClick={onOpen}
         className="my-2 flex items-center gap-2 rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
-        aria-label={`${filename} (unavailable)`}
-        title="Image unavailable"
+        aria-label={`Image not in cache: ${filename}`}
+        title="Original was rotated by Claude Code; this image was not present at fetch time, so we couldn't cache it."
         data-cc-image-marker
         data-cc-image-broken
         data-cc-image-path={path}
       >
         <ImageOff className="h-4 w-4 shrink-0" />
-        <span className="truncate font-mono">{filename}</span>
+        <span className="truncate">
+          Image not in cache: <span className="font-mono">{filename}</span>
+        </span>
       </button>
     )
   }
@@ -520,13 +522,13 @@ function InlineImageBlock({
         type="button"
         onClick={onOpen}
         className="my-2 flex items-center gap-2 rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 py-3 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
-        aria-label="Inline image (unavailable)"
-        title="Image unavailable"
+        aria-label="Image not in cache: inline image"
+        title="Original was rotated by Claude Code; this image was not present at fetch time, so we couldn't cache it."
         data-content-image
         data-content-image-broken
       >
         <ImageOff className="h-4 w-4 shrink-0" />
-        <span className="truncate font-mono">inline image</span>
+        <span className="truncate">Image not in cache: inline image</span>
       </button>
     )
   }

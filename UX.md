@@ -407,15 +407,24 @@ hammer the backend on broken paths.
 
 ### Fallback tile
 
-The "image unavailable" placeholder:
+The "image not in cache" placeholder (CC marker images and inline image
+content blocks):
 
 - Dashed border (`border-dashed border-zinc-300`).
 - `ImageOff` icon from lucide-react.
-- The original `file_name` shown in `font-mono` truncated text.
+- Visible label: `"Image not in cache: <file_name>"` (the filename
+  segment is `font-mono`).
 - Clickable (opens the lightbox at this image's index, which then shows
   "Image unavailable" — matches Section 14's behavior so the user still
   has a way to navigate siblings).
-- `aria-label`: `"<alt text> (unavailable)"`.
+- `aria-label`: `"Image not in cache: <file_name>"`.
+- `title` tooltip explains the most common root cause:
+  `"Original was rotated by Claude Code; this image was not present at
+  fetch time, so we couldn't cache it."`
+
+The clearer copy + tooltip exist because users were reading the bare
+filename + broken-image styling as an app bug rather than a known
+limitation of CC's image-cache rotation.
 
 ### Permanent cache locations
 

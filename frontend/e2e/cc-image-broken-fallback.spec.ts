@@ -97,6 +97,38 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
     await expect(fallback.locator('img')).toHaveCount(0)
   })
 
+  test('fallback tile shows clearer cache-miss copy and tooltip', async ({ page, mockBackend }) => {
+    const m = makeMessage({
+      uuid: 'msg-marker-copy',
+      sender: 'human',
+      text: 'has a missing image marker',
+      content: [
+        {
+          type: 'text',
+          text: 'before [Image: source: /Users/rpeck/.claude/image-cache/abc/14.png] after',
+        },
+      ],
+    } as Partial<Message> & { uuid: string })
+    const detail = makeDetail(summary, [m])
+    await mockBackend({ conversations: [summary], details: { [C]: detail } })
+    await mockCcImage404(page)
+
+    await page.goto(`/conversations/${C}`)
+
+    const fallback = page.locator('[data-cc-image-marker][data-cc-image-broken]').first()
+    await expect(fallback).toBeVisible({ timeout: 5000 })
+
+    // Clearer copy: explicitly says the image is not in cache (not just
+    // the bare filename or a generic "unavailable" label).
+    await expect(fallback).toContainText(/Image not in cache/i)
+    await expect(fallback).toContainText('14.png')
+
+    // Tooltip explains *why*: CC rotates originals, so anything not
+    // present at fetch time can't be cached.
+    const titleAttr = await fallback.getAttribute('title')
+    expect(titleAttr).toMatch(/rotated by Claude Code/i)
+  })
+
   test('<img> auto-retries once via cache-busting URL before showing fallback tile', async ({
     page,
     mockBackend,
