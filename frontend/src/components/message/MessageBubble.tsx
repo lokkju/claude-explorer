@@ -88,9 +88,10 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
   return (
     <div
       data-message-uuid={message.uuid}
+      tabIndex={-1}
       {...(bubbleToolsCollapsed ? { 'data-collapsed': '' } : {})}
       className={cn(
-        'group flex gap-3',
+        'group flex gap-3 focus:outline-none',
         isHuman ? 'flex-row-reverse' : 'flex-row'
       )}
     >

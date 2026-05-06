@@ -149,18 +149,14 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
     // Enter on the input commits "open active match" → focuses the message.
     await page.keyboard.press('Enter')
 
-    // Panel stays open (aria-hidden=false).
-    const panel = page.locator('[data-testid="search-panel"], [aria-label="Search panel"]').first()
-    // Fall back to the input visibility test if panel container has no
-    // testid yet — input visible ⇒ panel open.
-    await expect(page.getByPlaceholder('Search messages...')).toBeVisible()
-
-    // The selected message bubble should now have the keyboard-selection
-    // ring (data-keyboard-selected) — assert via the ring class on the
-    // bubble whose data-message-uuid is msg-1.
+    // The selected message bubble should now have actual DOM focus.
     const bubble = page.locator('[data-message-uuid="msg-1"]')
     await expect(bubble).toBeVisible()
-    void panel
+    await expect(bubble).toBeFocused()
+
+    // Panel stays open (aria-hidden=false on the aside).
+    const aside = page.locator('aside[aria-label="Search panel"]')
+    await expect(aside).toHaveAttribute('aria-hidden', 'false')
   })
 
   test('Esc closes the panel and keeps focus on the active-match message', async ({ page, mockBackend }) => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, Loader2, Pin } from 'lucide-react'
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
@@ -109,15 +109,29 @@ export function SearchPanel() {
 
   // Opens the currently active match (or the first one if none is active).
   // Used by Enter both in the input and anywhere else inside the panel.
-  const openActiveMatch = () => {
+  //
+  // Bug P1.4 (2026-05-04): we used to call setActiveMatchIndex(idx) with the
+  // SAME index that was already active (after Cmd+G). React bails out of the
+  // state update, so the activeMatchIndex effect (which calls navigateToMatch)
+  // does NOT re-fire — Enter became a no-op. Fix: navigateToMatch directly,
+  // and explicitly focus the target message bubble (panel stays open).
+  const openActiveMatch = useCallback(() => {
     if (flatMatches.length === 0) return
     const idx = activeMatchIndex >= 0 ? activeMatchIndex : 0
     const match = flatMatches[idx]
-    if (match) {
-      setActiveMatchIndex(idx)
-      handleCardClick(match)
-    }
-  }
+    if (!match) return
+    if (activeMatchIndex < 0) setActiveMatchIndex(idx)
+    navigateToMatch(match)
+    // Move DOM focus to the target bubble so screen readers + keyboard users
+    // land on the message. The bubble has tabIndex={-1} so it can receive
+    // programmatic focus without joining the tab order.
+    requestAnimationFrame(() => {
+      const el = document.querySelector(
+        `[data-message-uuid="${match.messageUuid}"]`
+      )
+      if (el instanceof HTMLElement) el.focus()
+    })
+  }, [activeMatchIndex, flatMatches, navigateToMatch, setActiveMatchIndex])
 
   // Bug B (2026-05-03): use the unified `isSearching` flag (covers
   // first-load + refetch + debounce window) so we never show "No
