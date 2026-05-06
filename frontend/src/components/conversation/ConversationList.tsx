@@ -358,7 +358,7 @@ function ConversationListItem({
           'flex w-full cursor-pointer flex-col gap-1 px-4 py-3 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800',
           isSelected && 'bg-zinc-100 dark:bg-zinc-800',
           isKeyboardSelected && 'ring-2 ring-inset ring-blue-400 dark:ring-blue-500',
-          outOfScope && 'opacity-60'
+          outOfScope && 'opacity-40'
         )}
       >
         <div className="flex items-start gap-2">
