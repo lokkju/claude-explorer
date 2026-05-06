@@ -223,3 +223,81 @@ def get_cc_image(path: str = Query(..., description="Absolute path under ~/.clau
             return FileResponse(best, media_type=media_type, headers=cache_headers)
 
     raise HTTPException(status_code=404, detail=f"image not found: {candidate}")
+
+
+# ----------------------------------------------------------------------
+# P4c: cached-attachment server.
+#
+# fetcher.bulk_fetch.download_conversation_files writes every Message.files[]
+# attachment (image variants + non-image documents) under
+#   ~/.claude-exporter/files/<conv-uuid>/<file-uuid>/<variant><ext>
+# where variant ∈ {thumbnail, preview, original, document}.
+#
+# The frontend / exporter wants a stable URL it can drop into <img src=> or
+# <a href=> without juggling absolute on-disk paths or refetching from
+# claude.ai. This route serves those bytes verbatim, 404s when the file
+# isn't cached (no on-demand refetch — the bulk fetch owns that), and
+# enforces an allow-list on the variant segment so a malicious URL can't
+# escape into ../../etc/passwd territory.
+# ----------------------------------------------------------------------
+
+_ALLOWED_ATTACHMENT_VARIANTS = frozenset({"thumbnail", "preview", "original", "document"})
+
+
+def _attachments_root() -> Path:
+    """Directory that holds per-conversation/per-file cached bytes.
+
+    Production layout puts ``conversations/`` and ``files/`` as siblings
+    under ``~/.claude-exporter/``. We derive ``files/`` from
+    ``settings.data_dir`` (which points at the ``conversations/`` subdir
+    in production and is overridden by ``CLAUDE_EXPORTER_DATA_DIR`` in
+    tests). When the override points at a directory whose name is NOT
+    ``conversations``, we fall back to ``data_dir / "files"`` so older
+    test layouts still work.
+    """
+    data_dir = get_settings().data_dir
+    if data_dir.name == "conversations":
+        return data_dir.parent / "files"
+    return data_dir / "files"
+
+
+@router.get("/attachments/{conv_uuid}/{file_uuid}/{variant}")
+def get_attachment(conv_uuid: str, file_uuid: str, variant: str) -> FileResponse:
+    """Serve a cached attachment from the local files directory.
+
+    Returns 400 for unknown variant, 404 if the file isn't on disk
+    (callers should re-run a fetch to populate the cache).
+    """
+    if variant not in _ALLOWED_ATTACHMENT_VARIANTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown variant {variant!r}; allowed: {sorted(_ALLOWED_ATTACHMENT_VARIANTS)}",
+        )
+
+    file_dir = _attachments_root() / conv_uuid / file_uuid
+    if not file_dir.is_dir():
+        raise HTTPException(status_code=404, detail="attachment not cached")
+
+    # The bulk fetcher writes <variant><ext>, where <ext> depends on
+    # Content-Type / filename. Glob to find the actual file regardless
+    # of extension. Reject results outside file_dir defensively.
+    matches = sorted(file_dir.glob(f"{variant}.*"))
+    # Allow extensionless writes too, e.g. when guess_extension returned "".
+    if not matches:
+        bare = file_dir / variant
+        if bare.is_file():
+            matches = [bare]
+    if not matches:
+        raise HTTPException(status_code=404, detail="attachment not cached")
+
+    chosen = matches[0]
+    try:
+        chosen.resolve().relative_to(file_dir.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="path traversal refused") from exc
+
+    media_type = mimetypes.guess_type(str(chosen))[0] or "application/octet-stream"
+    cache_headers = {
+        "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+    }
+    return FileResponse(chosen, media_type=media_type, headers=cache_headers)

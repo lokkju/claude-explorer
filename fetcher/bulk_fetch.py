@@ -460,6 +460,24 @@ class ClaudeFetcher:
                         file_info["local_original"] = str(actual_path)
                         files_downloaded += 1
 
+                # P4c: Download non-image attachments (PDFs, txt, markdown, etc.).
+                # These ship as Message.files[] entries with file_kind='document'
+                # and a `document_url` carrying the bytes. The image branches
+                # above never see these because thumbnail_url/preview_url are
+                # absent for non-image kinds.
+                document_url = file_info.get("document_url")
+                if document_url:
+                    file_name = file_info.get("file_name", "")
+                    if file_name and "." in file_name:
+                        ext = "." + file_name.rsplit(".", 1)[-1].lower()
+                    else:
+                        ext = self._guess_extension(document_url, file_info.get("file_type"))
+                    doc_path = file_dir / f"document{ext}"
+                    success, actual_path = self._download_file(document_url, doc_path)
+                    if success:
+                        file_info["local_document"] = str(actual_path)
+                        files_downloaded += 1
+
             # Process files_v2 if present (different nested structure)
             for file_info in message.get("files_v2", []):
                 file_uuid = (
