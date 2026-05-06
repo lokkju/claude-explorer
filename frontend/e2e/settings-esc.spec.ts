@@ -1,13 +1,12 @@
-import { test, expect } from '@playwright/test';
-import { waitForConnection } from './test-utils';
+import { test, expect } from './fixtures'
 
 /**
  * Build-8 #8: pressing Escape on the Settings page navigates back.
  */
 
-test('Escape on Settings page navigates back to previous route', async ({ page }) => {
+test('Escape on Settings page navigates back to previous route', async ({ page, mockBackend }) => {
+  await mockBackend();
   await page.goto('/');
-  await waitForConnection(page);
 
   await page.goto('/settings');
   await expect(
