@@ -217,6 +217,16 @@ export function ConversationPage() {
           element.scrollIntoView({ behavior: 'smooth', block: 'center' })
           // Flash highlight effect
           element.classList.add('ring-2', 'ring-yellow-400', 'ring-offset-2')
+          // Cross-conversation Enter: SearchPanel.openActiveMatch can't reliably
+          // call .focus() on the target bubble because the new conversation's
+          // bubbles aren't mounted yet at the time of its requestAnimationFrame
+          // callback. The visible scroll/highlight worked but DOM focus silently
+          // didn't move (council soft concern on commit 113da97). The highlight
+          // effect runs after the new ConversationPage mounts, so this is the
+          // safe place to move keyboard focus too. Bubbles have tabIndex={-1}.
+          if (element instanceof HTMLElement) {
+            element.focus()
+          }
           setTimeout(() => {
             element.classList.remove('ring-2', 'ring-yellow-400', 'ring-offset-2')
             // Clear highlight/m params from URL but preserve everything else.

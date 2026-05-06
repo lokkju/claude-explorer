@@ -159,6 +159,60 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
     await expect(aside).toHaveAttribute('aria-hidden', 'false')
   })
 
+  test('Cross-conversation Enter focuses the target message in the new conversation', async ({ page, mockBackend }) => {
+    // Set up TWO conversations. Initially open conversation A. Search hits in B.
+    // Soft concern from council on commit 113da97: cross-conversation case
+    // had a race where requestAnimationFrame(() => el.focus()) fired before
+    // the new conversation's bubbles were mounted, so .focus() was a no-op.
+    const A = '00000000-0000-0000-0000-00000000aa01'
+    const B = '00000000-0000-0000-0000-00000000bb02'
+
+    const summaryA = makeSummary({ uuid: A, name: 'Conv A', source: 'CLAUDE_CODE', message_count: 1, project_path: '/x', project_name: 'x' })
+    const summaryB = makeSummary({ uuid: B, name: 'Conv B', source: 'CLAUDE_CODE', message_count: 1, project_path: '/x', project_name: 'x' })
+
+    const mA = makeMessage({ uuid: 'a-msg-1', sender: 'human', text: 'lorem', content: [{ type: 'text', text: 'lorem' }] } as Partial<Message> & { uuid: string })
+    const mB = makeMessage({ uuid: 'b-msg-1', sender: 'assistant', text: 'needle in B', content: [{ type: 'text', text: 'needle in B' }] } as Partial<Message> & { uuid: string })
+
+    const detailA = makeDetail(summaryA, [mA])
+    const detailB = makeDetail(summaryB, [mB])
+    await mockBackend({ conversations: [summaryA, summaryB], details: { [A]: detailA, [B]: detailB } })
+
+    // Mock /api/search to return one match — in B.
+    await page.route('**/api/search**', (route: Route) => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{
+          conversation_uuid: B,
+          conversation_name: 'Conv B',
+          conversation_updated_at: summaryB.updated_at,
+          conversation_created_at: summaryB.created_at,
+          project_name: 'x',
+          matching_messages: [{ message_uuid: 'b-msg-1', sender: 'assistant', snippet: 'needle in B', match_start: 0, match_end: 6, created_at: mB.created_at }],
+        }]),
+      })
+    })
+
+    // Open conversation A. Open SearchPanel. Type query. Cmd+G to active. Enter.
+    await page.goto(`/conversations/${A}`)
+    const isMac = process.platform === 'darwin'
+    await page.keyboard.press(isMac ? 'Meta+f' : 'Control+f')
+    const input = page.getByPlaceholder('Search messages...')
+    await expect(input).toBeVisible({ timeout: 3000 })
+    await input.fill('needle')
+    await expect(page.getByText(/of\s+1\s+matches/)).toBeVisible({ timeout: 5000 })
+    await page.keyboard.press(isMac ? 'Meta+g' : 'Control+g')
+    await page.keyboard.press('Enter')
+
+    // URL should change to /conversations/B (cross-conv navigation).
+    await expect(page).toHaveURL(new RegExp(`/conversations/${B}`))
+
+    // Bubble in B should be visible AND focused.
+    const bubble = page.locator('[data-message-uuid="b-msg-1"]')
+    await expect(bubble).toBeVisible({ timeout: 5000 })
+    await expect(bubble).toBeFocused({ timeout: 5000 })
+  })
+
   test('Esc closes the panel and keeps focus on the active-match message', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockSearchResults(page)
