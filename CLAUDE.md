@@ -1,5 +1,9 @@
 # Claude Explorer
 
+## UX Rules
+
+All UX flows and rules are documented in [UX.md](./UX.md). Code changes that affect UI behavior MUST keep that document accurate; failing-test-first applies (see CLAUDE.md "Code Style" rule on TDD).
+
 ## Project Structure
 
 ```

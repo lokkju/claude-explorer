@@ -1,0 +1,611 @@
+# Claude Explorer — UX Contract
+
+This document is the contract for how the Claude Explorer UI behaves. It
+describes every UX rule the app is expected to satisfy. Code that changes UI
+behavior MUST keep this document accurate. Tests for new UI behavior should
+fail first against this document, then pass when the code lines up.
+
+The conventions used below:
+
+- **MUST** / **MUST NOT** are normative.
+- "Pane" = one of the three top-level UI surfaces (sidebar, conversation,
+  search panel).
+- "Cmd+X" means Cmd on macOS, Ctrl on Windows/Linux. The handler accepts
+  either modifier; UI hint glyphs render the platform-correct symbol.
+- Where this document says "future" or "planned", the rule is the target
+  contract; the code may not yet match. New work should converge on this
+  document, not the other way around.
+
+---
+
+## 1. Three-pane layout + focus model
+
+The app has exactly three first-class panes:
+
+1. **Sidebar (list)** — left rail. Conversation list, source / workspace /
+   sort filters, refresh button, settings link.
+2. **Conversation pane (detail)** — center. The currently-open conversation,
+   its messages, and per-conversation actions (export, copy, pin).
+3. **SearchPanel (search)** — right overlay. Sliding panel for full-text
+   search and bookmarks. Always mounted; slides off-screen via
+   `translate-x-full` when closed so React Query state and input focus
+   survive open/close cycles.
+
+### `focusArea` state machine
+
+`focusArea` lives in `KeyboardNavigationContext` and takes one of four
+values:
+
+```
+type FocusArea = 'list' | 'detail' | 'search' | 'none'
+```
+
+State transitions:
+
+| From  | Trigger                                  | To       |
+|-------|-------------------------------------------|----------|
+| any   | Click anywhere in sidebar                | `list`   |
+| any   | Click anywhere in conversation pane      | `detail` |
+| any   | Click any message                        | `detail` |
+| any   | Cmd+F (focus search input, opens panel)  | `search` |
+| any   | Cmd+K when panel was closed              | `search` |
+| `list`| Right arrow, Enter on a row              | `detail` |
+| `detail`| Left arrow                              | `list`   |
+| `detail`| Esc, `navSource === 'list'`             | `list`   |
+| `detail`| Esc, `navSource === 'search'`           | `search` (panel re-opens if closed) |
+| `search`| Esc when query is empty                 | panel closes; `focusArea` becomes whatever `navSource` implies for the active match message |
+| `search`| Esc when query is non-empty             | clears query first; second Esc closes |
+| `list`/`detail` | Tab                              | toggles between `list` ↔ `detail` (Tab never selects `search`) |
+| `search`/`none` | Tab                              | jumps to `list` |
+
+`navSource` is `'list' | 'search'` and records which pane initiated the
+most recent navigation INTO the detail view, so Escape returns the user to
+the right place. Navigations driven by clicking a search result MUST set
+`navSource = 'search'`; navigations driven by sidebar Enter / right-arrow
+MUST set `navSource = 'list'`.
+
+### Active-pane visual
+
+The pane whose `focusArea` is current renders a subtle inset ring
+(`ring-2 ring-inset ring-blue-500/50`). All panes set their own ring
+condition; nothing else paints the ring.
+
+---
+
+## 2. Keyboard shortcuts
+
+All global shortcuts are owned by `useKeyboardShortcuts.ts`. Components
+MUST NOT register their own global keydown handlers; lightbox is the only
+exception (it owns its keys while open — see Section 14).
+
+### Universal (both keyboard modes)
+
+| Key                | Action                                                                 |
+|--------------------|------------------------------------------------------------------------|
+| Cmd+F              | Focus search input. Opens panel if closed. NEVER closes the panel.    |
+| Cmd+K              | Toggle SearchPanel (open ↔ closed).                                    |
+| Cmd+G              | Next match. Focus stays in the search input; conversation scrolls to and highlights the match. |
+| Cmd+Shift+G        | Previous match.                                                       |
+| Esc (panel open)   | First press: clears non-empty query OR closes the panel. After close, focuses the active-match message (single press from input). |
+| Enter (in input)   | Opens the active match (or first result if none active). Panel stays open. |
+| Cmd+R              | Refresh conversation list (invalidates the conversations query). Browser refresh is preempted. |
+| Cmd+C              | Copy focused message as Markdown (detail pane only, only when no text selection exists; otherwise the OS copy runs). |
+| Tab                | Rotate `list` ↔ `detail`. From `search`/`none` → `list`. Tab never selects `search`. |
+| ?                  | Open the keyboard help modal.                                          |
+| Arrow Up/Down      | Move selection in the active pane (list or detail).                   |
+| Arrow Right (list) | Open selected conversation; focus → `detail`; selects first message.  |
+| Arrow Left (detail)| Focus → `list`.                                                        |
+| Enter (list)       | Same as Arrow Right.                                                  |
+| Esc (detail)       | Returns to whichever sidebar initiated the navigation (`navSource`).   |
+| u / a              | Detail pane: next user / next assistant message.                      |
+| U / A              | Detail pane: previous user / previous assistant message.              |
+| g                  | Detail or list: top of the current pane.                              |
+| G                  | Detail or list: bottom of the current pane.                           |
+
+### Vim mode (default)
+
+In addition to the universal keys above:
+
+| Key      | List pane                          | Detail pane                       |
+|----------|------------------------------------|-----------------------------------|
+| j        | Next item                          | Next message                      |
+| k        | Previous item                      | Previous message                  |
+| g        | First item                         | First message                     |
+| G        | Last item                          | Last message                      |
+| Ctrl+d   | (n/a)                              | Page down (10 messages)           |
+| Ctrl+u   | (n/a)                              | Page up (10 messages)             |
+| /        | Focus the sidebar title-search input | (n/a)                           |
+
+### Emacs mode
+
+| Key      | List pane                          | Detail pane                       |
+|----------|------------------------------------|-----------------------------------|
+| Ctrl+n   | Next item                          | Next message                      |
+| Ctrl+p   | Previous item                      | Previous message                  |
+| Alt+<    | First item                         | First message                     |
+| Alt+>    | Last item                          | Last message                      |
+| Alt+n    | (n/a)                              | Page down (10 messages)           |
+| Alt+p    | (n/a)                              | Page up (10 messages)             |
+| Ctrl+s   | Focus the sidebar title-search input | (n/a)                           |
+
+### Input-focus rules
+
+- Global shortcuts are suppressed when typing in any `<input>`,
+  `<textarea>`, `<select>`, or `contentEditable` element.
+- An input MAY opt back into specific shortcuts (Cmd+K, Cmd+F, Cmd+G,
+  Cmd+Shift+G, Esc) by setting `data-allow-shortcuts` on itself or any
+  ancestor. The SearchPanel's input does this so its own navigation keys
+  still fire while it holds focus.
+- Cmd-modified shortcuts (Cmd+R, Cmd+C, Cmd+K, Cmd+F, Cmd+G,
+  Cmd+Shift+G) ALWAYS run; they're checked before the input-focus guard.
+
+---
+
+## 3. Search-scope pin
+
+The user can pin search to a single conversation or project, so Cmd+G and
+the SearchPanel results stay in scope.
+
+### URL representation
+
+The pin is encoded in the URL as a single query param:
+
+- `?pin=conv:<conversation-uuid>` — pin one conversation.
+- `?pin=project:<project-path-or-slug>` — pin a whole project.
+
+### Persistence rules
+
+- Pin is sticky across browser reload (URL is the source of truth).
+- Pin survives switching to a different conversation in the sidebar.
+- Pin survives closing and re-opening the SearchPanel.
+- Pin is **per-tab**, not per-user. Two tabs may have different pins.
+
+### Clearing the pin
+
+The pin MUST be cleared by exactly one of:
+
+- The user clicks **Unpin** in the conversation header pin dropdown.
+- The user types into the sidebar's "Search titles..." input. (Typing
+  there expresses broadening intent, so an active pin MUST be cleared as
+  soon as the input value changes.)
+
+The pin is NOT cleared by closing the panel, switching conversations, or
+navigating with arrow keys.
+
+### Pin button (conversation header)
+
+- Lives in the conversation header next to the title.
+- Opens a dropdown with three items, in this order:
+  1. **Pin this conversation**
+  2. **Pin this project**
+  3. **Unpin** — always visible; disabled when nothing is pinned.
+
+### Cmd+G honors the scope
+
+When a pin is active, Cmd+G / Cmd+Shift+G wrap within the pinned
+scope. Cross-conversation jumps are limited to the pinned conversation
+or pinned project's conversations.
+
+---
+
+## 4. SearchPanel chip
+
+When a pin is set, a dismissible blue pill chip appears immediately below
+the SearchPanel input:
+
+```
+[ In: <Conversation Title> × ]
+```
+
+- Background: blue-100 / dark blue-900; border: blue-300.
+- The chip's `×` MUST clear the pin (same effect as Unpin).
+- The chip's label MUST reflect the pinned scope:
+  - `In: <Conversation Title>` for `pin=conv:...`
+  - `In: <Project Name>` for `pin=project:...`
+
+### Empty results in scoped mode
+
+If the query returns zero matches AND a pin is active, render a
+call-to-action below the empty-state message:
+
+```
+Unpin and search all →
+```
+
+Clicking it MUST clear the pin and re-run the search across everything.
+
+### Live region
+
+An `aria-live="polite"` region announces "Match N of M" each time the
+active match changes (Cmd+G, Cmd+Shift+G, Enter, click on a result). The
+region is visually `sr-only` but reachable to screen readers.
+
+---
+
+## 5. Sidebar dim (out-of-scope rows)
+
+When a pin is active, conversation rows in the sidebar that are NOT in the
+pinned scope render at `opacity-40` (40%).
+
+- The dim level matters: it MUST be visually distinct enough that the user
+  can tell at a glance what's in vs. out of scope. 40% is the target.
+- In-scope rows render at full opacity.
+- The dim is purely visual; out-of-scope rows are still clickable. Clicking
+  one navigates to that conversation but does NOT clear the pin (typing in
+  the search input is the only way to broaden, per Section 3).
+
+---
+
+## 6. Sidebar title-search
+
+The sidebar input above the conversation list:
+
+- Placeholder text: **"Search titles..."**.
+- Filters on the conversation `name` OR the conversation `project_path` /
+  `project_name`. It MUST NOT filter on message body / summary content —
+  message search lives in the SearchPanel (Cmd+K).
+- Typing in this input MUST clear any active scope pin (signals broadening
+  intent — see Section 3).
+- Stays in sync with the URL `q` parameter; deep-links and back/forward
+  both reflect the current value.
+- Keyboard: in Vim mode, `/` focuses this input from the list pane. In
+  Emacs mode, `Ctrl+s` does the same.
+
+---
+
+## 7. Tool-placeholder hiding
+
+The literal string
+
+```
+This block is not supported on your current device yet.
+```
+
+(usually wrapped in a fenced code block) is filtered out of every rendered
+view. This MUST happen consistently in:
+
+- The conversation viewer (frontend `MarkdownRenderer` exports
+  `TOOL_PLACEHOLDER` and strips it before render).
+- Single-file Markdown export (`backend/export.py:filter_tool_placeholders`).
+- Markdown bundle export (CommonMark and Obsidian).
+- PDF export.
+- The MCP server's exported markdown.
+
+The frontend constant `TOOL_PLACEHOLDER` and the backend's
+`filter_tool_placeholders` MUST stay textually in sync — the same string,
+the same fenced-code regex.
+
+---
+
+## 8. Markdown export dialog
+
+Clicking the **Markdown** button in the conversation header opens a dialog
+(modal) with three radio modes:
+
+1. **Inline single .md** — one self-contained Markdown file. Images stay
+   as backend URL references (`/api/cc-image?path=...`). Default for
+   first-time users.
+2. **Bundle CommonMark (.zip)** — zip with `conversation.md`, an
+   `images/` directory, and an `attachments/` directory. Image refs in
+   the markdown use relative paths like `![alt](images/x.png)`. File
+   works without the local backend running.
+3. **Bundle Obsidian (.zip)** — same shape as CommonMark, but image refs
+   use Obsidian wikilinks: `![[images/x.png]]`.
+
+Dialog rules:
+
+- The dialog MUST pre-select the user's saved preference (sticky across
+  exports).
+- An optional **"Save as default"** checkbox writes the choice back to
+  preferences when checked.
+- An **Export** button kicks off the download with the selected mode.
+- Cancel / Esc closes the dialog without changing state.
+- The dialog is the only entry point for export-mode choice; the
+  Markdown button MUST NOT silently re-export with the last mode without
+  showing the dialog.
+
+PDF export is a SEPARATE button (Section 9), not a fourth mode.
+
+---
+
+## 9. PDF export
+
+- Its own button in the conversation header, next to Markdown.
+- One-click: clicking it generates the PDF and starts the download
+  (no dialog).
+- The PDF MUST embed images. It uses WeasyPrint's `url_fetcher` hook to
+  resolve `/api/cc-image?...` and `/api/<org>/files/...` URLs from the
+  local disk. Network fetches inside WeasyPrint MUST NOT be required.
+- Tool placeholders are filtered (Section 7).
+- Filename matches the conversation title via the same `sanitizeFilename`
+  helper used by Markdown export.
+
+---
+
+## 10. Settings persistence
+
+Preferences are persisted **server-side**, not in the browser, so they
+are consistent across browsers / devices that point at the same backend.
+
+### Storage location
+
+`~/.claude-exporter/preferences.json`. Atomic writes (write to temp file
+then `rename`).
+
+### Access pattern
+
+- Backend exposes:
+  - `GET /api/preferences` — full preferences object.
+  - `PATCH /api/preferences` — deep-merge update; only the keys the
+    client sends are touched.
+- Frontend hook: `usePreferences()` (planned). Exposes a typed view plus
+  setters that PATCH on change.
+
+### Migration from localStorage
+
+The app historically stored prefs in `localStorage`. During the
+server-side migration:
+
+- `usePreferences()` does **dual-read** at startup: server first, then
+  fall back to `localStorage` if the server returns 404 / empty.
+- On first successful server read, the hook seeds the server with the
+  existing localStorage values via PATCH.
+- On every write, the hook does **dual-write**: PATCH to the server, and
+  also write to `localStorage` so any code that hasn't migrated yet
+  still sees the latest.
+- A migration marker `prefs_migrated_v1=true` is set in `localStorage`
+  after the first successful seed. This prevents two open tabs from
+  racing each other into double-seeds.
+
+`localStorage` is **fallback only** post-migration; the server is the
+source of truth.
+
+### Per-tab vs. per-user
+
+- The scope **pin** is per-tab (URL state — Section 3).
+- Everything else (theme, keyboard mode, sort, group-by-project, "show
+  empty sessions", show tool calls, markdown export default, search
+  panel context size / sort, right-pane tab) is per-user.
+
+---
+
+## 11. Image fallback + auto-reload
+
+Inline images go through one fallback layer before showing the
+"image unavailable" tile.
+
+### `<img onError>` retry
+
+When an `<img>` fails to load:
+
+1. The first error retries once via the **permanent-cache** endpoint for
+   that image's source.
+2. If the cached fetch also fails, the component shows the fallback tile.
+
+The retry MUST be one shot per image; an infinite reload loop would
+hammer the backend on broken paths.
+
+### Fallback tile
+
+The "image unavailable" placeholder:
+
+- Dashed border (`border-dashed border-zinc-300`).
+- `ImageOff` icon from lucide-react.
+- The original `file_name` shown in `font-mono` truncated text.
+- Clickable (opens the lightbox at this image's index, which then shows
+  "Image unavailable" — matches Section 14's behavior so the user still
+  has a way to navigate siblings).
+- `aria-label`: `"<alt text> (unavailable)"`.
+
+### Permanent cache locations
+
+- **Claude Code marker images** (`[Image: source: /...]` markers in chat
+  text) cache to:
+  ```
+  ~/.claude-exporter/cc-images/<conv-uuid>/<sess>--<N>.<sha8>.png
+  ```
+- **Claude Desktop attachments** (uploaded files) cache to:
+  ```
+  ~/.claude-exporter/files/<conv-uuid>/<file-uuid>/<file_name>
+  ```
+
+Both locations are managed by the backend. The frontend never writes to
+them directly; the cache is filled by the fetch pipeline and by lazy
+hydration on first request.
+
+---
+
+## 12. Keyboard mode (Vim or Emacs)
+
+The user picks one of two modes in **Settings → Keyboard mode**. The
+choice is persisted (Section 10) and applied globally.
+
+- **Vim** is the default for new users.
+- All bindings are listed in Section 2 above. Both modes share the
+  universal keys (Cmd+F/G/K, arrows, ?, Tab, Cmd+R, Cmd+C, u/a/U/A,
+  g/G).
+- Vim adds `j/k`, `g/G`, `Ctrl+d/Ctrl+u`, `/`.
+- Emacs adds `Ctrl+n/p`, `Alt+</>`, `Alt+n/p`, `Ctrl+s`.
+- The keyboard help modal (`?`) renders the bindings for the user's
+  active mode.
+
+Mode changes take effect immediately; no reload needed.
+
+---
+
+## 13. Click-to-focus
+
+Mouse clicks ALWAYS update `focusArea`:
+
+- Click anywhere on the sidebar background (including its scroll area
+  but outside an interactive control) → `focusArea = 'list'`.
+- Click anywhere on the conversation pane background → `focusArea =
+  'detail'`.
+- Click a row in the sidebar → `focusArea = 'list'`, plus selects the
+  row.
+- Click a message bubble → `focusArea = 'detail'`, plus selects the
+  message.
+- Click inside the SearchPanel (any control) → `focusArea = 'search'`.
+
+The pane background click handler MUST NOT swallow clicks on interactive
+children. Buttons, links, inputs continue to fire normally; the pane
+just records its focus afterwards via event bubbling.
+
+---
+
+## 14. Image lightbox
+
+Clicking an inline image opens a full-screen lightbox.
+
+### Scope
+
+- The lightbox shows **every image in the current conversation** in
+  document order (top to bottom, message after message). Arrows walk
+  the entire conversation, not just the current message.
+- This applies to both Claude Desktop attachments (`ImageFile`) and
+  Claude Code marker images (`[Image: source: ...]` resolved via
+  `/api/cc-image`).
+
+### Keys (lightbox-local; preempt globals while open)
+
+| Key       | Action                                          |
+|-----------|-------------------------------------------------|
+| Esc       | Close.                                          |
+| ←         | Previous image in the conversation.             |
+| →         | Next image in the conversation.                 |
+| d         | Download the current image.                     |
+| o         | Open the original asset in a new browser tab.   |
+
+While the lightbox is open it OWNS the keyboard. Cmd+G, j/k, Ctrl+n/p,
+and the rest of the global bindings DO NOT fire. The lightbox closes
+via Esc, the close button, or clicking the backdrop; on close, focus
+returns to the thumbnail that opened it.
+
+### No zoom/pan in v1
+
+Fit-to-viewport via `object-contain` handles 90% of cases. For pixel-
+accurate inspection the user clicks "Open original" and the browser's
+native viewer takes over.
+
+---
+
+## 15. Bookmarks
+
+Bookmarks are persisted **server-side** at `~/.claude-exporter/bookmarks.json`.
+
+### Endpoint
+
+`/api/bookmarks` (router: `backend/routers/bookmarks.py`):
+
+- `GET /api/bookmarks` — list all bookmarks.
+- `POST /api/bookmarks` — create.
+- `PATCH /api/bookmarks/{id}` — update note.
+- `DELETE /api/bookmarks/{id}` — remove.
+
+Each bookmark stores `{conversation_uuid, message_uuid, note,
+created_at}`.
+
+### UI
+
+- A **star icon** lives on each message bubble (visible on hover, always
+  visible when bookmarked). Clicking toggles the bookmark for that
+  message.
+- The right-pane tab strip in the SearchPanel has a **Bookmarks** tab
+  next to **Search**. Selecting it renders `BookmarksPanel` instead of
+  the search UI. Selection is persisted via `rightPaneTab` in settings.
+- Bookmarked messages get a small star badge inline so the user can spot
+  them while scrolling the conversation.
+
+---
+
+## Cross-cutting rules
+
+### Toasts
+
+- Toasts use `sonner`'s `Toaster` mounted once at the App root.
+- Position: **top-center**. This avoids being occluded by the
+  SearchPanel (right-edge) or the sidebar.
+- Loading toasts use `toast.loading(id)`; success / error transitions
+  reuse the same `id` so one toast updates in place rather than stacking.
+- Errors that the user can resolve themselves (auth, missing creds) get
+  a **Details** action that opens the FetchDialog.
+- Transient network errors (DNS, offline) are classified as transient
+  and do NOT raise an error toast — the connection-status indicator
+  handles them.
+
+### Fetch / Refresh pipeline
+
+- The header **Refresh** button (sidebar top-right, `RefreshCw` icon)
+  triggers the full capture+fetch pipeline via SSE
+  (`GET /api/fetch/refresh?incremental=true`). See `CLAUDE.md` →
+  "Web UI Refresh button (Build-9)" for the SSE event schema.
+- The button is disabled while a pipeline is running. A second concurrent
+  request would receive HTTP 409; the disabled state is defense in depth.
+- The Refresh icon spins (`animate-spin`) while running.
+- The FetchDialog (Details modal) exposes manual **Full Refresh** and
+  **Fetch New** actions that hit `/fetch/start` directly and do NOT
+  auto-trigger capture.
+
+### Conversation list dim states
+
+In addition to the scope-pin dim (Section 5), the list dims rows for:
+
+- **Phantom sessions** (empty Claude Code sessions): hidden by default,
+  toggled by the "Empty" checkbox in the sidebar header.
+- **Group-by-project** mode: only available when the source filter
+  isn't "Claude Desktop only".
+
+### Workspace / org filter
+
+When the captured credentials cover ≥2 organizations, the sidebar
+renders a workspace `<Select>` between the source filter and sort
+controls. The slot is reserved (`h-9`) even with one org so the layout
+doesn't shift mid-stream when a second org appears.
+
+### Theme
+
+- Three options: **light**, **dark**, **system**.
+- Cycled via the icon button in the sidebar footer (Sun → Moon → Monitor
+  → Sun ...).
+- "System" follows `prefers-color-scheme` and reacts live to OS changes.
+- Persisted per-user (Section 10).
+
+### Sort controls (sidebar AND search panel)
+
+Both panes share the same four sort fields:
+
+- **Last Activity** (`updated_at`) — default.
+- **Start Time** (`created_at`).
+- **Title** (`name`).
+- **Project** (`project`).
+
+Each pane has its own sort state. The search panel's sort can differ
+from the sidebar's so the user can scan, e.g., the most recent matches
+without disturbing their list ordering.
+
+### Filter chip rail
+
+Below the sidebar header sits the `FilterChipRail`. Active filters
+(source, workspace, sort, project, title pattern) render as removable
+chips; clicking the `×` clears that filter. Pinned filters auto-activate
+on load; unpinned active state is per-session only.
+
+### Help modal
+
+- `?` opens it (suppressed inside inputs).
+- The modal title says "Keyboard Shortcuts" and the body shows the
+  shortcuts for the user's current keyboard mode (Section 12).
+- Esc dismisses it.
+
+### Loading & empty states
+
+- Conversation list: skeleton rows while `isLoading`; "No conversations
+  yet" when truly empty; "No conversations found" when search filters
+  hide everything.
+- Conversation detail: `LoadingState` while fetching;
+  "Conversation not found" on 404; `HintState` when the sidebar
+  selection differs from the URL (so a stale conversation isn't shown
+  while the user navigates with j/k).
+- SearchPanel: "Type at least 2 characters to search" for query length
+  &lt; 2; "Searching…" with a spinner while in flight; "No matches for
+  &lt;query&gt;" only after the request settles with zero results.
