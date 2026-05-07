@@ -46,6 +46,13 @@ interface FilterContextType {
   addNode: (node: FilterNode) => void
   updateNode: (id: FilterId, partial: Partial<FilterNode>) => void
   removeNode: (id: FilterId) => void
+  /**
+   * CF3: persistently dismiss the one-time migration banner. Writes
+   * `migrationBannerDismissed: true` into the same `filters` blob (so the
+   * sentinel and the dismiss flag travel together) via usePreferences,
+   * which handles the server PATCH and localStorage mirror.
+   */
+  dismissMigrationBanner: () => void
 }
 
 const FilterContext = createContext<FilterContextType | null>(null)
@@ -201,9 +208,20 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     [filtersState, setFiltersState],
   )
 
+  const dismissMigrationBanner = useCallback(() => {
+    setFiltersState({ ...filtersState, migrationBannerDismissed: true })
+  }, [filtersState, setFiltersState])
+
   const value = useMemo<FilterContextType>(
-    () => ({ filtersState, setActiveId, addNode, updateNode, removeNode }),
-    [filtersState, setActiveId, addNode, updateNode, removeNode],
+    () => ({
+      filtersState,
+      setActiveId,
+      addNode,
+      updateNode,
+      removeNode,
+      dismissMigrationBanner,
+    }),
+    [filtersState, setActiveId, addNode, updateNode, removeNode, dismissMigrationBanner],
   )
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>

@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
 import { useFilters } from '@/contexts/FilterContext'
 import { ManageFiltersModal } from '@/components/filters/ManageFiltersModal'
+import { MigrationBanner } from '@/components/filters/MigrationBanner'
 import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor, Filter as FilterIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -285,6 +286,13 @@ export function Sidebar({ className }: SidebarProps) {
           Manage filters
         </Button>
       </div>
+
+      {/* CF3: one-time migration banner. Placed directly above the
+          conversation list — the sidebar is where the conversation list
+          lives in this app, and the banner needs to sit where the user
+          sees the active-filter selection take effect. Self-gates on
+          `filters._migratedV1 && !filters.migrationBannerDismissed`. */}
+      <MigrationBanner />
 
       {/* Conversation List */}
       <ScrollArea className="flex-1">

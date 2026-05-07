@@ -133,6 +133,13 @@ export interface FiltersState {
    * The migration is idempotent and skipped on subsequent mounts.
    */
   _migratedV1?: boolean
+  /**
+   * CF3: dismissal flag for the one-time migration banner. Lives in the
+   * same blob as `_migratedV1` so the migration sentinel and the dismiss
+   * flag travel together (one preference key, one lifecycle event).
+   * The banner renders iff `_migratedV1 === true && !migrationBannerDismissed`.
+   */
+  migrationBannerDismissed?: boolean
 }
 
 /**
