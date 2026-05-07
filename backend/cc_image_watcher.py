@@ -13,8 +13,10 @@ images that CC writes between reads can be rotated before any read
 ever sees them.
 
 This watcher closes that gap with a periodic polling loop. Every
-``SCAN_INTERVAL_SEC`` seconds it walks the live image-cache root and
-copies any file we haven't already seen this process into
+``SCAN_INTERVAL_SEC`` seconds (default 60; override via
+``CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC``) it walks the live
+image-cache root and copies any file we haven't already seen this
+process into
 ``~/.claude-exporter/cc-images/<sess>/<sess>--<N>.<sha8>.<ext>``.
 For CC sessions the conversation UUID equals the session UUID equals
 the parent dir name in the live tree, so the destination layout
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from .cc_image_cache import copy_marker_image_to_cache
@@ -40,7 +43,28 @@ from .config import get_settings
 
 logger = logging.getLogger(__name__)
 
-SCAN_INTERVAL_SEC = 5.0
+
+def _resolve_interval() -> float:
+    """Polling interval in seconds. Overridable for testing /
+    aggressive deployments via ``CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC``.
+
+    Default 60s: Claude Code rotates image-cache files on the order of
+    minutes-to-hours, not seconds, so polling more aggressively just
+    burns wakeups. Lower values trade idle cost for tighter latency
+    against fast rotations.
+    """
+    raw = os.environ.get("CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC")
+    if raw:
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            logger.warning(
+                "Bad CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC=%r; using default", raw
+            )
+    return 60.0
+
+
+SCAN_INTERVAL_SEC = _resolve_interval()
 ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 # Per-process record of source paths we've already attempted to cache
