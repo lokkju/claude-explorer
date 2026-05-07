@@ -4,7 +4,7 @@ import { useUrlFilters } from '@/hooks/useUrlFilters'
 import { useFilters } from '@/contexts/FilterContext'
 import { ManageFiltersModal } from '@/components/filters/ManageFiltersModal'
 import { MigrationBanner } from '@/components/filters/MigrationBanner'
-import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor, Filter as FilterIcon } from 'lucide-react'
+import { Search, Settings, Settings2, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor, Filter as FilterIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -46,8 +46,12 @@ export function Sidebar({ className }: SidebarProps) {
   const { scope: pinScope, unpin: unpinSearch } = useSearchPin()
 
   // Active picker options: every enabled node, alpha-sorted by name. The
-  // sentinel "__none__" maps to activeId=null ("All conversations").
+  // sentinel "__none__" maps to activeId=null ("All conversations"); the
+  // sentinel "__manage__" opens the Manage Filters modal without changing
+  // the current selection (Radix re-clamps `value` to whatever was already
+  // active once the dropdown closes).
   const ACTIVE_NONE = '__none__'
+  const ACTIVE_MANAGE = '__manage__'
   const pickerOptions = Object.values(filtersState.nodes)
     .filter((n) => n.enabled)
     .sort((a, b) => a.name.localeCompare(b.name))
@@ -151,7 +155,13 @@ export function Sidebar({ className }: SidebarProps) {
             "All conversations" maps to activeId=null. */}
         <Select
           value={pickerValue}
-          onValueChange={(v: string) => setActiveId(v === ACTIVE_NONE ? null : v)}
+          onValueChange={(v: string) => {
+            if (v === ACTIVE_MANAGE) {
+              setIsManageOpen(true)
+              return
+            }
+            setActiveId(v === ACTIVE_NONE ? null : v)
+          }}
         >
           <SelectTrigger className="w-full" data-testid="active-filter-select">
             <FilterIcon className="h-3 w-3 mr-1 text-zinc-400" />
@@ -165,6 +175,13 @@ export function Sidebar({ className }: SidebarProps) {
                 {node.name}
               </SelectItem>
             ))}
+            <SelectSeparator />
+            <SelectItem value={ACTIVE_MANAGE} data-testid="active-filter-manage">
+              <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
+                <Settings2 className="h-3 w-3" />
+                Manage filters…
+              </span>
+            </SelectItem>
           </SelectContent>
         </Select>
         <Select value={sourceFilter} onValueChange={(v: string) => setSourceFilter(v as SourceFilter)}>
@@ -272,19 +289,6 @@ export function Sidebar({ className }: SidebarProps) {
             </label>
           </div>
         </div>
-      </div>
-
-      {/* Manage filters trigger (the chip rail is gone in CF1). */}
-      <div className="px-4 pb-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs"
-          onClick={() => setIsManageOpen(true)}
-          aria-label="Manage filters"
-        >
-          Manage filters
-        </Button>
       </div>
 
       {/* CF3: one-time migration banner. Placed directly above the

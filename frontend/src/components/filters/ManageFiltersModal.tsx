@@ -314,9 +314,9 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
           <DialogTitle>Manage filters</DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-1 sm:grid-cols-[14rem_minmax(0,1fr)] gap-4 min-h-[24rem]">
+        <div className="grid grid-cols-1 sm:grid-cols-[18rem_minmax(0,1fr)] gap-4 min-h-[24rem]">
           {/* Left pane */}
-          <div className="flex flex-col gap-2 border-r border-zinc-200 dark:border-zinc-800 pr-3">
+          <div className="flex flex-col gap-2 border-r border-zinc-200 dark:border-zinc-800 pr-3 min-w-0">
             <div className="flex gap-2">
               <Input
                 data-testid="manage-filters-search"
@@ -426,22 +426,25 @@ function FilterRow({
     >
       <div className="flex items-center gap-2 min-w-0">
         <div className="flex-1 min-w-0">
-          <div className="font-medium truncate text-zinc-900 dark:text-zinc-100">{node.name || '(unnamed)'}</div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="font-medium truncate text-zinc-900 dark:text-zinc-100">{node.name || '(unnamed)'}</span>
+            <span className="text-[9px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 shrink-0">
+              {node.type}
+            </span>
+          </div>
         </div>
-        <Badge variant="outline" className="text-[10px] uppercase">
-          {node.type}
-        </Badge>
         <label
-          className="flex items-center gap-1 text-xs text-zinc-500"
+          className="flex items-center text-xs text-zinc-500 shrink-0"
           onClick={(e) => e.stopPropagation()}
+          title={node.enabled ? 'Enabled (click to disable)' : 'Disabled (click to enable)'}
         >
           <input
             type="checkbox"
             data-testid={`filter-row-toggle-${node.id}`}
             checked={node.enabled}
             onChange={onToggleEnabled}
+            aria-label={node.enabled ? 'Enabled' : 'Disabled'}
           />
-          <span>Enabled</span>
         </label>
         <Button
           variant="ghost"
@@ -449,9 +452,10 @@ function FilterRow({
           data-testid={`filter-row-delete-${node.id}`}
           onClick={(e) => { e.stopPropagation(); onRequestDelete() }}
           aria-label={`Delete ${node.name}`}
-          className="h-6 w-6 p-0"
+          title={`Delete ${node.name}`}
+          className="h-6 w-6 p-0 shrink-0 text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
         >
-          <Trash2 className="h-3 w-3" />
+          <Trash2 className="h-3.5 w-3.5" />
         </Button>
       </div>
       {/* Inline delete state */}
