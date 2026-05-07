@@ -32,8 +32,21 @@ _MARKER_RE = re.compile(r"\[Image: source: ([^\]]+)\]")
 
 
 def cache_dir() -> Path:
-    """Root of the permanent CC image cache."""
-    return get_settings().data_dir / "cc-images"
+    """Root of the permanent CC image cache.
+
+    Production layout puts ``conversations/`` and ``cc-images/`` as
+    siblings under ``~/.claude-exporter/``. We derive ``cc-images/``
+    from ``settings.data_dir`` (which points at the ``conversations/``
+    subdir in production and is overridden by ``CLAUDE_EXPORTER_DATA_DIR``
+    in tests). When the override points at a directory whose name is
+    NOT ``conversations``, we fall back to ``data_dir / "cc-images"``
+    so older test layouts still work. Mirrors the
+    ``backend.routers.files._attachments_root`` precedent.
+    """
+    data_dir = get_settings().data_dir
+    if data_dir.name == "conversations":
+        return data_dir.parent / "cc-images"
+    return data_dir / "cc-images"
 
 
 def cache_path_for(

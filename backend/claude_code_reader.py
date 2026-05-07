@@ -11,11 +11,14 @@ Features:
 - Parallel file reading with ThreadPoolExecutor
 """
 
+import logging
 import orjson
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+logger = logging.getLogger(__name__)
 
 from .cache import (
     get_conversation_cache,
@@ -514,7 +517,7 @@ def read_claude_code_conversation(jsonl_path: Path) -> dict[str, Any] | None:
                 msg["parent_message_uuid"] = uuid_remap[parent]
             messages.append(msg)
 
-    return {
+    result = {
         "uuid": metadata["uuid"],
         "name": metadata["name"],
         "summary": metadata["summary"],
@@ -531,6 +534,21 @@ def read_claude_code_conversation(jsonl_path: Path) -> dict[str, Any] | None:
         "current_leaf_message_uuid": messages[-1]["uuid"] if messages else "",
         "compact_markers": extract_compact_markers(entries),
     }
+
+    # P4a-fix (2026-05-06): populate ~/.claude-exporter/cc-images/ as a
+    # side effect of reading. The original wiring lived in
+    # `fetcher/local_claude_code.py`, which is an unwired migration tool
+    # — the live read path is here, so the cache directory was never
+    # being created. Failures are logged and swallowed so a transient
+    # I/O error never breaks the conversation render.
+    try:
+        from .cc_image_cache import cache_all_markers
+
+        cache_all_markers(result)
+    except Exception:  # noqa: BLE001
+        logger.exception("cache_all_markers failed for %s", jsonl_path)
+
+    return result
 
 
 def discover_jsonl_files(claude_dir: Path = DEFAULT_CLAUDE_DIR) -> Iterator[Path]:
