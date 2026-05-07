@@ -43,6 +43,11 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
+  color: var(--color-zinc-900);
+}
+
+.dark body {
+  color: var(--color-zinc-50);
 }
 
 /* Code blocks */

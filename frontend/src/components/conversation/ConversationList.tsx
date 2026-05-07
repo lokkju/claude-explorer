@@ -404,7 +404,7 @@ function ConversationListItem({
             </button>
           )}
         </div>
-        <div className="truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-600">
+        <div className="truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
           {conversation.uuid}
         </div>
       </div>
