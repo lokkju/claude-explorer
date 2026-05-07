@@ -264,6 +264,38 @@ class TestApiCcImagePermanentCacheFallback:
         resp = client.get("/api/cc-image", params={"path": str(ghost)})
         assert resp.status_code == 404
 
+    def test_api_cc_image_lazy_populates_cache_on_first_hit(self, cc_env):
+        """Option B (2026-05-06): when the live file exists but no cache
+        copy does, /api/cc-image copies it during the request. Means the
+        cache fills as the user views images, not just at fetch time —
+        principle of least surprise (no manual re-fetch required).
+        """
+        from fastapi.testclient import TestClient
+
+        from backend.cc_image_cache import cache_dir
+        from backend.main import app
+
+        sess = "sess-lazy"
+        conv_uuid = "sess-lazy"  # CC: conv_uuid == sess (parent dir name)
+        original = _write_cc_image(
+            cc_env["claude_dir"], sess, "7.png", TINY_PNG_BYTES
+        )
+
+        # Pre-condition: cache is empty for this sess/N.
+        cache_root = cache_dir()
+        assert not list(cache_root.glob(f"*/{sess}--7.*.png"))
+
+        client = TestClient(app)
+        resp = client.get("/api/cc-image", params={"path": str(original)})
+        assert resp.status_code == 200, resp.text
+        assert resp.content == TINY_PNG_BYTES
+
+        # Post-condition: cache now has exactly one copy under
+        # <conv_uuid>/<sess>--7.<sha8>.png, and it matches the original.
+        copies = list(cache_root.glob(f"{conv_uuid}/{sess}--7.*.png"))
+        assert len(copies) == 1, copies
+        assert copies[0].read_bytes() == TINY_PNG_BYTES
+
     def test_api_cc_image_serves_original_when_present(self, cc_env):
         """If the original is on disk, serve it directly (don't go via cache).
 

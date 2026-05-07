@@ -203,6 +203,20 @@ def get_cc_image(path: str = Query(..., description="Absolute path under ~/.clau
     }
 
     if candidate.is_file():
+        # Lazy-populate the permanent cache (P4b "Option B"): if the live
+        # file exists but no cache copy does, copy it now. Means the
+        # cache fills as the user views images, not just at fetch time.
+        # For CC sessions the conversation UUID equals the session UUID
+        # (= parent dir name), which matches what cache_all_markers
+        # writes during the eager fetch-time path. Best-effort: any
+        # error is logged and swallowed so it can never fail the
+        # request.
+        try:
+            from ..cc_image_cache import copy_marker_image_to_cache
+
+            copy_marker_image_to_cache(str(candidate), candidate.parent.name)
+        except Exception:  # noqa: BLE001
+            logger.exception("lazy cc-image cache copy failed for %s", candidate)
         return FileResponse(candidate, media_type=media_type, headers=cache_headers)
 
     # P4b: original is gone — try the permanent cache. The cached
