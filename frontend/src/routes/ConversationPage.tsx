@@ -371,52 +371,63 @@ export function ConversationPage() {
               </button>
             )}
           </div>
-          {conversation.source === 'CLAUDE_CODE' && conversation.project_path && (
-            <div className="mt-1 flex items-center gap-1 text-xs text-zinc-400 dark:text-zinc-500">
-              <FolderCode className="h-3 w-3" />
-              <span className="font-mono">{conversation.project_path}</span>
-              {conversation.git_branch && (
-                <>
-                  <GitBranch className="ml-2 h-3 w-3" />
-                  <span className="font-mono">{conversation.git_branch}</span>
-                </>
+          <details open className="group mt-1 grid grid-cols-[auto_1fr] items-start gap-x-3">
+            <summary
+              className="flex cursor-pointer list-none items-center gap-1 text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 [&::-webkit-details-marker]:hidden"
+              title="Show conversation details"
+            >
+              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-0 -rotate-90" />
+              <span>Details</span>
+            </summary>
+            <div className="space-y-0.5">
+              {conversation.source === 'CLAUDE_CODE' && conversation.project_path && (
+                <div className="flex items-center gap-1 text-xs text-zinc-400 dark:text-zinc-500">
+                  <FolderCode className="h-3 w-3" />
+                  <span className="font-mono">{conversation.project_path}</span>
+                  {conversation.git_branch && (
+                    <>
+                      <GitBranch className="ml-2 h-3 w-3" />
+                      <span className="font-mono">{conversation.git_branch}</span>
+                    </>
+                  )}
+                </div>
+              )}
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(conversation.uuid)
+                  setCopiedUuid(true)
+                  setTimeout(() => setCopiedUuid(false), 2000)
+                }}
+                className="flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+                title="Click to copy UUID"
+              >
+                {copiedUuid ? (
+                  <Check className="h-3 w-3 text-green-500" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+                <span>{conversation.uuid}</span>
+              </button>
+              {conversation.file_path && (
+                <button
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(conversation.file_path!)
+                    setCopiedPath(true)
+                    setTimeout(() => setCopiedPath(false), 2000)
+                  }}
+                  className="flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+                  title="Click to copy file path"
+                >
+                  {copiedPath ? (
+                    <Check className="h-3 w-3 text-green-500" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                  <span className="truncate max-w-lg">{conversation.file_path}</span>
+                </button>
               )}
             </div>
-          )}
-          <button
-            onClick={async () => {
-              await navigator.clipboard.writeText(conversation.uuid)
-              setCopiedUuid(true)
-              setTimeout(() => setCopiedUuid(false), 2000)
-            }}
-            className="mt-1 flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
-            title="Click to copy UUID"
-          >
-            {copiedUuid ? (
-              <Check className="h-3 w-3 text-green-500" />
-            ) : (
-              <Copy className="h-3 w-3" />
-            )}
-            <span>{conversation.uuid}</span>
-          </button>
-          {conversation.file_path && (
-            <button
-              onClick={async () => {
-                await navigator.clipboard.writeText(conversation.file_path!)
-                setCopiedPath(true)
-                setTimeout(() => setCopiedPath(false), 2000)
-              }}
-              className="mt-0.5 flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
-              title="Click to copy file path"
-            >
-              {copiedPath ? (
-                <Check className="h-3 w-3 text-green-500" />
-              ) : (
-                <Copy className="h-3 w-3" />
-              )}
-              <span className="truncate max-w-lg">{conversation.file_path}</span>
-            </button>
-          )}
+          </details>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
