@@ -74,7 +74,13 @@ test.describe('SourceFilterContext + showPhantomSessions preferences migration (
     await page.reload()
 
     // Open the source-filter Select and click Claude Code.
-    await page.getByRole('combobox').first().click()
+    // CF1: the active-filter picker is now the first combobox in the
+    // sidebar, so we filter to the source-filter's content text.
+    await page
+      .getByRole('combobox')
+      .filter({ hasText: /All Conversations|Claude Desktop|Claude Code/ })
+      .first()
+      .click()
     await page.getByRole('option', { name: /Claude Code/ }).click()
 
     await expect
@@ -101,7 +107,11 @@ test.describe('SourceFilterContext + showPhantomSessions preferences migration (
     await page.reload()
 
     // SelectTrigger renders the current value as text content.
-    const trigger = page.getByRole('combobox').first()
+    // CF1: filter by content to avoid matching the active-filter picker.
+    const trigger = page
+      .getByRole('combobox')
+      .filter({ hasText: /All Conversations|Claude Desktop|Claude Code/ })
+      .first()
     await expect(trigger).toContainText(/Claude Code/i, { timeout: 5_000 })
   })
 

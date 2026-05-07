@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
 import { useFilters } from '@/contexts/FilterContext'
-import { FilterChipRail } from '@/components/filters/FilterChipRail'
-import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor } from 'lucide-react'
+import { ManageFiltersModal } from '@/components/filters/ManageFiltersModal'
+import { Search, Settings, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor, Filter as FilterIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -11,6 +11,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -38,9 +39,21 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
 
 export function Sidebar({ className }: SidebarProps) {
   const urlFilters = useUrlFilters()
-  const { activeFilters } = useFilters()
+  const { filtersState, setActiveId } = useFilters()
   const [searchQuery, setSearchQuery] = useState(urlFilters.q)
+  const [isManageOpen, setIsManageOpen] = useState(false)
   const { scope: pinScope, unpin: unpinSearch } = useSearchPin()
+
+  // Active picker options: every enabled node, alpha-sorted by name. The
+  // sentinel "__none__" maps to activeId=null ("All conversations").
+  const ACTIVE_NONE = '__none__'
+  const pickerOptions = Object.values(filtersState.nodes)
+    .filter((n) => n.enabled)
+    .sort((a, b) => a.name.localeCompare(b.name))
+  // Resolve current selection: if activeId points at a missing or disabled
+  // node, render the sentinel so the trigger shows "All conversations".
+  const activeNode = filtersState.activeId ? filtersState.nodes[filtersState.activeId] : null
+  const pickerValue = activeNode && activeNode.enabled ? activeNode.id : ACTIVE_NONE
 
   // Keep the search box synced with the URL so deep-links and back/forward both work.
   useEffect(() => {
@@ -133,6 +146,26 @@ export function Sidebar({ className }: SidebarProps) {
             data-testid="sidebar-title-search"
           />
         </div>
+        {/* CF1: active-filter picker. Replaces the old chip rail.
+            "All conversations" maps to activeId=null. */}
+        <Select
+          value={pickerValue}
+          onValueChange={(v: string) => setActiveId(v === ACTIVE_NONE ? null : v)}
+        >
+          <SelectTrigger className="w-full" data-testid="active-filter-select">
+            <FilterIcon className="h-3 w-3 mr-1 text-zinc-400" />
+            <SelectValue placeholder="All conversations" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ACTIVE_NONE}>All conversations</SelectItem>
+            {pickerOptions.length > 0 && <SelectSeparator />}
+            {pickerOptions.map((node) => (
+              <SelectItem key={node.id} value={node.id}>
+                {node.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={sourceFilter} onValueChange={(v: string) => setSourceFilter(v as SourceFilter)}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder="Filter by source" />
@@ -240,9 +273,17 @@ export function Sidebar({ className }: SidebarProps) {
         </div>
       </div>
 
-      {/* Filter chip rail */}
+      {/* Manage filters trigger (the chip rail is gone in CF1). */}
       <div className="px-4 pb-2">
-        <FilterChipRail />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() => setIsManageOpen(true)}
+          aria-label="Manage filters"
+        >
+          Manage filters
+        </Button>
       </div>
 
       {/* Conversation List */}
@@ -257,10 +298,12 @@ export function Sidebar({ className }: SidebarProps) {
           projectSlug={urlFilters.project || undefined}
           titleFilter={urlFilters.title || undefined}
           titleFilterMode={urlFilters.filterMode}
-          activeFilters={activeFilters}
           organizationId={organizationId}
         />
       </ScrollArea>
+
+      {/* Manage filters modal */}
+      <ManageFiltersModal isOpen={isManageOpen} onClose={() => setIsManageOpen(false)} />
 
       {/* Footer */}
       <div className="flex items-center justify-between border-t border-zinc-200 p-4 dark:border-zinc-800">

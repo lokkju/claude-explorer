@@ -1,20 +1,13 @@
 /**
- * P3f — FilterContext dual-read/dual-write migration via usePreferences.
+ * CF1 — FilterContext composable-graph migration end-to-end.
  *
- * After this commit, the two persistent FilterContext keys must:
- *
- *   - savedFilters    (Filter[]   — full set of saved filter definitions)
- *   - activeFilterIds (string[]   — pinned-active subset)
- *
- * 1. PATCH `/api/preferences` when the user changes them (the body
- *    contains the changed key under `data`).
- * 2. Mirror the new value into `localStorage` under the EXACT same key
- *    the legacy code used (so existing browser sessions keep working).
- * 3. Read from the server envelope on first mount when the server has
- *    a value for that key (server beats local; local beats fallback).
- *
- * As with P3c, the local mirror is NOT removed in this commit — that
- * comes after the soak window.
+ * After this commit:
+ *   - The legacy keys `savedFilters` + `activeFilterIds` are migrated
+ *     once into the new graph blob `filters: { nodes, activeId, _migratedV1 }`.
+ *   - The migration PATCH explicitly nulls `savedFilters` /
+ *     `activeFilterIds` (the backend's per-key-overwrite semantics
+ *     require explicit null to clear).
+ *   - The sentinel `_migratedV1: true` prevents re-migration on reload.
  */
 
 import { test, expect } from './fixtures'
@@ -46,6 +39,7 @@ async function installPrefsRoute(
       }
       const patchData = body.data ?? {}
       patches.bodies.push(patchData)
+      // Mirror the backend's per-key overwrite (including null = clear).
       Object.assign(state.data, patchData)
       route.fulfill({
         status: 200,
@@ -64,76 +58,100 @@ async function installPrefsRoute(
   return { state, patches }
 }
 
-test.describe('FilterContext preferences migration (P3f)', () => {
-  test('Adding a saved filter PATCHes server preferences', async ({ page, mockBackend }) => {
+test.describe('FilterContext composable-graph migration (CF1)', () => {
+  test('legacy savedFilters with a pinned filter migrates into a default-migrated group, with legacy keys nulled in the PATCH', async ({ page, mockBackend }) => {
     await mockBackend({})
-    const { patches } = await installPrefsRoute(page, {})
-
-    await page.goto('/')
-    await page.evaluate(() => {
-      localStorage.removeItem('savedFilters')
-      localStorage.removeItem('activeFilterIds')
-    })
-    await page.reload()
-
-    // Open the manage filters dialog and create a new filter.
-    await page.getByRole('button', { name: /manage filters/i }).click()
-    await expect(page.getByRole('dialog', { name: /manage filters/i })).toBeVisible()
-    await page.getByRole('button', { name: /add filter/i }).click()
-
-    await page.getByLabel(/filter name/i).fill('TestFilter')
-    await page.getByLabel(/patterns/i).fill('*foo*')
-    await page.getByRole('button', { name: /save/i }).click()
-
-    // Assert at least one PATCH body has key `savedFilters` with array
-    // containing our new filter.
-    await expect.poll(() => patches.bodies.length, { timeout: 5_000 }).toBeGreaterThan(0)
-    const sawFilterPatch = patches.bodies.some((b) => {
-      const sf = (b as Record<string, unknown>).savedFilters
-      return Array.isArray(sf) && sf.some(
-        (f) => typeof f === 'object' && f !== null && (f as { name?: string }).name === 'TestFilter',
-      )
-    })
-    expect(sawFilterPatch).toBe(true)
-
-    // localStorage mirror must also contain the new filter.
-    const mirror = await page.evaluate(() => localStorage.getItem('savedFilters'))
-    expect(mirror).not.toBeNull()
-    const parsed = JSON.parse(mirror as string) as Array<{ name: string }>
-    expect(parsed.some((f) => f.name === 'TestFilter')).toBe(true)
-
-    // The migration marker is set.
-    const marker = await page.evaluate(() => localStorage.getItem('prefs_migrated_v1'))
-    expect(marker).toBe('true')
-  })
-
-  test('savedFilters restored from server on first mount', async ({ page, mockBackend }) => {
-    await mockBackend({})
-    await installPrefsRoute(page, {
+    const { state, patches } = await installPrefsRoute(page, {
       savedFilters: [
         {
-          id: 'srv-a',
-          name: 'TestFilter',
-          patterns: ['*srv*'],
-          polarity: 'include',
-          mode: 'glob',
-          target: 'title',
-          pinned: false,
+          id: 'p1', name: 'Scan Gmail',
+          patterns: ['Scan Gmail*'], polarity: 'exclude', mode: 'glob',
+          target: 'title', pinned: true,
+        },
+        {
+          id: 'p2', name: 'Other',
+          patterns: ['*other*'], polarity: 'include', mode: 'glob',
+          target: 'title', pinned: false,
         },
       ],
+      activeFilterIds: [],
     })
 
     await page.goto('/')
-    await page.evaluate(() => {
-      localStorage.removeItem('savedFilters')
-      localStorage.removeItem('activeFilterIds')
-    })
-    await page.reload()
 
-    // Open the manage filters dialog; the server-supplied filter must appear.
-    await page.getByRole('button', { name: /manage filters/i }).click()
-    const dialog = page.getByRole('dialog', { name: /manage filters/i })
-    await expect(dialog).toBeVisible()
-    await expect(dialog.getByText('TestFilter')).toBeVisible()
+    // Wait until the migration PATCH has landed.
+    await expect.poll(() => patches.bodies.length, { timeout: 5_000 }).toBeGreaterThan(0)
+
+    const migrationPatch = patches.bodies.find(
+      (b) => 'filters' in b && b.savedFilters === null && b.activeFilterIds === null,
+    )
+    expect(migrationPatch).toBeDefined()
+
+    interface MigratedFilters {
+      nodes: Record<string, { type: string; childIds?: string[] } & Record<string, unknown>>
+      activeId: string | null
+      _migratedV1: boolean
+    }
+    const filtersBlob = (migrationPatch as { filters: MigratedFilters }).filters
+
+    // Both atoms migrated; pinned key gone; group references the pinned id.
+    expect(filtersBlob.nodes['p1']).toMatchObject({ type: 'atom', name: 'Scan Gmail' })
+    expect(filtersBlob.nodes['p2']).toMatchObject({ type: 'atom', name: 'Other' })
+    const grp = filtersBlob.nodes['default-migrated'] as { type: string; childIds: string[] }
+    expect(grp.type).toBe('group')
+    expect(grp.childIds).toEqual(['p1'])
+    expect(filtersBlob.activeId).toBe('default-migrated')
+    expect(filtersBlob._migratedV1).toBe(true)
+
+    // After the migration applies, the server state has the legacy keys nulled.
+    expect(state.data.savedFilters).toBeNull()
+    expect(state.data.activeFilterIds).toBeNull()
+    expect(state.data.filters).toBeDefined()
+  })
+
+  test('reload after migration does NOT re-PATCH', async ({ page, mockBackend }) => {
+    await mockBackend({})
+    const { patches } = await installPrefsRoute(page, {
+      savedFilters: [
+        { id: 'p1', name: 'P1', patterns: ['*p1*'], polarity: 'include', mode: 'glob', target: 'title', pinned: true },
+      ],
+      activeFilterIds: [],
+    })
+
+    await page.goto('/')
+    await expect.poll(() => patches.bodies.length, { timeout: 5_000 }).toBeGreaterThan(0)
+    const countAfterFirstLoad = patches.bodies.length
+
+    await page.reload()
+    // Give the page a moment to settle.
+    await page.waitForTimeout(500)
+
+    // No new PATCHes should have fired: legacy keys are nulled and
+    // _migratedV1 sentinel is true on the server.
+    expect(patches.bodies.length).toBe(countAfterFirstLoad)
+  })
+
+  test('new-shape passthrough: prefs already contain `filters`, no migration writes', async ({ page, mockBackend }) => {
+    await mockBackend({})
+    const { patches } = await installPrefsRoute(page, {
+      filters: {
+        nodes: {
+          a: {
+            type: 'atom', id: 'a', name: 'Already migrated',
+            enabled: true, patterns: ['*foo*'], polarity: 'include',
+            mode: 'glob', target: 'title',
+          },
+        },
+        activeId: 'a',
+        _migratedV1: true,
+      },
+    })
+
+    await page.goto('/')
+    await page.waitForTimeout(500)
+    // The picker shows the pre-existing filter as active (load smoke).
+    await expect(page.getByTestId('active-filter-select')).toContainText('Already migrated')
+    // No migration PATCH fired.
+    expect(patches.bodies).toEqual([])
   })
 })

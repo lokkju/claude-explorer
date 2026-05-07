@@ -152,7 +152,9 @@ test.describe('Sidebar — project grouping is collapsible (B2)', () => {
     await page.goto('/')
 
     // Switch source to Claude Code so the "Group by project" toggle appears.
-    await page.getByRole('combobox').first().click()
+    // CF1: the active-filter picker is now the first combobox in the sidebar,
+    // so we filter by the source-filter's text content.
+    await page.getByRole('combobox').filter({ hasText: /All Conversations|Claude Desktop|Claude Code/ }).first().click()
     await page.getByRole('option', { name: 'Claude Code' }).click()
 
     // Tick the "Group by project" checkbox (FolderTree icon, title attr).
