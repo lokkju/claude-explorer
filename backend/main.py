@@ -155,6 +155,17 @@ async def lifespan(app: FastAPI):
                 _migration_state["status"] = "stuck"
                 _migration_state["last_error"] = str(e)
 
+    # Spawn the CC image-cache watcher. Polls ~/.claude/image-cache/
+    # every few seconds and copies new files to the permanent cache
+    # before Claude Code rotates them. Best-effort: any internal error
+    # is logged and swallowed.
+    watcher_stop = asyncio.Event()
+    watcher_task: asyncio.Task | None = None
+    if os.environ.get("CLAUDE_EXPORTER_DISABLE_CC_WATCHER") != "1":
+        from backend.cc_image_watcher import run_watcher
+
+        watcher_task = asyncio.create_task(run_watcher(watcher_stop))
+
     try:
         yield
     finally:
@@ -165,6 +176,13 @@ async def lifespan(app: FastAPI):
                 await migration_task
             except (asyncio.CancelledError, Exception):
                 pass
+        # Cooperative shutdown for the CC image watcher.
+        if watcher_task is not None and not watcher_task.done():
+            watcher_stop.set()
+            try:
+                await asyncio.wait_for(watcher_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                watcher_task.cancel()
 
 
 app = FastAPI(
