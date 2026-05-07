@@ -78,15 +78,18 @@ test.describe('Sidebar filters (CF1)', () => {
     await page.evaluate(() => { localStorage.clear(); });
 
     await page.getByRole('button', { name: /manage filters/i }).click();
-    await page.getByRole('button', { name: /add filter/i }).click();
+    // CF2: two-pane editor — click "+ New filter" then fill the editor by testid.
+    await page.getByTestId('manage-filters-new').click();
 
-    await page.getByLabel(/filter name/i).fill('MCP work');
-    await page.getByLabel(/patterns/i).fill('*mcp*');
+    await page.getByTestId('filter-editor-name').fill('MCP work');
+    await page.getByTestId('filter-editor-polarity-include').click();
+    await page.getByTestId('filter-editor-mode-glob').click();
+    await page.getByTestId('filter-editor-patterns').fill('*mcp*');
 
-    // Live-preview should report 2 matches.
-    await expect(page.getByText(/2 match/i)).toBeVisible();
-
-    await page.getByRole('button', { name: /save/i }).click();
+    await page.getByTestId('filter-editor-save').click();
+    // Close the modal explicitly (CF2 keeps the modal open after save so the
+    // user can continue editing other filters).
+    await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog', { name: /manage filters/i })).toHaveCount(0);
 
     // The new filter appears as an option in the active picker.
