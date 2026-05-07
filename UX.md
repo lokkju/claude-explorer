@@ -612,12 +612,113 @@ Each pane has its own sort state. The search panel's sort can differ
 from the sidebar's so the user can scan, e.g., the most recent matches
 without disturbing their list ordering.
 
-### Filter chip rail
+### Composable filters (named title filters)
 
-Below the sidebar header sits the `FilterChipRail`. Active filters
-(source, workspace, sort, project, title pattern) render as removable
-chips; clicking the `×` clears that filter. Pinned filters auto-activate
-on load; unpinned active state is per-session only.
+Saved title filters use a composable graph model. Two kinds of node:
+
+- **Atoms** carry one set of patterns plus a polarity (`include` /
+  `exclude`) and a mode (`glob` / `regex`).
+- **Groups** combine other named filters. A group is either *match all
+  of these* (every member must pass) or *match any of these* (at least
+  one member must pass). Groups can reference atoms or other groups.
+
+The UI deliberately avoids AND/OR jargon — the radio labels are *"Match
+all of these filters"* and *"Match any of these filters"*.
+
+#### One active filter
+
+At most one filter is active at a time. The sidebar's active-filter
+`<Select>` (between the title-search input and the source filter) shows
+every enabled named filter; selecting one sets it as the active filter.
+The sentinel option **All conversations** maps to no active filter
+(nothing is filtered out).
+
+#### Enabled / disabled
+
+Every filter has an `enabled` boolean.
+
+- A disabled filter never appears in the active-filter `<Select>` and
+  cannot be selected as active.
+- Disabled members are dropped from a group's quantifier *before* the
+  match runs. A `match: 'any'` group containing a single disabled
+  member therefore does NOT pass for everything; the disabled member is
+  removed first, and the resulting empty group passes (see "least
+  surprise" rule below).
+- If the active filter itself is disabled it becomes a no-op (treated as
+  "no filter active") instead of throwing.
+
+#### Least surprise: empty filters pass
+
+- An atom with zero patterns passes for every conversation.
+- A group with zero members (or a group whose members are all disabled
+  / all orphans) passes for every conversation.
+
+#### Manage Filters modal
+
+The `Manage filters` button opens a two-pane modal: list of saved
+filters on the left, editor for the selected filter on the right.
+
+- **Atom editor**: name, polarity (include/exclude), mode (glob/regex),
+  patterns (one per line), enabled toggle. The Name input auto-fills
+  from the first usable pattern (≥3 alphanumeric chars after stripping
+  glob/regex meta-characters) until the user manually edits the name;
+  clearing the name resumes auto-fill.
+- **Group editor**: name, match radio (*all of these* / *any of these*),
+  enabled toggle, member chips with an "Add member" `<Select>`. The Add
+  member options exclude (a) self and (b) any node that would create a
+  cycle.
+- **"Used by:" line** sits directly under the name input and lists the
+  groups that reference the current filter. Deletion is blocked while
+  the filter is referenced; the block message names the referencing
+  group(s) inline.
+
+#### Exclude + "any of these" warning
+
+A group whose members are ALL `exclude` atoms and whose `match` is
+*any of these* passes for nearly every conversation, because most items
+fail to match at least one of the excludes. The editor detects this
+combination at edit time and surfaces an inline warning under the Match
+radio recommending the user switch to *all of these* or change one or
+more members to *include*.
+
+#### Cycle defense
+
+- The Add-member `<Select>` hides candidates that would introduce a
+  cycle, so the editor cannot save a cyclic graph.
+- The runtime evaluator carries a `visited` set; a cycle introduced by
+  manual edit of the prefs file short-circuits to "no-op" rather than
+  blowing the stack.
+
+#### Migration from the legacy `pinned` model
+
+Older builds used a flat `Filter[]` plus a separate `pinned` boolean
+per filter, with seeding code that copied pinned filters into a
+session-only `activeFilterIds[]`. On the first load with the new code,
+the app migrates legacy state once:
+
+- Each legacy filter becomes an `AtomFilter` (drop `pinned`).
+- The previously-pinned atoms become children of a single
+  `GroupFilter` named **Default (migrated)**.
+- The new active filter is the migrated group when at least one filter
+  was pinned, otherwise null.
+- The legacy `savedFilters` and `activeFilterIds` keys are explicitly
+  nulled in the migration PATCH so the backend's per-key overwrite
+  clears them.
+- A sentinel `filters._migratedV1: true` is set so subsequent mounts
+  skip migration.
+
+After a successful migration the sidebar renders a one-time amber
+**Composable filters banner** above the conversation list:
+
+> Filters are now composable. Your previously-pinned filters are
+> grouped under **Default (migrated)** — your active filter. Click
+> *Manage filters* to review.
+
+The banner has a single dismiss control (`×`) that writes
+`filters.migrationBannerDismissed: true` through the same preferences
+PATCH path. Dismissed state survives reload. Fresh installs never see
+the banner because `_migratedV1` is left at `false` when no legacy
+state was found.
 
 ### Help modal
 
