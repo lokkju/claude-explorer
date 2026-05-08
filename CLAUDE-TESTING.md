@@ -320,21 +320,487 @@ Build clean fixtures from the spec.
 
 ---
 
-## 5 · Backend tests (pytest)
+## 5 · Backend test discipline (pytest, FastAPI, async)
 
-The same principles apply, with these specifics:
+The Playwright lessons from sections 1–4 transpose cleanly to pytest:
+write tests against the contract, falsify them, build realistic
+fixtures, beware of clip-ancestor-style false-positives. The shape of
+the false-positives is different on the backend, but the discipline is
+the same. The 11 sub-sections below are concrete failure modes we've
+shipped or nearly shipped.
 
-- Use `httpx.AsyncClient` against a real `FastAPI` app + a real
-  on-disk temp dir for the data layer. Don't mock the store layer —
-  mock the HTTP boundary if you must, but route the rest through
-  real code.
-- Migration tests: write the legacy on-disk shape into a `tmp_path`
-  and let the real migration code run against it. Assert the
-  resulting on-disk shape and any side effects.
-- Use `pytest.fixture(autouse=True)` on `monkeypatch.setenv`
-  temporary env vars (e.g., `CLAUDE_EXPORTER_DATA_DIR`).
-- For SSE tests, use `httpx.stream` and `aiter_lines()`; assert the
-  exact event sequence.
+### 5.1 · Test isolation: lru_cache, env vars, module singletons, time
+
+Backend false-pass class #1: a test passes because it's actually
+running against state from a *previous* test.
+
+**`get_settings()` is `@lru_cache`d.** If your test does
+`monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(tmp_path))` but
+doesn't clear the cache, every subsequent `get_settings()` call
+returns the FIRST test's settings. `tmp_path` from this test is never
+read. Fixture template:
+
+```python
+@pytest.fixture
+def isolated_data_dir(tmp_path, monkeypatch):
+    from backend import config
+    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(tmp_path))
+    config.get_settings.cache_clear()
+    yield tmp_path
+    config.get_settings.cache_clear()  # don't leak this test's settings into the next
+```
+
+**Module-level singletons need explicit reset.** Examples in this
+codebase: `_refresh_in_progress` flag in `backend/routers/fetch.py`,
+the `_seen` set in `backend/cc_image_watcher.py`, the in-memory cache
+in `backend/cache.py`. Each has a test-only `reset_for_tests()`
+helper or equivalent — call it from a fixture.
+
+**Time-dependent tests need `freezegun` or `monkeypatch`.** `migrate_to_v2`'s
+sentinel uses `datetime.now()`; tests that race the sentinel can flake
+on slow CI. `monkeypatch.setattr("backend.foo.datetime", FakeDatetime)`
+or use `freezegun.freeze_time(...)`.
+
+**`tmp_path` is per-test by default** but `tmp_path_factory` is
+session-scoped and shared. Don't write user data to `tmp_path_factory`
+unless you reset it.
+
+### 5.2 · Mock at the boundary, not the nesting
+
+Backend false-pass class #2: the test mocks so much of the
+implementation that the real bug never runs.
+
+**Rule.** Mock at the HTTP boundary (outbound calls to claude.ai), or
+at the filesystem boundary in the rare case where `tmp_path` won't
+work. Let everything else run for real.
+
+**Don't mock:** Pydantic models, serializers, migration code, the
+prefs reader/writer, the store layer, the route handlers, the SSE
+generators. They're cheap and they're where the bugs live.
+
+**Counter-example.** The `/api/preferences` PATCH deep-merge contract
+(`{savedFilters: null, activeFilterIds: null}` must explicitly null
+legacy keys for the per-key overwrite to clear them). A test that
+mocks `_write_atomic` and asserts "yes, _write_atomic was called with
+the right body" passes — but the real bug is what lands on disk after
+the round trip through `_read_blob() → merge → _write_atomic →
+_read_blob()`. Only a real-`tmp_path` test catches it.
+
+```python
+# WRONG: mocks too much
+def test_patch_merges(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("backend.routers.preferences._write_atomic",
+                        lambda p, d: seen.update(json.loads(d)))
+    client.patch("/api/preferences", json={"data": {"theme": "dark"}})
+    assert seen["data"]["theme"] == "dark"  # passes; doesn't test merge
+
+# RIGHT: round-trip through real disk
+def test_patch_merges(isolated_data_dir, client):
+    # seed
+    client.put("/api/preferences", json={"data": {"theme": "light", "lang": "en"}})
+    # patch
+    client.patch("/api/preferences", json={"data": {"theme": "dark"}})
+    # round-trip read
+    final = client.get("/api/preferences").json()["data"]
+    assert final["theme"] == "dark"
+    assert final["lang"] == "en"  # NEGATIVE-SPACE: must not be wiped
+```
+
+### 5.3 · Strong assertions, not "field exists"
+
+Backend false-pass class #3: the assertion checks structure but not
+semantic value. The field could be hardcoded to 0, an empty array,
+`None`, or last-write-wins junk and the test still passes.
+
+**Examples.**
+
+- `assert "conversation_count" in data` — passed for weeks while
+  `/api/config` returned a hardcoded `0`. The right test asserts
+  against a value computed from a known fixture: with 3 conversation
+  files in `tmp_path`, `/api/config/stats` returns `3`.
+- `assert response.json()["bookmarks"]` — Python truthy. `[]` is
+  falsy, `[None]` is truthy. Assert `assert response.json()["bookmarks"]
+  == [{...expected...}]`.
+- `assert response.status_code == 200` — most route bugs corrupt the
+  body, not the status. Always also assert the body shape and key
+  values.
+
+**For PDF / image / binary outputs:** assert against a known fixture
+byte signature, NOT just "≥1 image stream". WeasyPrint emits valid
+streams for broken-image icons; "stream count" can't tell broken from
+fixed. The P5 test (`backend/tests/test_export_pdf_images.py`) decodes
+the FlateDecode XObject and matches a deterministic 6-byte RGB
+sequence in the fixture image. Bytes-in, bytes-out.
+
+### 5.4 · Negative-space assertions
+
+Don't only assert what should change. Also assert what should NOT
+change. This catches the entire class of "endpoint clobbers
+unrelated state" bugs.
+
+**Concrete patterns.**
+
+- After a PATCH: GET back the resource and assert untouched fields.
+- After a migration: assert the keys you didn't migrate are still
+  there, and the values are byte-identical (`.read_bytes() ==
+  expected_bytes` if it's a file).
+- After copying to a cache: assert the source file is unchanged
+  (mtime + bytes).
+- After a delete: assert siblings/parents are unchanged.
+
+**Fenced-block strip incident (2026-05-05 P1.3, council caught).** The
+TOOL_PLACEHOLDER regex stripped placeholder text *inside* fenced code
+blocks, killing the friendly badge. A "strip works" test passes
+trivially. The real test is two-pronged: stripped *outside* fences;
+*preserved* inside fences. Negative-space assertion as a first-class
+test, not an afterthought.
+
+```python
+def test_tool_placeholder_strip_outside_fence_only():
+    md = "before\n\nTOOL_PLACEHOLDER_TEXT here\n\n```\nTOOL_PLACEHOLDER_TEXT inside\n```\nafter"
+    out = filter_tool_placeholders(md)
+    assert "TOOL_PLACEHOLDER_TEXT here" not in out                  # stripped outside
+    assert "TOOL_PLACEHOLDER_TEXT inside" in out                    # PRESERVED inside fence
+```
+
+### 5.5 · Migration tests MUST seed the legacy shape
+
+Backend false-pass class #4 (and the most common): tests seed the new
+schema, the migration code never runs, and the test happily verifies
+the new schema is still the new schema.
+
+**Rule.** Migration tests seed the on-disk shape USERS WILL HAVE
+(legacy), then run the migration, then assert the post-migration
+shape AND the full contract of what the migration was supposed to do
+(tombstone keys, sentinel flags, side effects).
+
+**v1 → v2 filter migration template.**
+
+```python
+def test_v1_to_v2_atom_polarity_promotes_to_behavior(isolated_data_dir, client):
+    prefs = isolated_data_dir / "preferences.json"
+    prefs.write_text(json.dumps({
+        "version": 1,
+        "data": {
+            "filters": {
+                "nodes": {
+                    "atom-x": {
+                        "id": "atom-x", "type": "atom", "name": "X",
+                        "enabled": True,
+                        "polarity": "exclude",   # legacy v1
+                        # NO 'behavior' key
+                        "patterns": ["*X*"], "mode": "glob", "target": "title",
+                    },
+                },
+                "activeId": "atom-x",
+                "_migratedV1": True,
+                # NO _migratedV2
+            },
+        },
+    }))
+    # Trigger the migration via the normal path (a GET that the app uses
+    # on first mount). Don't reach into private migration functions —
+    # tests should exercise the public surface.
+    client.get("/api/preferences")
+    final = json.loads(prefs.read_text())["data"]["filters"]
+    atom = final["nodes"]["atom-x"]
+    assert atom["behavior"] == "hide"        # promoted
+    assert "polarity" not in atom             # legacy stripped
+    assert final["_migratedV2"] is True       # sentinel set
+    assert final["activeId"] == "atom-x"      # active preserved
+```
+
+**Idempotency.** Run the migration twice. Assert the second run is a
+no-op (no PATCH, no on-disk diff). The 2026-05-05 P3a fix uses a
+sentinel for exactly this; if the sentinel can be bypassed, the
+migration runs every page load and silently rewrites user state.
+
+**Tombstone keys.** When a migration is supposed to clear legacy keys
+(via the per-key-overwrite PATCH path), assert they're EXPLICITLY
+nulled in the request body OR absent from the post-migration GET.
+Omitting them from the PATCH leaves them on disk — that's exactly the
+bug Gemini's council review caught in CFR1.
+
+### 5.6 · SSE streaming tests
+
+`/api/fetch/refresh`, `/api/fetch/start`, and any future SSE endpoint
+have a contract that's ENTIRELY about the event stream. A test that
+asserts `status_code == 200` proves none of it.
+
+**The full SSE contract: event order, event types, payload shape per
+event, termination.**
+
+```python
+@pytest.mark.asyncio
+async def test_refresh_emits_start_progress_complete(client_with_real_app):
+    events: list[tuple[str, dict]] = []
+    async with client_with_real_app.stream("GET", "/api/fetch/refresh?incremental=true") as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+
+        current_event: str | None = None
+        async for line in resp.aiter_lines():
+            if line.startswith("event:"):
+                current_event = line.removeprefix("event:").strip()
+            elif line.startswith("data:") and current_event:
+                payload = json.loads(line.removeprefix("data:").strip())
+                events.append((current_event, payload))
+                if current_event in ("complete", "error"):
+                    break
+
+    # Order: start, then ≥1 progress, then complete (or error — assert which).
+    kinds = [k for k, _ in events]
+    assert kinds[0] == "start"
+    assert "progress" in kinds
+    assert kinds[-1] == "complete"            # NOT error in the happy path
+    # Payload shape per event:
+    start_payload = next(p for k, p in events if k == "start")
+    assert "total" in start_payload
+```
+
+**Termination.** Every SSE stream must reach `complete` OR `error`.
+Tests should assert the terminator and that the stream actually
+closes (no hang). Use `asyncio.wait_for(..., timeout=5)` on the
+`async for` loop.
+
+**Reconnection.** If the impl supports SSE retry (`retry: N`), a test
+should assert the retry directive is emitted and respected.
+
+**Cancellation.** Disconnect mid-stream and assert the server-side
+generator cleans up (no leaked threads, no half-written file). For
+the cc-image watcher: assert the polling loop cancels cleanly when
+the lifespan teardown fires.
+
+### 5.7 · Realistic data sizes
+
+Backend equivalent of the Playwright "long names" rule. Bugs that
+only appear at scale:
+
+- **Search / scoring loops** — fixtures with 1 message don't test
+  per-message sort, dedup, or pagination boundaries. Build a fixture
+  with at least 50 messages and a known token in only one of them.
+- **Filesystem walks** — `discover_jsonl_files` paginates / dedups
+  across orgs. With 1 file, you don't test the dedup. With 50 files
+  spanning 3 orgs, you do.
+- **Memory limits** — large attachments (multi-MB images) don't fit
+  in a 1×1 PNG fixture. PDF export with 10+ images can hit
+  WeasyPrint memory pressure; include at least one such test.
+- **UUID / off-by-one bugs** — sequential UUIDs hide collisions and
+  off-by-one errors. Use `uuid.uuid4()` in fixtures, not
+  `f"uuid-{i}"`.
+- **Long content** — message text > 100kB exercises the streaming-
+  tokenizer code paths. Title/name strings ≥ 30 chars test the
+  truncation paths the UI relies on.
+
+**Fixture helper template.**
+
+```python
+def make_realistic_conversation(uuid: str, *, message_count: int = 50,
+                                  needle_index: int | None = None) -> dict:
+    """Build a fixture conversation with realistic structure.
+
+    needle_index: if set, the message at this index contains the literal
+    string 'NEEDLE_TOKEN' (for search/sort tests). Use a non-zero index
+    so 'first match wins' bugs surface.
+    """
+    msgs = []
+    for i in range(message_count):
+        text = f"Message {i} body with some realistic content."
+        if i == needle_index:
+            text += " NEEDLE_TOKEN here."
+        msgs.append({
+            "uuid": str(uuid_lib.uuid4()),
+            "sender": "human" if i % 2 == 0 else "assistant",
+            "text": text,
+            "content": [{"type": "text", "text": text}],
+            "created_at": (BASE_TIME + timedelta(seconds=i)).isoformat(),
+            "updated_at": (BASE_TIME + timedelta(seconds=i)).isoformat(),
+            "files": [],
+            "files_v2": [],
+            "attachments": [],
+        })
+    return {
+        "uuid": uuid,
+        "name": "Realistic conversation with a long enough title to truncate",
+        "model": "claude-opus-4-7",
+        "created_at": BASE_TIME.isoformat(),
+        "updated_at": (BASE_TIME + timedelta(seconds=message_count)).isoformat(),
+        "chat_messages": msgs,
+        "current_leaf_message_uuid": msgs[-1]["uuid"],
+        ...
+    }
+```
+
+### 5.8 · Concurrency and atomic-op tests
+
+Endpoints that use locks, atomic ops, or shared state need explicit
+race tests. The contract is "lock holds under contention" — and the
+only way to exercise that is to actually contend.
+
+**Lock under contention.** `/api/fetch/refresh` is serialized via
+`asyncio.Lock` + `_refresh_in_progress`. The test fires concurrent
+requests:
+
+```python
+@pytest.mark.asyncio
+async def test_refresh_serialized(real_async_client):
+    # Start two refreshes "simultaneously"; one must 409.
+    r1, r2 = await asyncio.gather(
+        real_async_client.get("/api/fetch/refresh"),
+        real_async_client.get("/api/fetch/refresh"),
+        return_exceptions=False,
+    )
+    statuses = sorted([r1.status_code, r2.status_code])
+    assert statuses == [200, 409]
+```
+
+**Atomic write under crash.** When the impl uses `tmp + os.replace`,
+inject a failure between write and replace. Assert (a) the original
+file is intact and (b) the temp file is cleaned up.
+
+```python
+def test_atomic_write_recovers_from_replace_failure(isolated_data_dir, monkeypatch):
+    target = isolated_data_dir / "preferences.json"
+    target.write_text(json.dumps({"version": 1, "data": {"theme": "light"}}))
+    original_bytes = target.read_bytes()
+
+    # Force os.replace to fail.
+    def boom(*a, **k): raise OSError("simulated rename failure")
+    monkeypatch.setattr("os.replace", boom)
+
+    with pytest.raises(OSError):
+        write_preferences({"version": 1, "data": {"theme": "dark"}})
+
+    # Original survived.
+    assert target.read_bytes() == original_bytes
+    # No temp leaked.
+    assert not list(isolated_data_dir.glob("preferences.json.tmp*"))
+```
+
+**Filesystem ordering in migrations.** What happens if the user kills
+the process mid-migration? Test the partial states. If migration
+writes files A, B, C in order, simulate a crash after each and assert
+recovery on next mount.
+
+**SQLite WAL contention.** If we ever use SQLite, test concurrent
+readers + a writer; assert no `database is locked` errors leak to the
+client. (Currently no SQLite — but the cache.db hint suggests it
+might be relevant; flag if so.)
+
+### 5.9 · Security-adjacent inputs
+
+Every route that takes a path / URL / pattern / external input needs
+explicit malicious-input tests. The test passes when the route
+*refuses* the input (4xx with no leakage), not when it serves
+something.
+
+**Path traversal.** `/api/cc-image?path=../../../etc/passwd` — assert
+403 or 400, not 200 with /etc/passwd content. Same for
+`/api/attachments/<conv>/<file>/<variant>`. Real pattern: the route
+must `Path(...).resolve(strict=True).relative_to(allowed_root)` and
+404 on `ValueError`.
+
+**Symlink resolution.** Place a symlink in `tmp_path` pointing
+outside the data dir. Assert the route doesn't follow it.
+
+**Permission bits.** After writing `~/.claude-exporter/credentials.json`
+or `preferences.json`, assert `os.stat(p).st_mode & 0o777 == 0o600`.
+The atomic-write path is what writes mode bits; if it
+`os.replace()`s a `tmp` file with `0o644`, the permission slips. We
+have this test for credentials but not preferences — write it.
+
+**Regex DoS.** If the user can supply regex patterns
+(`AtomFilter.mode == 'regex'`), a pathological pattern like
+`(a+)+$` with a long input can hang. Assert the matcher terminates
+within a small time budget OR validates pattern complexity.
+
+**Auth headers.** Routes that expect headers (X-Org-ID,
+Authorization, etc.) should 401 on missing headers, 403 on
+malformed. Don't rely on FastAPI's default behavior; explicit tests
+prevent regressions.
+
+**Header / form smuggling.** Tests that supply unexpected
+content-type, oversized JSON, or duplicate headers should produce
+4xx with a useful detail body, not 500.
+
+### 5.10 · Async / await pitfalls
+
+Backend false-pass class #5: a coroutine is created but not awaited.
+The test happily passes; the assertion runs against the coroutine
+object instead of its resolved value.
+
+**Concrete trap.**
+
+```python
+# WRONG — silent pass
+def test_get_config(client):
+    response = client.get("/api/config")  # if `client` is AsyncClient, returns a coroutine
+    assert response.status_code == 200    # `response` is a coroutine; status_code attribute access throws AttributeError
+                                           # ...but if you got the imports wrong AsyncClient might be a sync mock,
+                                           # silently passing.
+```
+
+**Discipline.**
+
+1. `pyproject.toml` sets `asyncio_mode = "auto"` so all `async def`
+   tests run via `pytest-asyncio` automatically. Or use
+   `asyncio_mode = "strict"` and decorate explicitly with
+   `@pytest.mark.asyncio`. Don't mix.
+2. CI runs with `-W error::RuntimeWarning` so "coroutine was never
+   awaited" is a test failure, not a silent warning.
+3. For the simple HTTP tests, use FastAPI's `TestClient` (sync) — it
+   wraps `httpx.AsyncClient` internally and you write plain
+   `def test_…`. For SSE / streaming / explicit async behavior, use
+   `httpx.AsyncClient` + `async def test_…`.
+4. Never `asyncio.run()` inside a test; always let `pytest-asyncio`
+   manage the loop.
+
+**Warning hygiene.** `filterwarnings` in `pyproject.toml` should NOT
+contain a blanket `ignore::DeprecationWarning`. Real deprecations
+from third-party libs are how we learn about upgrade requirements.
+Filter only the specific warnings you've consciously decided to live
+with, with a comment explaining why.
+
+### 5.11 · Pydantic / FastAPI specifics
+
+**Strict input validation.** Input models should declare
+`model_config = ConfigDict(extra='forbid')` so unknown fields produce
+422, not silent acceptance. Tests should send a payload with one
+extra field and assert 422 with a useful detail.
+
+**Edge cases for every input model.**
+
+- empty list, empty dict, empty string for required-non-empty fields
+- `null` for required fields → 422
+- Type coercion: `"1"` (string) where `int` is required — assert the
+  coercion happens AND the right cases reject (e.g. `"abc"` → 422).
+- Float / int boundary: `1.0` for `int` field; `2**53 + 1` for large
+  ints (JSON precision loss).
+- Datetime: ISO-8601 with and without timezone; assert tz handling.
+
+**Response model coercion only runs through HTTP.** Calling a route
+handler directly skips `response_model`. Always test via
+`httpx.AsyncClient`/`TestClient`, not by importing the handler.
+
+**Schema migration tests.** When you add a response field, write a
+test that consumes the OLD response shape and adapts (proves
+backwards compat). When you remove a field, write a test that the
+new response does NOT contain it (proves you actually removed it,
+didn't accidentally keep it for one extra release).
+
+**`Depends()` overrides.** Use `app.dependency_overrides[get_settings]
+= lambda: TestSettings()` for unit testing. Do NOT monkeypatch
+`get_settings` globally — that breaks lru_cache discipline (5.1).
+
+**Status codes are part of the contract.** A 200/201/204/404/422 etc
+distinction matters to clients. Tests should assert the *exact* code,
+not "≥ 200 and < 300".
+
+**Test the error path.** For every route, assert at least one error
+case explicitly: missing data → 404; bad input → 422; conflict → 409;
+internal failure → 500 with a sanitized detail (no traceback in body
+for production responses).
 
 ---
 
@@ -342,25 +808,67 @@ The same principles apply, with these specifics:
 
 Before declaring a new test sufficient, confirm:
 
-- [ ] Selector uses `getByRole`/`getByLabel` first; `data-testid` only
-      where spec dictates.
+### Universal (UI + backend)
+
+- [ ] Bidirectional verification: the test fails when the fix is
+      reverted, with an informative error message. ("Test passes"
+      proves nothing; can you make it fail?)
+- [ ] Test name names the contract, not the impl. ("Manage Filters
+      modal: every row exposes a visible, in-viewport, NOT-clipped
+      delete affordance" — not "trash icon visible".)
 - [ ] At least one fixture exercises an edge case (long string, many
       items, special chars), not just the happy path.
+- [ ] Spec docs (`UX.md` for UI, the relevant model / route docstring
+      for backend) updated to match any new contract the test
+      asserts.
+- [ ] Negative-space assertion when the contract has one: assert
+      what should NOT change, not just what should.
+
+### UI / Playwright
+
+- [ ] Selector uses `getByRole`/`getByLabel` first; `data-testid` only
+      where spec dictates.
 - [ ] Visibility tests use `expectInsideClipAncestor` (or equivalent)
       when the assertion is "user can see this".
 - [ ] An actionability check (`hover`/`click`) cross-tests
       reachability where it matters.
-- [ ] Bidirectional verification: the test fails when the fix is
-      reverted, with an informative error message.
 - [ ] Strict-mode locator: every `getBy*` query is unambiguous, OR
       explicitly scoped/`.first()`d.
 - [ ] PATCH/route spies are registered AFTER `mockBackend` for LIFO
       precedence.
-- [ ] Spec docs (`UX.md` / API schemas) updated to match any new
-      contract the test asserts.
-- [ ] Test name names the contract, not the impl ("Manage Filters
-      modal: every row exposes a visible, in-viewport, NOT-clipped
-      delete affordance" — not "trash icon visible").
+
+### Backend / pytest
+
+- [ ] Test seeds the LEGACY shape (what users have on disk), not the
+      new shape, when migration code is under test. Otherwise the
+      migration code never runs.
+- [ ] Real `tmp_path` for filesystem ops; no mocking the store /
+      writer / serializer layer. Mock at the HTTP boundary or the
+      filesystem boundary, not in between.
+- [ ] Strong value assertion (not just "field exists"). If a field is
+      hardcoded by design, the test asserts the meaningful expected
+      value computed from a known fixture.
+- [ ] Async test uses `async def` + `await` AND the pytest config
+      surfaces "coroutine was never awaited" as a failure
+      (`-W error::RuntimeWarning`).
+- [ ] `lru_cache.cache_clear()` called after `monkeypatch.setenv` for
+      any settings/config function that's cached.
+- [ ] Module-level singletons (`_refresh_in_progress`, `_seen` sets,
+      in-memory caches) reset per test via fixture.
+- [ ] Migration test asserts: (a) post-migration on-disk shape; (b)
+      tombstone keys explicitly nulled; (c) idempotency (running
+      twice is a no-op); (d) sentinel flag set.
+- [ ] SSE tests assert event ORDER + types + payload shape +
+      termination; never just `status_code == 200`.
+- [ ] Concurrency test where a lock or atomic op is part of the
+      contract.
+- [ ] Security-adjacent input test for every route taking a path /
+      URL / pattern / external input (path traversal, symlinks,
+      permission bits, regex DoS).
+- [ ] For PDF / image / binary output: assert against a known fixture
+      byte signature, not "≥1 stream present".
+- [ ] Status code asserted EXACTLY (not "2xx") and at least one
+      error path tested explicitly.
 
 ---
 
@@ -369,10 +877,22 @@ Before declaring a new test sufficient, confirm:
 These are the bugs that produced this document. Read the linked
 commits before adding a new section.
 
+### UI / Playwright
+
 | Date | Class | Root cause | Fix |
 |---|---|---|---|
 | 2026-05-07 | overflow-clipping false-pass | `toBeVisible` + row-anchored bbox blind to ancestor `overflow: hidden`; tame fixtures (short names) didn't reproduce | `8cb85fd` (impl), `0f29d6f` (canary upgrade with `expectInsideClipAncestor`) |
 | 2026-05-07 | role-blind selectors hid a11y drift | tests used `data-testid` everywhere; CFR1 shipped Behavior/Mode/Match as `button aria-pressed` instead of `role=radio`; tests passed | `e2190cf` (impl: real ARIA roles); spec-driven sweep caught it |
 | 2026-05-06 | filter Pin desync | seeding logic ran once on first mount, decoupled `pinned` from `activeFilterIds`; tests passed in fixture mode (empty initial state) | `2c94860` (composable graph + sidebar picker) |
 
-Add to this table when you ship a fix that surfaced a testing-discipline gap.
+### Backend / pytest
+
+| Date | Class | Root cause | Fix |
+|---|---|---|---|
+| 2026-05-05 | weak-assertion false-pass on PDF images | "≥1 image stream present" passed even when WeasyPrint emitted broken-image-icon streams; fixture image bytes were never checked end-to-end | `37e45e0` (P5: WeasyPrint url_fetcher + byte-signature test against a fixture image) |
+| 2026-05-05 | regex stripped TOOL_PLACEHOLDER inside fenced code blocks | "strip works outside fences" tested only the positive path; missing negative-space assertion (preserved-inside-fence) | `ff7db06` (impl: fenced-aware strip); council caught during review |
+| 2026-05-05 | `/api/preferences` PATCH-deep-merge needs real on-disk round-trip | a mock-the-write test asserts the body that goes IN, not what lands on disk after the read-merge-write cycle | `a8cff17` (impl uses real tmp_path tests; per-key overwrite verified end-to-end) |
+| 2026-05-07 | weak existence assertion on `conversation_count` | `assert "conversation_count" in data` passed for weeks while the field was hardcoded to `0`; only tested presence, not semantic value | `74de39d` (refactor: dropped misleading hardcoded field; tests now assert exact value via `/config/stats`) |
+| 2026-05-07 | migration tombstone-keys must be explicit `null` in PATCH | omitting `savedFilters` and `activeFilterIds` from the PATCH leaves them on disk because backend uses per-key overwrite, not deep-delete | `2c94860` migration test asserts the PATCH body explicitly contains `savedFilters: null, activeFilterIds: null` |
+
+Add to the appropriate sub-table when you ship a fix that surfaced a testing-discipline gap. The "class" column should name the FAILURE MODE, not the feature; the goal is to make the next agent recognize the same shape if it appears in a different feature.
