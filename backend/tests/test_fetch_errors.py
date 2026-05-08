@@ -80,3 +80,171 @@ def test_status_credentials_age_none_when_missing(client, tmp_path, monkeypatch)
     body = response.json()
     assert body["has_credentials"] is False
     assert body["credentials_age_days"] is None
+
+
+# ---------------------------------------------------------------------------
+# P4.4 — /api/fetch/conversation/<uuid> error bodies (each carries the
+# constant string the frontend dispatches on, not just a status code).
+# ---------------------------------------------------------------------------
+
+
+def _v2_creds_blob():
+    return {
+        "schema_version": 2,
+        "session_key": "sk-test",
+        "cf_bm": None,
+        "cf_clearance": None,
+        "captured_at": "2026-05-01T00:00:00+00:00",
+        "orgs": [{
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "name": "Personal",
+            "capabilities": ["chat"],
+            "seen_in_response": True,
+        }],
+        "primary_org_id": "11111111-1111-1111-1111-111111111111",
+        "legacy_migration_target": "11111111-1111-1111-1111-111111111111",
+        "org_id": "11111111-1111-1111-1111-111111111111",
+    }
+
+
+def _seed_creds(tmp_path, monkeypatch):
+    creds_path = tmp_path / "credentials.json"
+    creds_path.write_text(json.dumps(_v2_creds_blob()))
+    monkeypatch.setattr(
+        "backend.routers.fetch.DEFAULT_CREDENTIALS_PATH", creds_path, raising=True
+    )
+    return creds_path
+
+
+def test__post_fetch_conversation__auth_error__returns_401_with_session_expired_message(
+    client, tmp_path, monkeypatch
+) -> None:
+    """RFC-401 (P4.4). AUTH error path → 401 with SESSION_EXPIRED_MESSAGE detail."""
+    from backend.routers import fetch as fetch_mod
+
+    _seed_creds(tmp_path, monkeypatch)
+
+    class _BoomFetcher:
+        def __init__(self, **_kwargs): pass
+        def fetch_conversation(self, _uuid):
+            raise RuntimeError("401 Client Error: Unauthorized for url: https://...")
+
+    monkeypatch.setattr(fetch_mod, "ClaudeFetcher", _BoomFetcher)
+
+    r = client.post("/api/fetch/conversation/abc-uuid-not-real")
+    assert r.status_code == 401, r.text
+    assert r.json()["detail"] == fetch_mod.SESSION_EXPIRED_MESSAGE
+
+
+def test__post_fetch_conversation__transient_error__returns_503_with_transient_message(
+    client, tmp_path, monkeypatch
+) -> None:
+    """RFC-503 (P4.4). TRANSIENT error path → 503 with TRANSIENT_USER_MESSAGE detail."""
+    from backend.routers import fetch as fetch_mod
+
+    _seed_creds(tmp_path, monkeypatch)
+
+    class _NetFlakeFetcher:
+        def __init__(self, **_kwargs): pass
+        def fetch_conversation(self, _uuid):
+            # _classify_error checks substrings in the exception message;
+            # a 503 message routes through TRANSIENT (fetch.py:98-99).
+            raise RuntimeError("503 Service Unavailable from claude.ai")
+
+    monkeypatch.setattr(fetch_mod, "ClaudeFetcher", _NetFlakeFetcher)
+
+    r = client.post("/api/fetch/conversation/abc-uuid-not-real")
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"] == fetch_mod.TRANSIENT_USER_MESSAGE
+
+
+def test__post_fetch_conversation__404_uuid_in_org_list__returns_conversation_gone_message(
+    client, tmp_path, monkeypatch
+) -> None:
+    """RFC-404-GONE (P4.4). Empty/None response + UUID present in org list →
+    404 with CONVERSATION_GONE_MESSAGE (deleted/archived disambiguation)."""
+    from backend.routers import fetch as fetch_mod
+
+    _seed_creds(tmp_path, monkeypatch)
+    target_uuid = "11111111-2222-3333-4444-555555555555"
+
+    class _GoneFetcher:
+        def __init__(self, **_kwargs): pass
+        def fetch_conversation(self, _uuid):
+            return None
+        def fetch_conversation_list(self):
+            return [{"uuid": target_uuid, "name": "still here"}]
+
+    monkeypatch.setattr(fetch_mod, "ClaudeFetcher", _GoneFetcher)
+
+    r = client.post(f"/api/fetch/conversation/{target_uuid}")
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == fetch_mod.CONVERSATION_GONE_MESSAGE
+
+
+def test__post_fetch_conversation__404_uuid_missing_from_org_list__returns_cross_workspace_message(
+    client, tmp_path, monkeypatch
+) -> None:
+    """RFC-404-XWORK (P4.4). Empty/None response + UUID NOT in org list →
+    404 with CONVERSATION_CROSS_WORKSPACE_MESSAGE."""
+    from backend.routers import fetch as fetch_mod
+
+    _seed_creds(tmp_path, monkeypatch)
+    missing_uuid = "00000000-aaaa-bbbb-cccc-deadbeefdead"
+
+    class _XWorkFetcher:
+        def __init__(self, **_kwargs): pass
+        def fetch_conversation(self, _uuid):
+            return None
+        def fetch_conversation_list(self):
+            return [{"uuid": "11111111-2222-3333-4444-555555555555", "name": "other"}]
+
+    monkeypatch.setattr(fetch_mod, "ClaudeFetcher", _XWorkFetcher)
+
+    r = client.post(f"/api/fetch/conversation/{missing_uuid}")
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == fetch_mod.CONVERSATION_CROSS_WORKSPACE_MESSAGE
+
+
+# ---------------------------------------------------------------------------
+# P4.5 — /api/fetch/status boundary cases (zero-age, fresh creds).
+# ---------------------------------------------------------------------------
+
+
+def test__get_fetch_status__freshly_written_creds__age_days_is_zero(
+    client, tmp_path, monkeypatch
+) -> None:
+    """STATUS-AGE-ZERO (P4.5). Freshly written creds.json → age_days == 0.
+
+    Lower-bound boundary: age computation is `(now - mtime) // 86400`, so a
+    creds file written within the last 24h must report 0, not None and not
+    a negative value."""
+    creds = tmp_path / "credentials.json"
+    creds.write_text(json.dumps(_v2_creds_blob()))
+    monkeypatch.setattr(
+        "backend.routers.fetch.DEFAULT_CREDENTIALS_PATH", creds, raising=True
+    )
+
+    r = client.get("/api/fetch/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_credentials"] is True
+    assert body["credentials_age_days"] == 0
+
+
+def test__get_fetch_status__creds_present__age_is_non_negative_integer(
+    client, tmp_path, monkeypatch
+) -> None:
+    """STATUS-AGE-NONNEG (P4.5). credentials_age_days is always a non-negative int
+    when creds are present (never None, never negative, never a float)."""
+    creds = tmp_path / "credentials.json"
+    creds.write_text(json.dumps(_v2_creds_blob()))
+    monkeypatch.setattr(
+        "backend.routers.fetch.DEFAULT_CREDENTIALS_PATH", creds, raising=True
+    )
+
+    r = client.get("/api/fetch/status")
+    body = r.json()
+    age = body["credentials_age_days"]
+    assert isinstance(age, int), f"age must be int, got {type(age).__name__}"
+    assert age >= 0, f"age must be non-negative, got {age}"

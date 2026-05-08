@@ -94,6 +94,54 @@ def test_endpoint_three_state_corrupt(
     assert data.get("detail", {}).get("error") == "credentials_corrupt" or "credentials_corrupt" in str(data)
 
 
+def test__get_orgs__credentials_v2_invalid__returns_500_corrupt(
+    client: TestClient, isolated_creds: Path
+) -> None:
+    """ORG-CORRUPT-SCHEMA (P4.2). schema_version=2 but invalid → 500 credentials_corrupt.
+
+    Frontend distinguishes ``authenticated: false`` (clean re-capture) from a
+    500 (user must wipe + recapture). A creds file that claims v2 but fails
+    field validation is a distinct UI state — must surface as 500, not 200/false.
+    Exercises ``_validate`` at fetcher/credentials.py:138-191 via the v2 path
+    at credentials.py:240-244.
+    """
+    isolated_creds.parent.mkdir(parents=True, exist_ok=True)
+    isolated_creds.write_text(json.dumps({
+        "schema_version": 2,
+        "orgs": [{"uuid": PERSONAL, "name": "X", "capabilities": ["chat"], "seen_in_response": True}],
+        "primary_org_id": PERSONAL,
+        "captured_at": "2026-05-01T00:00:00+00:00",
+    }))
+    r = client.get("/api/orgs")
+    assert r.status_code == 500, r.text
+    detail = r.json().get("detail", {})
+    assert detail.get("error") == "credentials_corrupt", (
+        f"expected error=credentials_corrupt, got {detail!r}"
+    )
+    assert "session_key" in detail.get("message", ""), (
+        f"detail.message should reference the missing field; got {detail!r}"
+    )
+
+
+def test__get_orgs__credentials_truncated_json__returns_500_corrupt(
+    client: TestClient, isolated_creds: Path
+) -> None:
+    """ORG-CORRUPT-PARSE (P4.2). Truncated JSON → 500 credentials_corrupt with detail.
+
+    Stronger assertion than the existing three-state test: pin the exact
+    detail.error code that the frontend dispatches on.
+    """
+    isolated_creds.parent.mkdir(parents=True, exist_ok=True)
+    isolated_creds.write_text('{"schema_version": 2, "session_key"')  # truncated
+    r = client.get("/api/orgs")
+    assert r.status_code == 500
+    detail = r.json().get("detail", {})
+    assert detail.get("error") == "credentials_corrupt"
+    assert "message" in detail and detail["message"], (
+        f"detail.message must be non-empty; got {detail!r}"
+    )
+
+
 def test_synthetic_claude_code_org_filtered(
     client: TestClient, isolated_creds: Path
 ) -> None:
