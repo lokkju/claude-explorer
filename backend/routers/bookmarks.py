@@ -96,8 +96,15 @@ def _write_all(bookmarks: list[Bookmark]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"bookmarks": [b.model_dump() for b in bookmarks]}
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2))
-    tmp.replace(path)
+    try:
+        tmp.write_text(json.dumps(payload, indent=2))
+        tmp.replace(path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 @router.get("", response_model=BookmarkList)

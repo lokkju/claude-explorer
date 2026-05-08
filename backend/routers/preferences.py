@@ -66,10 +66,20 @@ def _write_atomic(blob: dict[str, Any]) -> None:
     path = _resolve_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w") as f:
-        json.dump(blob, f, indent=2)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w") as f:
+            json.dump(blob, f, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        # If anything between write and replace raises, the .tmp file would
+        # otherwise leak in the user's data dir. Best-effort cleanup; we
+        # re-raise so the failure surfaces.
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 class PreferencesEnvelope(BaseModel):

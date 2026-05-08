@@ -144,3 +144,107 @@ def test_put_replaces_whole_blob(client_with_prefs):
     final = client.get("/api/preferences").json()["data"]
     assert final == {"theme": "light"}
     assert "keyboardMode" not in final
+
+
+# ---------------------------------------------------------------------------
+# P2.4 — Atomic write recovery (preferences). When os.replace fails mid-write,
+# the original file MUST be byte-identical and no .tmp must leak.
+# ---------------------------------------------------------------------------
+
+
+def test__patch_preferences__os_replace_fails__original_byte_identical_no_tmp_leak(
+    client_with_prefs, monkeypatch
+):
+    """PREF-ATOMIC-RECOVERY (P2.4). os.replace OSError → original preserved, no tmp leak.
+
+    Per CLAUDE-TESTING.md section 5.8: simulate kernel-level rename failure at the
+    Python boundary (monkeypatch os.replace), not by holding a lock or pulling
+    the disk. We don't claim the test models a real kernel reorder; we claim
+    the route handler doesn't corrupt user data when its own atomic-write
+    helper raises.
+    """
+    client, prefs_file = client_with_prefs
+
+    # Seed a known-good blob so the recovery target is non-trivial.
+    r0 = client.put("/api/preferences", json={"data": {"theme": "dark", "lang": "en"}})
+    assert r0.status_code == 200
+    original_bytes = prefs_file.read_bytes()
+
+    # Boom: any subsequent write raises before the atomic swap commits.
+    import backend.routers.preferences as prefs_mod
+
+    def _boom(_src, _dst):
+        raise OSError("simulated kernel-level rename failure")
+
+    monkeypatch.setattr(prefs_mod.os, "replace", _boom)
+
+    # Starlette's TestClient defaults to ``raise_server_exceptions=True``, so
+    # an OSError inside the route handler propagates out of ``client.patch``
+    # rather than surfacing as a 500. The CONTRACT we care about is the
+    # filesystem invariant: original blob preserved, no .tmp leak. FastAPI
+    # converts to 500 in production; in tests we just assert it raises and
+    # then verify the on-disk state — verified-then-asserted per
+    # CLAUDE-TESTING.md section 5.8.
+    with pytest.raises(OSError, match="simulated kernel-level rename failure"):
+        client.patch("/api/preferences", json={"data": {"theme": "light"}})
+
+    # Original blob is untouched (byte-identical, NOT just JSON-equivalent).
+    assert prefs_file.read_bytes() == original_bytes, (
+        "original preferences.json must be byte-identical after a failed atomic write"
+    )
+
+    # No .tmp leak in the parent directory.
+    leaked = list(prefs_file.parent.glob("preferences.json.tmp*"))
+    assert leaked == [], f"leaked tmp files after failed atomic write: {leaked}"
+
+
+# ---------------------------------------------------------------------------
+# P4.6 — Deep-merge stress: per-key independence, explicit-null isolation,
+# no-op on empty {data: {}}.
+# ---------------------------------------------------------------------------
+
+
+def test__patch_preferences__multi_key__per_key_independent(client_with_prefs):
+    """PREF-PATCH-INDEP (P4.6). PATCH with {A, B, C} updates each independently."""
+    client, _ = client_with_prefs
+    client.put("/api/preferences", json={"data": {
+        "theme": "dark", "lang": "en", "keyboardMode": "vim", "untouched": 1,
+    }})
+    r = client.patch("/api/preferences", json={"data": {
+        "theme": "light", "lang": "fr", "keyboardMode": "emacs",
+    }})
+    assert r.status_code == 200
+    data = client.get("/api/preferences").json()["data"]
+    assert data["theme"] == "light"
+    assert data["lang"] == "fr"
+    assert data["keyboardMode"] == "emacs"
+    assert data["untouched"] == 1, "key absent from the PATCH must survive"
+
+
+def test__patch_preferences__null_on_one_key__siblings_unaffected(client_with_prefs):
+    """PREF-PATCH-NULL-ISOL (P4.6). Explicit null on key A leaves B/C/D unchanged."""
+    client, _ = client_with_prefs
+    client.put("/api/preferences", json={"data": {
+        "theme": "dark", "lang": "en", "keyboardMode": "vim",
+    }})
+    r = client.patch("/api/preferences", json={"data": {"theme": None}})
+    assert r.status_code == 200
+    data = client.get("/api/preferences").json()["data"]
+    # Top-level overwrite per key (preferences.py:107-110) — null is a value,
+    # not a delete sentinel for unrelated keys.
+    assert data["theme"] is None
+    assert data["lang"] == "en", "null on theme must NOT clear lang"
+    assert data["keyboardMode"] == "vim", "null on theme must NOT clear keyboardMode"
+
+
+def test__patch_preferences__empty_data__no_op_preserves_all(client_with_prefs):
+    """PREF-PATCH-EMPTY-NOOP (P4.6). PATCH {data: {}} is a no-op; nothing changes."""
+    client, _ = client_with_prefs
+    client.put("/api/preferences", json={"data": {
+        "theme": "dark", "lang": "en", "keyboardMode": "vim",
+    }})
+    before = client.get("/api/preferences").json()["data"]
+    r = client.patch("/api/preferences", json={"data": {}})
+    assert r.status_code == 200
+    after = client.get("/api/preferences").json()["data"]
+    assert before == after, f"empty PATCH must not change state; before={before!r} after={after!r}"
