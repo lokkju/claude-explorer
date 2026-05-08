@@ -289,6 +289,20 @@ def get_attachment(conv_uuid: str, file_uuid: str, variant: str) -> FileResponse
         )
 
     file_dir = _attachments_root() / conv_uuid / file_uuid
+    # Defense in depth: reject any conv_uuid/file_uuid combination that
+    # escapes the attachments root via ``..`` segments OR Python's
+    # ``Path("a") / "/b" == Path("/b")`` absolute-injection semantics.
+    # The downstream ``chosen.resolve().relative_to(file_dir.resolve())``
+    # only validates the FINAL chosen file against ``file_dir`` — it
+    # does NOT validate that ``file_dir`` itself is inside the
+    # attachments root, so a traversal attack would return a 200 with
+    # an arbitrary on-disk file (provided the path resolved to a real
+    # directory containing a ``<variant>.*`` match). See
+    # ``backend/tests/test_attachments.py`` for the regression cases.
+    try:
+        file_dir.resolve().relative_to(_attachments_root().resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid path") from exc
     if not file_dir.is_dir():
         raise HTTPException(status_code=404, detail="attachment not cached")
 
