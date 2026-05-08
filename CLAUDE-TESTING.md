@@ -365,6 +365,67 @@ or use `freezegun.freeze_time(...)`.
 session-scoped and shared. Don't write user data to `tmp_path_factory`
 unless you reset it.
 
+**Constants imported by value need patching at every call site.**
+`fetcher/credentials.py` defines `DEFAULT_CREDENTIALS_PATH = ...`, and
+*three* other modules import the constant by value at module-load time:
+`fetcher/bulk_fetch.py`, `backend/routers/fetch.py`, and re-imports in
+tests. `monkeypatch.setattr("fetcher.credentials.DEFAULT_CREDENTIALS_PATH",
+new)` ONLY rebinds the canonical name — the three by-value copies still
+point at `~/.claude-exporter/credentials.json`. The fixture must patch
+all four:
+
+```python
+@pytest.fixture
+def _isolated_credentials_path(tmp_path, monkeypatch):
+    creds = tmp_path / "credentials.json"
+    for target in (
+        "fetcher.credentials.DEFAULT_CREDENTIALS_PATH",
+        "fetcher.bulk_fetch.DEFAULT_CREDENTIALS_PATH",
+        "backend.routers.fetch.DEFAULT_CREDENTIALS_PATH",
+    ):
+        monkeypatch.setattr(target, creds)
+    yield creds
+```
+
+Same pattern applies to any module that does
+`from foo import CONSTANT` rather than `from foo import bar; bar.CONSTANT`.
+Grep for the constant name globally; if it appears as a bare-name import
+anywhere, patch each binding.
+
+**`CLAUDE_DIR` and `CLAUDE_EXPORTER_DATA_DIR` are different knobs.**
+`CLAUDE_DIR` controls where `~/.claude-exporter/` itself resolves
+(used by capture, credentials, and the orgs router);
+`CLAUDE_EXPORTER_DATA_DIR` controls where `conversations/` lives.
+A test that only pins `CLAUDE_EXPORTER_DATA_DIR` can still scribble
+into the user's real `~/.claude-exporter/credentials.json` if the
+code under test goes through the credentials path. Pin both unless
+you've verified the call graph never touches credentials.
+
+**`isolated_data_dir` must be a SUBDIRECTORY of `tmp_path`, not
+`tmp_path` itself.** `_resolve_path` uses
+`data_dir.parent / "preferences.json"`, so `preferences.json` lives one
+level up from the data dir. If the fixture uses `tmp_path` directly,
+`preferences.json` lands in the pytest tmp root and bleeds across tests
+on the same worker. The reference fixture uses `<tmp_path>/data` — `data/`
+is the data dir, `<tmp_path>/preferences.json` is the prefs file.
+
+**`real_async_client` is orthogonal to data isolation.** The `httpx.AsyncClient`
++ `ASGITransport(app=...)` fixture used for SSE/concurrency tests does NOT
+imply isolated disk. Compose explicitly: a test that streams over real ASGI
+AND touches preferences/credentials must use `real_async_client` PLUS
+`isolated_data_dir` PLUS (if creds are involved) `_isolated_credentials_path`.
+Don't fold them; an SSE test for a read-only endpoint shouldn't pay the
+disk-isolation cost it doesn't need.
+
+**Lifecycle tests must be order-independent.** Don't rely on file
+collection order (`test_zz_step1_set_flag`, `test_zz_step2_observe_flag`);
+pytest-randomly and pytest-xdist will reorder or split them across workers
+and the second test will see uninitialized state. Pattern: extract the
+fixture body into a plain helper (`def _reset_refresh_flag_body(...): ...`)
+and have BOTH the fixture and any lifecycle test call the helper directly.
+The test asserts on observable state after each helper invocation in the
+same function body.
+
 ### 5.2 · Mock at the boundary, not the nesting
 
 Backend false-pass class #2: the test mocks so much of the
