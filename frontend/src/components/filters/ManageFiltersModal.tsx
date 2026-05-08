@@ -352,7 +352,12 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
             >
               <Plus className="h-3 w-3 mr-1" /> New filter
             </Button>
-            <ScrollArea className="flex-1 max-h-[28rem]">
+            <ScrollArea className="flex-1 max-h-[28rem] [&>div>div]:!block">
+              {/* The [&>div>div]:!block override drops the Radix Viewport's
+                  inner display:table wrapper that otherwise auto-sizes to
+                  content width and lets the rows overflow past the Viewport
+                  (clipping the Enabled checkbox + trash button at narrow
+                  pane widths). */}
               <div className="space-y-1 pr-1" data-testid="manage-filters-list">
                 {visibleNodes.length === 0 && (
                   <div className="text-xs text-zinc-500 py-4 text-center">
