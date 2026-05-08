@@ -97,17 +97,18 @@ beforeEach(() => {
   probeHolder.current = null;
 });
 
-describe('FilterContext — pass-through (already migrated)', () => {
-  it('passes through new-shape filters without re-running migration', async () => {
+describe('FilterContext — pass-through (already migrated to v2)', () => {
+  it('passes through v2-shape filters without re-running migration', async () => {
     const existing: FiltersState = {
       nodes: {
         a: {
           type: 'atom', id: 'a', name: 'A', enabled: true,
-          patterns: ['*foo*'], polarity: 'include', mode: 'glob', target: 'title',
+          patterns: ['*foo*'], behavior: 'show-only', mode: 'glob', target: 'title',
         } as AtomFilter,
       },
       activeId: 'a',
       _migratedV1: true,
+      _migratedV2: true,
     };
     const prefs = installPrefs({ filters: existing });
 
@@ -122,8 +123,166 @@ describe('FilterContext — pass-through (already migrated)', () => {
       expect(probeHolder.current).not.toBeNull();
       expect(probeHolder.current?.filtersState.nodes.a).toBeDefined();
     });
-    // No PATCH should have been issued (state already migrated).
+    // No PATCH should have been issued (state already migrated to v2).
     expect(prefs.patches).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CFR1 — v1 → v2 migration: polarity → behavior rename on atoms; groups
+// remain pure boolean combinators (no behavior added).
+// ---------------------------------------------------------------------------
+describe('FilterContext — v1 → v2 migration (polarity → behavior)', () => {
+  it('renames atom polarity to behavior 1:1; idempotent; sets _migratedV2', async () => {
+    const v1Blob = {
+      nodes: {
+        'scan-gmail': {
+          type: 'atom', id: 'scan-gmail', name: 'Scan Gmail', enabled: true,
+          patterns: ['Scan Gmail*'], polarity: 'exclude', mode: 'glob', target: 'title',
+        },
+        'incl': {
+          type: 'atom', id: 'incl', name: 'Incl', enabled: true,
+          patterns: ['*foo*'], polarity: 'include', mode: 'glob', target: 'title',
+        },
+        'default-migrated': {
+          type: 'group', id: 'default-migrated', name: 'Default (migrated)',
+          enabled: true, match: 'all', childIds: ['scan-gmail'],
+        },
+      },
+      activeId: 'default-migrated',
+      _migratedV1: true,
+      // _migratedV2 missing — triggers v2 migration
+    };
+    const prefs = installPrefs({ filters: v1Blob });
+
+    const qc = makeQc();
+    render(
+      <Wrapper qc={qc}>
+        <Probe />
+      </Wrapper>
+    );
+
+    // The v2 migration PATCH must land.
+    await waitFor(() => {
+      expect(prefs.patches.length).toBeGreaterThan(0);
+    }, { timeout: 3000 });
+
+    // Find the v2 migration PATCH carrying the migrated filters blob.
+    const v2Patch = prefs.patches.find(
+      (b) => 'filters' in b && (b.filters as { _migratedV2?: boolean })._migratedV2 === true,
+    );
+    expect(v2Patch).toBeDefined();
+    const migrated = (v2Patch as { filters: FiltersState }).filters;
+
+    // Atoms: polarity stripped, behavior set per the 1:1 mapping.
+    const scan = migrated.nodes['scan-gmail'] as AtomFilter & { polarity?: unknown };
+    expect(scan.behavior).toBe('hide');
+    expect((scan as unknown as { polarity?: unknown }).polarity).toBeUndefined();
+
+    const incl = migrated.nodes['incl'] as AtomFilter & { polarity?: unknown };
+    expect(incl.behavior).toBe('show-only');
+    expect((incl as unknown as { polarity?: unknown }).polarity).toBeUndefined();
+
+    // Group: passed through with no behavior added (pure combinator).
+    const grp = migrated.nodes['default-migrated'] as GroupFilter & { behavior?: unknown };
+    expect(grp.type).toBe('group');
+    expect(grp.match).toBe('all');
+    expect(grp.childIds).toEqual(['scan-gmail']);
+    expect((grp as unknown as { behavior?: unknown }).behavior).toBeUndefined();
+
+    // _migratedV2 sentinel set; _migratedV1 retained.
+    expect(migrated._migratedV2).toBe(true);
+    expect(migrated._migratedV1).toBe(true);
+
+    // Final context state reflects v2 shape.
+    await waitFor(() => {
+      expect(probeHolder.current?.filtersState._migratedV2).toBe(true);
+      const a = probeHolder.current?.filtersState.nodes['scan-gmail'] as AtomFilter | undefined;
+      expect(a?.behavior).toBe('hide');
+    });
+  });
+
+  it('idempotency: a remount after v2 migration does NOT re-PATCH', async () => {
+    const v2Blob: FiltersState = {
+      nodes: {
+        'a': {
+          type: 'atom', id: 'a', name: 'A', enabled: true,
+          patterns: ['*foo*'], behavior: 'show-only', mode: 'glob', target: 'title',
+        } as AtomFilter,
+      },
+      activeId: 'a',
+      _migratedV1: true,
+      _migratedV2: true,
+    };
+    const prefs = installPrefs({ filters: v2Blob });
+
+    const qc = makeQc();
+    const { unmount } = render(
+      <Wrapper qc={qc}>
+        <Probe />
+      </Wrapper>
+    );
+    await waitFor(() => {
+      expect(probeHolder.current?.filtersState._migratedV2).toBe(true);
+    });
+    // Allow any pending mutation to settle.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(prefs.patches).toEqual([]);
+
+    unmount();
+    probeHolder.current = null;
+    const qc2 = makeQc();
+    render(
+      <Wrapper qc={qc2}>
+        <Probe />
+      </Wrapper>
+    );
+    await waitFor(() => {
+      expect(probeHolder.current?.filtersState._migratedV2).toBe(true);
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    // Still no PATCHes — sentinel suppresses re-migration.
+    expect(prefs.patches).toEqual([]);
+  });
+
+  it('groups never have behavior added (compose-passes invariant)', async () => {
+    const v1Blob = {
+      nodes: {
+        'a': {
+          type: 'atom', id: 'a', name: 'A', enabled: true,
+          patterns: ['*foo*'], polarity: 'exclude', mode: 'glob', target: 'title',
+        },
+        'g': {
+          type: 'group', id: 'g', name: 'G', enabled: true,
+          match: 'any', childIds: ['a'],
+        },
+      },
+      activeId: 'g',
+      _migratedV1: true,
+    };
+    const prefs = installPrefs({ filters: v1Blob });
+
+    const qc = makeQc();
+    render(
+      <Wrapper qc={qc}>
+        <Probe />
+      </Wrapper>
+    );
+
+    await waitFor(() => {
+      expect(prefs.patches.length).toBeGreaterThan(0);
+    });
+
+    const v2Patch = prefs.patches.find(
+      (b) => 'filters' in b && (b.filters as { _migratedV2?: boolean })._migratedV2 === true,
+    );
+    const migrated = (v2Patch as { filters: FiltersState }).filters;
+
+    const grp = migrated.nodes['g'] as GroupFilter & { behavior?: unknown };
+    // Group preserved exactly; no behavior.
+    expect(grp.match).toBe('any');
+    expect(grp.childIds).toEqual(['a']);
+    expect((grp as unknown as { behavior?: unknown }).behavior).toBeUndefined();
   });
 });
 
@@ -157,15 +316,19 @@ describe('FilterContext — migration from legacy', () => {
     expect(migrationPatch).toBeDefined();
     const filtersBlob = (migrationPatch as { filters: FiltersState }).filters;
 
-    // Both legacy filters present as atoms; pinned flag stripped.
+    // Both legacy filters present as atoms; pinned flag stripped; CFR1
+    // mapping: include → show-only, exclude → hide. The legacy migration
+    // emits v2-shape atoms directly (no intermediate v1 polarity stage).
     expect(filtersBlob.nodes.p1).toMatchObject({
-      type: 'atom', id: 'p1', name: 'Scan Gmail', enabled: true, polarity: 'exclude',
+      type: 'atom', id: 'p1', name: 'Scan Gmail', enabled: true, behavior: 'hide',
     });
     expect(filtersBlob.nodes.p2).toMatchObject({
-      type: 'atom', id: 'p2', name: 'Other', enabled: true, polarity: 'include',
+      type: 'atom', id: 'p2', name: 'Other', enabled: true, behavior: 'show-only',
     });
     // No pinned key on the new shape.
     expect((filtersBlob.nodes.p1 as unknown as { pinned?: boolean }).pinned).toBeUndefined();
+    // No legacy polarity on the new shape.
+    expect((filtersBlob.nodes.p1 as unknown as { polarity?: string }).polarity).toBeUndefined();
 
     // Default-migrated group exists, contains ONLY the pinned filter, and is the active filter.
     const grp = filtersBlob.nodes['default-migrated'] as GroupFilter | undefined;

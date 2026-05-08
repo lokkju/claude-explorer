@@ -8,11 +8,35 @@
  *    Atoms in the new graph reuse the `patternMatches` primitive from here.
  *
  * 2. Composable graph (CF1, 2026-05-07): every saved filter is a named
- *    `FilterNode` — either an `AtomFilter` (pattern + polarity + mode) or a
- *    `GroupFilter` (AND/OR of other named filters). Exactly one filter is
- *    "active" via `FiltersState.activeId`. The evaluator is cycle-safe and
- *    drops disabled children at the GROUP level (not via early-return) so
- *    `match: 'any'` groups don't short-circuit on a disabled member.
+ *    `FilterNode` — either an `AtomFilter` or a `GroupFilter`. Exactly one
+ *    filter is "active" via `FiltersState.activeId`. The evaluator is
+ *    cycle-safe and drops disabled children at the GROUP level (not via
+ *    early-return) so `match: 'any'` groups don't short-circuit on a
+ *    disabled member.
+ *
+ *    v2 (CFR1, 2026-05-07): the council reconvened after the v1 polarity
+ *    radio failed first-contact UX (the "hide cron1 OR cron2" case took 5
+ *    clicks across 2 screens). v2 attribute renames + invariant:
+ *      - Atoms carry `behavior: 'hide' | 'show-only'` (replaces
+ *        `polarity: 'include' | 'exclude'`). Atoms still hold an OR'd
+ *        patterns list — multiple patterns are now first-class.
+ *      - Groups are pure boolean combinators: `match: 'all' | 'any'`
+ *        composes the children's PASSES results. Groups DO NOT carry
+ *        behavior. (Council deferred adding group-level NOT until a real
+ *        user story demands it.)
+ *      - Predicate: each atom's `evaluate` returns the keep/drop decision
+ *        (apply behavior); each group's `evaluate` ANDs/ORs its children's
+ *        evaluations. This preserves the CF1 invariant unchanged.
+ *
+ *    The plan-as-written had behavior on every node + a `rawMatches` /
+ *    `passes` decomposition. Council (Gemini + GPT-5.2, 2026-05-07 second
+ *    pass) converged on behaviorless groups instead, because rawMatches
+ *    composition broke the documented recovery case
+ *    "show meetings, hide cancelled = Group(show-only, all,
+ *    [Atom(show-only meetings), Atom(hide cancelled)])": rawMatches AND
+ *    over the children's PATTERN matches resolves to "show only items
+ *    that are BOTH meeting AND cancelled", which is the opposite of
+ *    intent. The compose-passes invariant gets it right by construction.
  *
  * Glob mode: shell-style globbing (`*`, `?`, `[abc]`); patterns without
  * wildcards become substring matches. Regex mode: case-insensitive JS
@@ -20,6 +44,7 @@
  */
 
 export type FilterPolarity = 'include' | 'exclude'
+export type Behavior = 'hide' | 'show-only'
 export type FilterMode = 'glob' | 'regex'
 export type FilterTarget = 'title'
 
@@ -112,7 +137,13 @@ export interface BaseFilterNode {
 export interface AtomFilter extends BaseFilterNode {
   type: 'atom'
   patterns: string[]
-  polarity: FilterPolarity
+  /**
+   * v2 (CFR1): replaces `polarity`. Hide → drop matches; show-only → keep
+   * only matches. The legacy mapping (1:1) is exclude → hide, include →
+   * show-only. The migration in FilterContext.tsx normalizes any v1 data
+   * carrying `polarity` into `behavior` and drops the `polarity` key.
+   */
+  behavior: Behavior
   mode: FilterMode
   target: FilterTarget
 }
@@ -134,6 +165,14 @@ export interface FiltersState {
    */
   _migratedV1?: boolean
   /**
+   * v2 (CFR1) sentinel: set true once the polarity → behavior rename has
+   * run. Distinct from `_migratedV1` so we can track both phases on disk.
+   * The v2 migration runs iff `_migratedV1 === true` AND `_migratedV2 !==
+   * true` AND any atom node still carries `polarity` (or lacks
+   * `behavior`). Idempotent.
+   */
+  _migratedV2?: boolean
+  /**
    * CF3: dismissal flag for the one-time migration banner. Lives in the
    * same blob as `_migratedV1` so the migration sentinel and the dismiss
    * flag travel together (one preference key, one lifecycle event).
@@ -145,12 +184,29 @@ export interface FiltersState {
 /**
  * Predicate composition with cycle defense.
  *
- * Council fix (Gemini, 2026-05-07): the `enabled` check is applied at the
- * GROUP's child step, NOT as an early-return inside evaluate(). If we
- * early-returned `true` for a disabled node, a `match: 'any'` group
- * containing one disabled member would pass for every conversation
- * (`some()` short-circuits on the first true). The right semantic is
- * "disabled members are removed before the group's quantifier runs".
+ * Invariant (council convergence, 2026-05-07 second pass):
+ *   - Atoms are the ONLY nodes that decide keep/drop. Behavior applies
+ *     here: `show-only` keeps when any pattern matches; `hide` keeps
+ *     when no pattern matches.
+ *   - Groups are pure boolean combinators over their children's
+ *     keep/drop decisions (recurse via `evaluate`, then AND/OR via
+ *     `match`). Groups DO NOT carry behavior.
+ *   - Empty atom (no patterns): vacuously passes.
+ *   - Empty group (no enabled children): vacuously passes.
+ *
+ * Council fix (Gemini, 2026-05-07 first pass, retained): the `enabled`
+ * check is applied at the GROUP's child step, NOT as an early-return
+ * inside evaluate(). If we early-returned `true` for a disabled node, a
+ * `match: 'any'` group containing one disabled member would pass for
+ * every conversation (`some()` short-circuits on the first true). The
+ * right semantic is "disabled members are removed before the group's
+ * quantifier runs".
+ *
+ * Why no `behavior` on groups: see the module header. The plan-as-
+ * written had `rawMatches` composition + behavior on every node, but
+ * council (2026-05-07 second pass) found that the rawMatches model
+ * cannot represent "show meetings, hide cancelled" without inverting
+ * its meaning. Compose-passes (this implementation) gets it right.
  */
 export function evaluate(
   node: FilterNode,
@@ -165,7 +221,7 @@ export function evaluate(
   if (node.type === 'atom') {
     if (node.patterns.length === 0) return true
     const hit = node.patterns.some((p) => patternMatches(text, p, node.mode))
-    return node.polarity === 'include' ? hit : !hit
+    return node.behavior === 'show-only' ? hit : !hit
   }
 
   // Group: drop orphans AND disabled children before applying the

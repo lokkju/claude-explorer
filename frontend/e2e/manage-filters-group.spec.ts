@@ -1,19 +1,21 @@
 /**
- * CF2 — Manage Filters modal: group editor.
+ * CFR1 — Manage Filters modal: group editor (v2 of CF2).
  *
- * Builds two atoms (A: include glob `Foo*`; B: exclude glob `Bar*`), composes
+ * Builds two atoms (A: show-only glob `Foo*`; B: hide glob `Bar*`), composes
  * them into a Group, sets the active filter to the group, and asserts the
- * sidebar list reflects AND vs OR composition.
+ * sidebar list reflects AND vs OR composition. Same compose-passes
+ * semantics as CF2 — the only change here is the UI labels (Behavior
+ * radio replaces the v1 polarity radio).
  *
  * AND case (match: all of these):
- *   - "Foo Apple"  → matches A (include hits) AND passes B (no Bar)        → kept
- *   - "Foo Bar"    → matches A (Foo* hits) BUT fails B (Bar* hit, exclude) → hidden
- *   - "Baz"        → fails A (no Foo)                                       → hidden
+ *   - "Foo Apple"  → A keeps (Foo* hits, show-only) AND B keeps (no Bar)   → kept
+ *   - "Foo Bar"    → A keeps BUT B drops (Bar* hits, hide)                  → hidden
+ *   - "Baz"        → A drops (no Foo)                                        → hidden
  *
  * OR case (match: any of these):
- *   - "Foo Apple"  → A passes (Foo*), so OR passes                         → kept
- *   - "Foo Bar"    → A passes, OR passes                                   → kept
- *   - "Baz"        → A fails BUT B passes (no Bar*, exclude passes)        → kept
+ *   - "Foo Apple"  → A keeps, OR keeps                                       → kept
+ *   - "Foo Bar"    → A keeps, OR keeps                                       → kept
+ *   - "Baz"        → A drops BUT B keeps (no Bar match, hide passes)        → kept
  */
 
 import { test, expect } from './fixtures'
@@ -34,6 +36,7 @@ test.describe('CF2 — manage filters group editor', () => {
           nodes: {},
           activeId: null,
           _migratedV1: true,
+          _migratedV2: true,
         },
       },
     })
@@ -41,39 +44,44 @@ test.describe('CF2 — manage filters group editor', () => {
     await page.goto('/')
 
     // Open Manage filters.
-    await page.getByRole('button', { name: /manage filters/i }).click()
+    // CFR1: "Manage filters…" lives inside the active-filter picker
+    // dropdown (commit 976a5f1 moved it there).
+    await page.getByTestId('active-filter-select').click()
+    await page.getByTestId('active-filter-manage').click()
 
-    // Create atom A: include glob, pattern *Foo* (substring).
+    // Create atom A: show-only glob, pattern *Foo* (substring).
     await page.getByTestId('manage-filters-new').click()
-    await page.getByTestId('filter-editor-name').fill('A include Foo')
+    await page.getByTestId('filter-editor-name').fill('A show-only Foo')
     // type defaults to atom
-    await page.getByTestId('filter-editor-polarity-include').click()
+    await page.getByTestId('filter-editor-behavior-show-only').click()
     await page.getByTestId('filter-editor-mode-glob').click()
     await page.getByTestId('filter-editor-patterns').fill('*Foo*')
     await page.getByTestId('filter-editor-save').click()
 
-    // Create atom B: exclude glob, pattern *Bar* (substring).
+    // Create atom B: hide glob, pattern *Bar* (substring).
     await page.getByTestId('manage-filters-new').click()
-    await page.getByTestId('filter-editor-name').fill('B exclude Bar')
-    await page.getByTestId('filter-editor-polarity-exclude').click()
+    await page.getByTestId('filter-editor-name').fill('B hide Bar')
+    await page.getByTestId('filter-editor-behavior-hide').click()
     await page.getByTestId('filter-editor-mode-glob').click()
     await page.getByTestId('filter-editor-patterns').fill('*Bar*')
     await page.getByTestId('filter-editor-save').click()
 
-    // Create a group containing both, match=all.
+    // Create a group containing both, match=all. Groups have no
+    // behavior in CFR1 — they are pure boolean combinators over the
+    // children's keep/drop decisions.
     await page.getByTestId('manage-filters-new').click()
     await page.getByTestId('filter-editor-type-group').click()
     await page.getByTestId('filter-editor-name').fill('AB-all')
     await page.getByTestId('filter-editor-match-all').click()
     // Add member A
     await page.getByTestId('filter-editor-add-member-trigger').click()
-    await page.getByRole('option', { name: /A include Foo/i }).click()
+    await page.getByRole('option', { name: /A show-only Foo/i }).click()
     await page.getByTestId('filter-editor-add-member-button').click()
     // Verify A chip is now in the rail.
     await expect(page.getByTestId('filter-editor-members-list').locator('> span')).toHaveCount(1)
     // Add member B
     await page.getByTestId('filter-editor-add-member-trigger').click()
-    await page.getByRole('option', { name: /B exclude Bar/i }).click()
+    await page.getByRole('option', { name: /B hide Bar/i }).click()
     await page.getByTestId('filter-editor-add-member-button').click()
     // Both chips should be present.
     await expect(page.getByTestId('filter-editor-members-list').locator('> span')).toHaveCount(2)
@@ -93,7 +101,10 @@ test.describe('CF2 — manage filters group editor', () => {
     await expect(page.getByText('Baz', { exact: true })).toHaveCount(0)
 
     // Switch group to match=any.
-    await page.getByRole('button', { name: /manage filters/i }).click()
+    // CFR1: "Manage filters…" lives inside the active-filter picker
+    // dropdown (commit 976a5f1 moved it there).
+    await page.getByTestId('active-filter-select').click()
+    await page.getByTestId('active-filter-manage').click()
     // Click the group row to edit it.
     await page.getByTestId(/^filter-row-/).filter({ hasText: 'AB-all' }).click()
     await page.getByTestId('filter-editor-match-any').click()

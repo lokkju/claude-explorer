@@ -128,7 +128,7 @@ function makeAtom(overrides: Partial<AtomFilter> & { id: string }): AtomFilter {
     name: overrides.name ?? overrides.id,
     enabled: overrides.enabled ?? true,
     patterns: overrides.patterns ?? [],
-    polarity: overrides.polarity ?? 'include',
+    behavior: overrides.behavior ?? 'show-only',
     mode: overrides.mode ?? 'glob',
     target: 'title',
     ...overrides,
@@ -151,16 +151,16 @@ function buildState(...nodes: FilterNode[]): FiltersState {
   return { nodes: dict, activeId: null }
 }
 
-describe('filterEngine.evaluate — atoms', () => {
-  it('include-atom returns true on match, false on miss', () => {
-    const a = makeAtom({ id: 'a', patterns: ['*mcp*'], polarity: 'include' })
+describe('filterEngine.evaluate — atoms (v2 behavior)', () => {
+  it('show-only atom returns true on match, false on miss', () => {
+    const a = makeAtom({ id: 'a', patterns: ['*mcp*'], behavior: 'show-only' })
     const state = buildState(a)
     expect(evaluate(a, 'MCP server', state)).toBe(true)
     expect(evaluate(a, 'React', state)).toBe(false)
   })
 
-  it('exclude-atom inverts: true on no-match, false on match', () => {
-    const a = makeAtom({ id: 'a', patterns: ['*test*'], polarity: 'exclude' })
+  it('hide atom inverts: true on no-match, false on match', () => {
+    const a = makeAtom({ id: 'a', patterns: ['*test*'], behavior: 'hide' })
     const state = buildState(a)
     expect(evaluate(a, 'Auth refactor', state)).toBe(true)
     expect(evaluate(a, 'unit tests', state)).toBe(false)
@@ -172,12 +172,31 @@ describe('filterEngine.evaluate — atoms', () => {
     expect(evaluate(a, 'anything', state)).toBe(true)
     expect(evaluate(a, '', state)).toBe(true)
   })
+
+  // The user's case driving CFR1: a single atom whose patterns OR-compose
+  // and whose Hide behavior drops matches. No group wrapper, no double
+  // negation. ONE filter expresses "hide cron1 OR cron2".
+  it('CRON CASE: single hide atom with OR\'d patterns drops any-pattern match', () => {
+    const a = makeAtom({
+      id: 'cron',
+      patterns: ['*cron1*', '*cron2*'],
+      behavior: 'hide',
+    })
+    const state: FiltersState = { nodes: { cron: a }, activeId: 'cron' }
+
+    // Title hits cron1 → behavior=hide → drop.
+    expect(applyActiveFilter('cron1 daily', state)).toBe(false)
+    // Title hits cron2 → drop.
+    expect(applyActiveFilter('cron2 weekly review', state)).toBe(false)
+    // Title hits neither → keep.
+    expect(applyActiveFilter('morning standup', state)).toBe(true)
+  })
 })
 
-describe('filterEngine.evaluate — groups (match: all)', () => {
-  it('every-child semantics with mixed include/exclude', () => {
-    const inc = makeAtom({ id: 'inc', patterns: ['*mcp*'], polarity: 'include' })
-    const exc = makeAtom({ id: 'exc', patterns: ['*test*'], polarity: 'exclude' })
+describe('filterEngine.evaluate — groups (match: all, compose-passes invariant)', () => {
+  it('every-child semantics with mixed show-only/hide atoms', () => {
+    const inc = makeAtom({ id: 'inc', patterns: ['*mcp*'], behavior: 'show-only' })
+    const exc = makeAtom({ id: 'exc', patterns: ['*test*'], behavior: 'hide' })
     const g = makeGroup({ id: 'g', match: 'all', childIds: ['inc', 'exc'] })
     const state = buildState(inc, exc, g)
 
@@ -193,19 +212,41 @@ describe('filterEngine.evaluate — groups (match: all)', () => {
   })
 
   it('a disabled child is dropped from the quantifier (does not affect result)', () => {
-    const inc = makeAtom({ id: 'inc', patterns: ['*mcp*'], polarity: 'include' })
+    const inc = makeAtom({ id: 'inc', patterns: ['*mcp*'], behavior: 'show-only' })
     // This atom would FAIL if evaluated, but it's disabled -> dropped.
-    const dis = makeAtom({ id: 'dis', patterns: ['*never-occurring-pattern*'], polarity: 'include', enabled: false })
+    const dis = makeAtom({
+      id: 'dis',
+      patterns: ['*never-occurring-pattern*'],
+      behavior: 'show-only',
+      enabled: false,
+    })
     const g = makeGroup({ id: 'g', match: 'all', childIds: ['inc', 'dis'] })
     const state = buildState(inc, dis, g)
     expect(evaluate(g, 'MCP work', state)).toBe(true)
   })
+
+  // CFR1 council recovery case (Plan line 20). Under the rejected
+  // rawMatches model, this case inverted: "show only items that are
+  // BOTH a meeting AND cancelled". Compose-passes gets it right.
+  it('RECOVERY CASE: "show meetings, hide cancelled" via Group(all, [show-only meetings, hide cancelled])', () => {
+    const meetings = makeAtom({ id: 'm', patterns: ['*meeting*'], behavior: 'show-only' })
+    const cancelled = makeAtom({ id: 'c', patterns: ['*cancelled*'], behavior: 'hide' })
+    const g = makeGroup({ id: 'g', match: 'all', childIds: ['m', 'c'] })
+    const state = buildState(meetings, cancelled, g)
+
+    // Live, attended meeting → both children pass → kept.
+    expect(evaluate(g, 'Tue meeting with Alice', state)).toBe(true)
+    // Cancelled meeting → meetings passes, cancelled fails (hide hits) → dropped.
+    expect(evaluate(g, 'Tue meeting cancelled', state)).toBe(false)
+    // Random row → meetings fails (no match) → dropped.
+    expect(evaluate(g, 'React refactor', state)).toBe(false)
+  })
 })
 
-describe('filterEngine.evaluate — groups (match: any)', () => {
+describe('filterEngine.evaluate — groups (match: any, compose-passes)', () => {
   it('some-child semantics', () => {
-    const a = makeAtom({ id: 'a', patterns: ['*mcp*'], polarity: 'include' })
-    const b = makeAtom({ id: 'b', patterns: ['*react*'], polarity: 'include' })
+    const a = makeAtom({ id: 'a', patterns: ['*mcp*'], behavior: 'show-only' })
+    const b = makeAtom({ id: 'b', patterns: ['*react*'], behavior: 'show-only' })
     const g = makeGroup({ id: 'g', match: 'any', childIds: ['a', 'b'] })
     const state = buildState(a, b, g)
 
@@ -214,14 +255,14 @@ describe('filterEngine.evaluate — groups (match: any)', () => {
     expect(evaluate(g, 'Plain notes', state)).toBe(false)
   })
 
-  // *** GEMINI COUNCIL BUG ***
+  // *** GEMINI COUNCIL BUG (retained from CF1) ***
   // If `enabled === false` early-returned `true` from evaluate(), an `any`
   // group whose first member happened to be disabled would short-circuit
   // to true — passing for every conversation. The fix is to drop disabled
   // children at the group level BEFORE applying the quantifier.
   it('GEMINI: disabled child does NOT short-circuit a match=any group', () => {
-    const dis = makeAtom({ id: 'dis', patterns: ['*x*'], polarity: 'include', enabled: false })
-    const real = makeAtom({ id: 'real', patterns: ['*react*'], polarity: 'include' })
+    const dis = makeAtom({ id: 'dis', patterns: ['*x*'], behavior: 'show-only', enabled: false })
+    const real = makeAtom({ id: 'real', patterns: ['*react*'], behavior: 'show-only' })
     const g = makeGroup({ id: 'g', match: 'any', childIds: ['dis', 'real'] })
     const state = buildState(dis, real, g)
 
@@ -235,11 +276,57 @@ describe('filterEngine.evaluate — groups (match: any)', () => {
   })
 
   it('all-disabled group passes (empty after filter)', () => {
-    const a = makeAtom({ id: 'a', patterns: ['*x*'], polarity: 'include', enabled: false })
-    const b = makeAtom({ id: 'b', patterns: ['*y*'], polarity: 'include', enabled: false })
+    const a = makeAtom({ id: 'a', patterns: ['*x*'], behavior: 'show-only', enabled: false })
+    const b = makeAtom({ id: 'b', patterns: ['*y*'], behavior: 'show-only', enabled: false })
     const g = makeGroup({ id: 'g', match: 'any', childIds: ['a', 'b'] })
     const state = buildState(a, b, g)
     expect(evaluate(g, 'anything', state)).toBe(true)
+  })
+})
+
+// CFR1 — child-behavior IS respected inside groups (compose-passes
+// invariant). This is the inverse of the rejected rawMatches model
+// where child behavior was ignored. Documenting both a hide-child and
+// a show-only-child inside an any-of group: each child is asked
+// "do you keep this row?" and the group ORs the answers.
+describe('filterEngine.evaluate — child behavior IS respected inside groups', () => {
+  it('any-of group composes children\'s keep/drop (NOT raw pattern matches)', () => {
+    // A "hide standup" atom standalone keeps everything except standups.
+    const hideStandup = makeAtom({ id: 'h', patterns: ['*standup*'], behavior: 'hide' })
+    // A "show only meetings" atom keeps only meetings.
+    const showMeeting = makeAtom({ id: 's', patterns: ['*meeting*'], behavior: 'show-only' })
+    const g = makeGroup({ id: 'g', match: 'any', childIds: ['h', 's'] })
+    const state = buildState(hideStandup, showMeeting, g)
+
+    // "Random thing": hide-standup passes (no match), show-meeting fails.
+    // any-of: true OR false = true → kept. (Hide atom's "keep when no
+    // match" semantic flows through the group; the rawMatches model
+    // would have said "neither pattern matches → group raw=false →
+    // show-only top default → drop", which is wrong.)
+    expect(evaluate(g, 'Random thing', state)).toBe(true)
+
+    // "Tuesday meeting": hide-standup passes, show-meeting passes →
+    // any = true → kept.
+    expect(evaluate(g, 'Tuesday meeting', state)).toBe(true)
+
+    // "Daily standup": hide-standup fails (match → drop), show-meeting
+    // fails (no match) → any = false → dropped.
+    expect(evaluate(g, 'Daily standup', state)).toBe(false)
+  })
+
+  it('all-of group of [hide cron1, hide cron2] = "drop if either cron matches"', () => {
+    // De Morgan recovery for the "hide A AND B"-flavored case: an
+    // all-of group of hide atoms drops a row that matches ANY pattern.
+    // Equivalent to a single hide atom with OR'd patterns, but useful
+    // when patterns differ in mode (one glob, one regex).
+    const hideCron1 = makeAtom({ id: 'c1', patterns: ['*cron1*'], behavior: 'hide' })
+    const hideCron2 = makeAtom({ id: 'c2', patterns: ['cron2'], behavior: 'hide', mode: 'regex' })
+    const g = makeGroup({ id: 'g', match: 'all', childIds: ['c1', 'c2'] })
+    const state = buildState(hideCron1, hideCron2, g)
+
+    expect(evaluate(g, 'cron1 daily', state)).toBe(false)        // c1 drops
+    expect(evaluate(g, 'cron2 weekly', state)).toBe(false)        // c2 drops
+    expect(evaluate(g, 'morning standup', state)).toBe(true)      // both keep
   })
 })
 
@@ -253,7 +340,7 @@ describe('filterEngine.evaluate — cycles & orphans', () => {
   })
 
   it('orphan child IDs are silently filtered', () => {
-    const real = makeAtom({ id: 'real', patterns: ['*react*'], polarity: 'include' })
+    const real = makeAtom({ id: 'real', patterns: ['*react*'], behavior: 'show-only' })
     const g = makeGroup({ id: 'g', match: 'all', childIds: ['real', 'does-not-exist'] })
     const state = buildState(real, g)
     expect(evaluate(g, 'React refactor', state)).toBe(true)
@@ -263,7 +350,7 @@ describe('filterEngine.evaluate — cycles & orphans', () => {
 
 describe('filterEngine.applyActiveFilter', () => {
   it('null activeId means "All conversations" — every text passes', () => {
-    const a = makeAtom({ id: 'a', patterns: ['*x*'], polarity: 'include' })
+    const a = makeAtom({ id: 'a', patterns: ['*x*'], behavior: 'show-only' })
     const state: FiltersState = { nodes: { a }, activeId: null }
     expect(applyActiveFilter('anything', state)).toBe(true)
   })
@@ -274,13 +361,13 @@ describe('filterEngine.applyActiveFilter', () => {
   })
 
   it('disabled active node passes everything', () => {
-    const a = makeAtom({ id: 'a', patterns: ['*x*'], polarity: 'include', enabled: false })
+    const a = makeAtom({ id: 'a', patterns: ['*x*'], behavior: 'show-only', enabled: false })
     const state: FiltersState = { nodes: { a }, activeId: 'a' }
     expect(applyActiveFilter('xyz', state)).toBe(true)
   })
 
   it('active enabled node evaluates normally', () => {
-    const a = makeAtom({ id: 'a', patterns: ['*mcp*'], polarity: 'include' })
+    const a = makeAtom({ id: 'a', patterns: ['*mcp*'], behavior: 'show-only' })
     const state: FiltersState = { nodes: { a }, activeId: 'a' }
     expect(applyActiveFilter('MCP work', state)).toBe(true)
     expect(applyActiveFilter('React', state)).toBe(false)

@@ -18,7 +18,7 @@ const seedState: FiltersState = {
       name: 'Atom A',
       enabled: true,
       patterns: ['Foo*'],
-      polarity: 'include',
+      behavior: 'show-only',
       mode: 'glob',
       target: 'title',
     },
@@ -33,6 +33,7 @@ const seedState: FiltersState = {
   },
   activeId: null,
   _migratedV1: true,
+  _migratedV2: true,
 }
 
 test.describe('CF2 — used-by + delete blocking', () => {
@@ -43,7 +44,8 @@ test.describe('CF2 — used-by + delete blocking', () => {
     })
 
     await page.goto('/')
-    await page.getByRole('button', { name: /manage filters/i }).click()
+    await page.getByTestId('active-filter-select').click()
+    await page.getByTestId('active-filter-manage').click()
 
     // 1+2. Open Atom A in the editor; the Used-by line shows "Group G".
     await page.getByTestId('filter-row-atom-a').click()

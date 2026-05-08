@@ -91,17 +91,24 @@ test.describe('FilterContext composable-graph migration (CF1)', () => {
       nodes: Record<string, { type: string; childIds?: string[] } & Record<string, unknown>>
       activeId: string | null
       _migratedV1: boolean
+      _migratedV2?: boolean
     }
     const filtersBlob = (migrationPatch as { filters: MigratedFilters }).filters
 
     // Both atoms migrated; pinned key gone; group references the pinned id.
-    expect(filtersBlob.nodes['p1']).toMatchObject({ type: 'atom', name: 'Scan Gmail' })
-    expect(filtersBlob.nodes['p2']).toMatchObject({ type: 'atom', name: 'Other' })
+    // CFR1: legacy migration emits v2-shape atoms directly (behavior, not
+    // polarity). The mapping is include → show-only, exclude → hide.
+    expect(filtersBlob.nodes['p1']).toMatchObject({ type: 'atom', name: 'Scan Gmail', behavior: 'hide' })
+    expect(filtersBlob.nodes['p2']).toMatchObject({ type: 'atom', name: 'Other', behavior: 'show-only' })
     const grp = filtersBlob.nodes['default-migrated'] as { type: string; childIds: string[] }
     expect(grp.type).toBe('group')
     expect(grp.childIds).toEqual(['p1'])
     expect(filtersBlob.activeId).toBe('default-migrated')
     expect(filtersBlob._migratedV1).toBe(true)
+    // CFR1: v0→v1 migration jumps straight to v2 (no intermediate v1
+    // polarity stage), so the _migratedV2 sentinel is set in the same
+    // PATCH.
+    expect(filtersBlob._migratedV2).toBe(true)
 
     // After the migration applies, the server state has the legacy keys nulled.
     expect(state.data.savedFilters).toBeNull()
@@ -131,19 +138,21 @@ test.describe('FilterContext composable-graph migration (CF1)', () => {
     expect(patches.bodies.length).toBe(countAfterFirstLoad)
   })
 
-  test('new-shape passthrough: prefs already contain `filters`, no migration writes', async ({ page, mockBackend }) => {
+  test('new-shape passthrough: prefs already contain v2 `filters`, no migration writes', async ({ page, mockBackend }) => {
     await mockBackend({})
     const { patches } = await installPrefsRoute(page, {
       filters: {
         nodes: {
           a: {
+            // CFR1: v2 atoms carry `behavior`, not `polarity`.
             type: 'atom', id: 'a', name: 'Already migrated',
-            enabled: true, patterns: ['*foo*'], polarity: 'include',
+            enabled: true, patterns: ['*foo*'], behavior: 'show-only',
             mode: 'glob', target: 'title',
           },
         },
         activeId: 'a',
         _migratedV1: true,
+        _migratedV2: true,
       },
     })
 

@@ -39,7 +39,7 @@ const migratedNotDismissed: FiltersState = {
       name: 'Scan Gmail',
       enabled: true,
       patterns: ['Scan Gmail*'],
-      polarity: 'exclude',
+      behavior: 'hide',
       mode: 'glob',
       target: 'title',
     },
@@ -54,6 +54,7 @@ const migratedNotDismissed: FiltersState = {
   },
   activeId: 'default-migrated',
   _migratedV1: true,
+  _migratedV2: true,
   migrationBannerDismissed: false,
 }
 

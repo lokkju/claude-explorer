@@ -1,5 +1,5 @@
 /**
- * Manage Filters modal — CF2 two-pane atom + group editor.
+ * Manage Filters modal — CFR1 two-pane atom + group editor (v2 of CF2).
  *
  * Layout:
  *   [Manage filters]                                     [+ New filter]
@@ -9,34 +9,37 @@
  *   │  Filter B   [Group]  │ Type: ( • Atom )( Group )              │
  *   │  ...                 │ Enabled: [toggle]                      │
  *   │                      │ <type-specific editor>                  │
- *   │                      │                                         │
+ *   │                      │ Summary: ...                            │
  *   │                      │                                         │
  *   │                      │                              [Cancel] [Save]
  *   └──────────────────────┴──────────────────────────────────────┘
  *
- * Atom editor:
+ * Atom editor (CFR1):
  *   - Name input with placeholder "Name (auto-filled from first pattern)".
- *     Prefill rule: if `userEditedName === false`, debounce 300ms after the
- *     Patterns textarea changes, then set Name to `stripMetacharsForName(...)`.
- *     When the input is FOCUSED, never auto-update (don't shift under cursor).
- *     If the user clears the Name back to empty, set userEditedName=false so
- *     auto-fill resumes.
- *     The sentinels (`userEditedName`, `nameFocused`) are `useRef`s — they
- *     gate the effect, no render dependency. They are NEVER persisted.
- *   - Polarity radio (include / exclude).
- *   - Mode radio (glob / regex).
- *   - Patterns textarea (one pattern per line).
+ *     Prefill rule unchanged from CF2 (debounce 300ms; refs gate the effect).
+ *   - Behavior radio (Hide matches / Show only matches) at the TOP — this
+ *     is the highest-impact decision. Replaces the v1 polarity radio.
+ *   - Mode radio (Glob / Regex).
+ *   - Patterns textarea (one pattern per line; OR'd at evaluation).
+ *   - Plain-English summary line below the textarea.
  *
- * Group editor:
+ * Group editor (CFR1):
  *   - Match radio: "all of these" / "any of these" (no AND/OR jargon).
  *   - Members chip rail with × on each chip.
  *   - "Add member" Select listing every other filter except (a) self, and
  *     (b) any candidate that already transitively references this group
  *     (DFS from candidate; if it reaches G, it's a cycle). Disabled
  *     candidates appear with "(disabled)" suffix.
- *   - "Exclude + any" warning: shown iff match='any', members non-empty,
- *     AND every member is an Atom with polarity='exclude'. Empty-group
- *     guard prevents `[].every() === true` from false-triggering.
+ *   - Plain-English summary line below the members rail.
+ *
+ * v2 design notes:
+ *   - Atoms carry `behavior: 'hide' | 'show-only'`. Groups DO NOT — they
+ *     are pure boolean combinators over their children's keep/drop
+ *     decisions (council convergence; rawMatches model rejected — see
+ *     filterEngine.ts module header).
+ *   - The "exclude + any" warning from CF2 is GONE. With Behavior at the
+ *     atom level the failure mode it caught (a group of all-exclude
+ *     atoms set to "any" passing for everything) is no longer reachable.
  *
  * Type switch:
  *   - Single unified draft retains type-specific fields across switches
@@ -83,10 +86,10 @@ import {
   stripMetacharsForName,
   validateNoCycle,
   type AtomFilter,
+  type Behavior,
   type FilterId,
   type FilterMode,
   type FilterNode,
-  type FilterPolarity,
   type FiltersState,
   type GroupFilter,
 } from '@/lib/filterEngine'
@@ -98,6 +101,9 @@ interface ManageFiltersModalProps {
 }
 
 // Unified draft holds every field — submit-time pruning by `type`.
+//
+// CFR1: `behavior` lives only on atoms. Groups have no behavior (pure
+// boolean combinator over children's evaluations).
 interface Draft {
   id: string                   // existing id when editing; freshly-generated for new
   isNew: boolean
@@ -106,7 +112,7 @@ interface Draft {
   enabled: boolean
   // atom fields
   patterns: string             // textarea raw, one per line
-  polarity: FilterPolarity
+  behavior: Behavior
   mode: FilterMode
   // group fields
   match: 'all' | 'any'
@@ -128,7 +134,10 @@ function emptyDraft(): Draft {
     name: '',
     enabled: true,
     patterns: '',
-    polarity: 'include',
+    // CFR1: default new atoms to 'hide' — the single most common request
+    // from the user ("hide cron1 OR cron2") is a hide filter; show-only
+    // is the rarer case (and easier to reason about once selected).
+    behavior: 'hide',
     mode: 'glob',
     match: 'all',
     childIds: [],
@@ -144,7 +153,7 @@ function nodeToDraft(node: FilterNode): Draft {
       name: node.name,
       enabled: node.enabled,
       patterns: node.patterns.join('\n'),
-      polarity: node.polarity,
+      behavior: node.behavior,
       mode: node.mode,
       match: 'all',
       childIds: [],
@@ -157,7 +166,7 @@ function nodeToDraft(node: FilterNode): Draft {
     name: node.name,
     enabled: node.enabled,
     patterns: '',
-    polarity: 'include',
+    behavior: 'hide',
     mode: 'glob',
     match: node.match,
     childIds: [...node.childIds],
@@ -272,7 +281,7 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
         name: trimmedName,
         enabled: draft.enabled,
         patterns,
-        polarity: draft.polarity,
+        behavior: draft.behavior,
         mode: draft.mode,
         target: 'title',
       }
@@ -649,46 +658,63 @@ function DraftEditor({ draft, state, onChange, onSave, onCancel, saveError }: Dr
 // ---------------------------------------------------------------------------
 
 function AtomEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) => void }) {
+  // Plain-English summary. Composes the user's two highest-leverage
+  // choices (behavior + patterns) into a single sentence so the editor
+  // is self-documenting. CFR1 council convergence: the summary is
+  // load-bearing because (a) atoms now compose patterns via OR (an
+  // important reinterpretation vs the v1 single-pattern atom) and
+  // (b) Hide vs Show-only is the one decision the v1 polarity radio
+  // failed to communicate clearly.
+  const patternList = draft.patterns
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  const summary =
+    patternList.length === 0
+      ? 'This filter has no patterns yet.'
+      : draft.behavior === 'hide'
+        ? `Hides conversations whose titles match any of: ${patternList.join(', ')}.`
+        : `Shows only conversations whose titles match any of: ${patternList.join(', ')}.`
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <span className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Polarity</span>
-          <div className="flex gap-2">
-            <RadioPill
-              name="polarity"
-              value="include"
-              current={draft.polarity}
-              onPick={(v) => onChange({ ...draft, polarity: v as FilterPolarity })}
-              testId="filter-editor-polarity-include"
-            >include</RadioPill>
-            <RadioPill
-              name="polarity"
-              value="exclude"
-              current={draft.polarity}
-              onPick={(v) => onChange({ ...draft, polarity: v as FilterPolarity })}
-              testId="filter-editor-polarity-exclude"
-            >exclude</RadioPill>
-          </div>
+      {/* Behavior is the highest-impact decision — top of the editor. */}
+      <div>
+        <span className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Behavior</span>
+        <div className="flex gap-2">
+          <RadioPill
+            name="behavior"
+            value="hide"
+            current={draft.behavior}
+            onPick={(v) => onChange({ ...draft, behavior: v as Behavior })}
+            testId="filter-editor-behavior-hide"
+          >Hide matches</RadioPill>
+          <RadioPill
+            name="behavior"
+            value="show-only"
+            current={draft.behavior}
+            onPick={(v) => onChange({ ...draft, behavior: v as Behavior })}
+            testId="filter-editor-behavior-show-only"
+          >Show only matches</RadioPill>
         </div>
-        <div>
-          <span className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Mode</span>
-          <div className="flex gap-2">
-            <RadioPill
-              name="mode"
-              value="glob"
-              current={draft.mode}
-              onPick={(v) => onChange({ ...draft, mode: v as FilterMode })}
-              testId="filter-editor-mode-glob"
-            >glob</RadioPill>
-            <RadioPill
-              name="mode"
-              value="regex"
-              current={draft.mode}
-              onPick={(v) => onChange({ ...draft, mode: v as FilterMode })}
-              testId="filter-editor-mode-regex"
-            >regex</RadioPill>
-          </div>
+      </div>
+      <div>
+        <span className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Mode</span>
+        <div className="flex gap-2">
+          <RadioPill
+            name="mode"
+            value="glob"
+            current={draft.mode}
+            onPick={(v) => onChange({ ...draft, mode: v as FilterMode })}
+            testId="filter-editor-mode-glob"
+          >glob</RadioPill>
+          <RadioPill
+            name="mode"
+            value="regex"
+            current={draft.mode}
+            onPick={(v) => onChange({ ...draft, mode: v as FilterMode })}
+            testId="filter-editor-mode-regex"
+          >regex</RadioPill>
         </div>
       </div>
       <div>
@@ -704,6 +730,12 @@ function AtomEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) =>
           className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-mono shadow-sm focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
           placeholder={'*react*\n*typescript*'}
         />
+      </div>
+      <div
+        data-testid="filter-editor-summary"
+        className="text-xs text-zinc-600 dark:text-zinc-400 italic"
+      >
+        {summary}
       </div>
     </div>
   )
@@ -735,15 +767,23 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
     node: state.nodes[id],
   }))
 
-  // "Exclude + any" warning trigger.
-  const showExcludeAnyWarning = useMemo(() => {
-    if (draft.match !== 'any') return false
-    if (draft.childIds.length === 0) return false
-    return draft.childIds.every((cid) => {
-      const n = state.nodes[cid]
-      return n && n.type === 'atom' && n.polarity === 'exclude'
-    })
-  }, [draft.match, draft.childIds, state.nodes])
+  // CFR1: the v1 "exclude + any" warning is gone. Behavior at the atom
+  // level makes the failure mode the warning caught (a group of
+  // all-exclude atoms set to "any" passing for everything) no longer
+  // reachable in v2.
+  //
+  // Plain-English summary. Groups in v2 are pure boolean combinators
+  // over their children's keep/drop decisions — the summary phrases
+  // it that way to reinforce the model.
+  const memberNames = memberNodes
+    .map(({ node, id }) => node?.name ?? `(missing ${id})`)
+    .filter((s) => s.length > 0)
+  const groupSummary =
+    memberNames.length === 0
+      ? 'This group has no members yet.'
+      : draft.match === 'all'
+        ? `Keeps a conversation only if every member keeps it: ${memberNames.join(', ')}.`
+        : `Keeps a conversation if any member keeps it: ${memberNames.join(', ')}.`
 
   const handleAdd = () => {
     if (!pendingMemberId) return
@@ -779,15 +819,6 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
             testId="filter-editor-match-any"
           >any of these</RadioPill>
         </div>
-        {showExcludeAnyWarning && (
-          <div
-            data-testid="filter-editor-exclude-any-warning"
-            className="mt-2 text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 rounded px-2 py-1.5"
-          >
-            ⚠ This combination usually matches almost everything. Consider switching to
-            {' '}<strong>Match all of these</strong>, or change some members to <strong>Include</strong>.
-          </div>
-        )}
       </div>
 
       <div>
@@ -849,6 +880,13 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
         >
           Add
         </Button>
+      </div>
+
+      <div
+        data-testid="filter-editor-summary"
+        className="text-xs text-zinc-600 dark:text-zinc-400 italic"
+      >
+        {groupSummary}
       </div>
     </div>
   )

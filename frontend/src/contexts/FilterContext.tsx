@@ -6,23 +6,40 @@
  * preferences key, `'filters'`, via the existing `usePreferences` hook
  * (server-of-record + localStorage mirror).
  *
- * On first mount, if a legacy prefs blob is detected (`savedFilters` and/or
- * `activeFilterIds` present, AND `filters._migratedV1 !== true`), we run a
- * one-shot migration:
+ * Two migration phases live here, both gated by their own sentinel so we
+ * can roll out independently:
  *
- *   1. Each legacy filter -> AtomFilter (drop pinned/target).
- *   2. Build a 'default-migrated' Group containing the previously-pinned
- *      atom IDs; activeId = 'default-migrated' if any were pinned, else
- *      null.
- *   3. PATCH the new blob AND explicitly null savedFilters/activeFilterIds.
- *      The backend's per-key overwrite leaves untouched any key not in the
- *      payload, so omitting the legacy keys would leave them on disk;
- *      explicit null is required to clear them.
- *   4. Set _migratedV1 = true so subsequent mounts skip migration.
+ *   v0 → v1 (CF1): if the legacy keys `savedFilters` / `activeFilterIds`
+ *   are present AND `filters._migratedV1 !== true`:
+ *     1. Each legacy filter -> AtomFilter (drop pinned/target).
+ *     2. Build a 'default-migrated' Group containing the previously-pinned
+ *        atom IDs; activeId = 'default-migrated' if any were pinned, else
+ *        null.
+ *     3. PATCH the new blob AND explicitly null savedFilters /
+ *        activeFilterIds. The backend's per-key overwrite leaves
+ *        untouched any key not in the payload, so explicit null is
+ *        required to clear them.
+ *     4. Set _migratedV1 = true so subsequent mounts skip migration.
  *
- * The migration is idempotent under React StrictMode double-mount: a
- * module-level ref tracks "have we sent the migration PATCH this load",
- * and the on-disk sentinel guards future page loads.
+ *   v1 → v2 (CFR1, 2026-05-07): atoms used to carry
+ *   `polarity: 'include' | 'exclude'`. v2 renames this to
+ *   `behavior: 'show-only' | 'hide'` (1:1: include → show-only,
+ *   exclude → hide). Groups DO NOT carry behavior (council convergence —
+ *   they remain pure boolean combinators). Migration runs iff
+ *   `_migratedV1 === true` AND `_migratedV2 !== true` AND any node still
+ *   carries `polarity` / lacks `behavior`. The migration:
+ *     1. For each atom node: derive `behavior` from `polarity` (or
+ *        default to 'show-only' if neither is present). Drop `polarity`.
+ *     2. Groups are passed through unchanged (no behavior is ever added).
+ *     3. Set _migratedV2 = true.
+ *     4. PATCH only the `filters` blob (no other keys touched).
+ *   The migration is idempotent: re-running yields the same shape and
+ *   only PATCHes once per page load (a module-level ref guards
+ *   StrictMode double-mount).
+ *
+ * Both migrations are idempotent under React StrictMode double-mount:
+ * module-level refs track "have we sent the migration PATCH this load",
+ * and the on-disk sentinels guard future page loads.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
@@ -71,13 +88,17 @@ function migrateLegacy(
 ): FiltersState {
   const nodes: Record<FilterId, FilterNode> = {}
   for (const lf of legacyFilters) {
+    // v1 atoms carried `polarity: 'include' | 'exclude'`. CFR1 renames to
+    // `behavior: 'show-only' | 'hide'` directly during legacy migration —
+    // a fresh-from-v0 user skips the v1→v2 step entirely. The mapping is
+    // 1:1 (include → show-only, exclude → hide).
     const atom: AtomFilter = {
       type: 'atom',
       id: lf.id,
       name: lf.name,
       enabled: true,
       patterns: Array.isArray(lf.patterns) ? lf.patterns : [],
-      polarity: lf.polarity,
+      behavior: lf.polarity === 'exclude' ? 'hide' : 'show-only',
       mode: lf.mode,
       target: 'title',
     }
@@ -90,6 +111,11 @@ function migrateLegacy(
   const groupChildren = Array.from(new Set([...pinnedIds, ...legacyActiveIds])).filter(
     (id) => id in nodes,
   )
+  // Groups are pure boolean combinators in v2 — no behavior. The default
+  // group composes children via match='all' (preserves v1 semantics: a
+  // legacy "all-of pinned exclude atoms" group keeps its meaning under
+  // compose-passes because each atom still returns its own keep/drop and
+  // the group ANDs them).
   const group: GroupFilter = {
     type: 'group',
     id: MIGRATED_GROUP_ID,
@@ -103,7 +129,74 @@ function migrateLegacy(
     nodes,
     activeId: groupChildren.length > 0 ? MIGRATED_GROUP_ID : null,
     _migratedV1: true,
+    _migratedV2: true,
   }
+}
+
+/**
+ * v1 → v2 migration: atoms get `behavior` derived from `polarity`; groups
+ * are passed through. Idempotent: an already-v2 atom (no `polarity`,
+ * `behavior` present) round-trips unchanged.
+ */
+function migrateV1toV2(state: FiltersState): FiltersState {
+  const nextNodes: Record<FilterId, FilterNode> = {}
+  for (const [id, node] of Object.entries(state.nodes)) {
+    if (node.type === 'atom') {
+      // The legacy shape on disk may still have `polarity`. We strip it
+      // explicitly (don't spread the legacy keys forward).
+      const legacy = node as AtomFilter & { polarity?: 'include' | 'exclude' }
+      const behavior: AtomFilter['behavior'] =
+        legacy.behavior ??
+        (legacy.polarity === 'exclude' ? 'hide' : 'show-only')
+      const migrated: AtomFilter = {
+        type: 'atom',
+        id: node.id,
+        name: node.name,
+        enabled: node.enabled,
+        patterns: Array.isArray(node.patterns) ? node.patterns : [],
+        behavior,
+        mode: node.mode,
+        target: 'title',
+      }
+      nextNodes[id] = migrated
+    } else {
+      // Groups: drop any stray `behavior` if a previous attempt had
+      // written one (defense in depth — v2 groups never carry behavior).
+      const legacy = node as GroupFilter & { behavior?: unknown }
+      const migrated: GroupFilter = {
+        type: 'group',
+        id: node.id,
+        name: node.name,
+        enabled: node.enabled,
+        match: legacy.match,
+        childIds: Array.isArray(legacy.childIds) ? legacy.childIds : [],
+      }
+      nextNodes[id] = migrated
+    }
+  }
+  return {
+    ...state,
+    nodes: nextNodes,
+    _migratedV2: true,
+  }
+}
+
+/**
+ * "Does this state still carry v1-shape atoms?" — true if any atom node
+ * has the legacy `polarity` key OR is missing the `behavior` key. Used
+ * to decide whether the v1→v2 migration needs to run on mount.
+ */
+function needsV2Migration(state: FiltersState): boolean {
+  if (state._migratedV2 === true) return false
+  for (const node of Object.values(state.nodes)) {
+    if (node.type !== 'atom') continue
+    const legacy = node as AtomFilter & { polarity?: unknown }
+    if ('polarity' in legacy) return true
+    if (legacy.behavior === undefined) return true
+  }
+  // No v1-shape atoms found, but we still flip the sentinel below to
+  // mark this state as v2-migrated so subsequent mounts skip the check.
+  return false
 }
 
 export function FilterProvider({ children }: { children: ReactNode }) {
@@ -116,13 +209,20 @@ export function FilterProvider({ children }: { children: ReactNode }) {
   const [legacyFilters] = usePreferences<LegacyFilter[] | null>(LEGACY_FILTERS_KEY, null)
   const [legacyActive] = usePreferences<string[] | null>(LEGACY_ACTIVE_KEY, null)
 
-  // Idempotency guard: avoid re-PATCHing during React StrictMode's double
+  // Idempotency guards: avoid re-PATCHing during React StrictMode's double
   // mount and across re-renders inside a single page load. The on-disk
-  // sentinel guards future loads.
-  const didMigrateRef = useRef(false)
+  // sentinels guard future loads. Two refs because the v0→v1 and v1→v2
+  // migrations are independent — a fresh-from-v0 user does both, a user
+  // already on v1 does only v2.
+  const didMigrateV1Ref = useRef(false)
+  const didMigrateV2Ref = useRef(false)
 
+  // v0 → v1 migration (CF1): legacy `savedFilters` / `activeFilterIds` →
+  // composable graph. The migrated blob already carries _migratedV2:true
+  // because migrateLegacy() builds atoms with `behavior` directly (no
+  // `polarity` ever appears in newly-migrated data).
   useEffect(() => {
-    if (didMigrateRef.current) return
+    if (didMigrateV1Ref.current) return
     if (filtersState._migratedV1) return
 
     const hasLegacyFilters = Array.isArray(legacyFilters) && legacyFilters.length > 0
@@ -134,7 +234,7 @@ export function FilterProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    didMigrateRef.current = true
+    didMigrateV1Ref.current = true
     const migrated = migrateLegacy(
       hasLegacyFilters ? legacyFilters! : [],
       hasLegacyActive ? legacyActive! : [],
@@ -156,6 +256,36 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     // migrate. Re-running on every render would cause an infinite write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersState._migratedV1, legacyFilters, legacyActive, qc])
+
+  // v1 → v2 migration (CFR1): `polarity` → `behavior` rename on atoms.
+  // Runs iff the v0→v1 step has already landed AND the on-disk blob
+  // still carries v1-shape atoms. We don't touch the legacy keys here —
+  // those were cleared by the v1 migration and may already be absent.
+  useEffect(() => {
+    if (didMigrateV2Ref.current) return
+    if (!filtersState._migratedV1) return
+    if (filtersState._migratedV2) return
+    if (!needsV2Migration(filtersState)) {
+      // Nothing to rewrite, but flip the sentinel so we stop re-checking
+      // on every render. PATCH only the sentinel (no node mutations).
+      didMigrateV2Ref.current = true
+      void v2SentinelOnlyPatch({ ...filtersState, _migratedV2: true }).then(() => {
+        qc.invalidateQueries({ queryKey: ['preferences'] })
+      })
+      return
+    }
+
+    didMigrateV2Ref.current = true
+    const migrated = migrateV1toV2(filtersState)
+    void v2MigratePatch(migrated).then(() => {
+      qc.invalidateQueries({ queryKey: ['preferences'] })
+    })
+    // We deliberately depend ONLY on the sentinels — including the full
+    // `filtersState` would re-fire on every addNode/updateNode/removeNode
+    // (the ref guard makes it harmless but wasteful). The body still
+    // reads filtersState fresh via closure capture each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersState._migratedV1, filtersState._migratedV2, qc])
 
   const setActiveId = useCallback(
     (id: FilterId | null) => {
@@ -272,4 +402,40 @@ async function migratePatch(migrated: FiltersState): Promise<void> {
   } catch {
     /* best effort — localStorage mirror keeps the new blob alive */
   }
+}
+
+/**
+ * v1 → v2 PATCH: writes only the `filters` blob (no legacy-key clears,
+ * since the v1 migration already nulled them — or they were never
+ * present). The migrated blob carries `_migratedV2: true` so subsequent
+ * mounts skip this step. localStorage mirror updated for hard-refresh
+ * resilience.
+ */
+async function v2MigratePatch(migrated: FiltersState): Promise<void> {
+  try {
+    window.localStorage.setItem(FILTERS_KEY, JSON.stringify(migrated))
+  } catch {
+    /* best effort */
+  }
+  try {
+    await fetch('/api/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: { [FILTERS_KEY]: migrated },
+      }),
+    })
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * Sentinel-only PATCH: when the v1 blob is already v2-shaped (e.g., a
+ * fresh post-CF1 user who never had v1-polarity atoms because the seed
+ * was empty), we still flip `_migratedV2` so we stop re-checking. No
+ * node mutations.
+ */
+async function v2SentinelOnlyPatch(migrated: FiltersState): Promise<void> {
+  return v2MigratePatch(migrated)
 }

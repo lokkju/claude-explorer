@@ -16,12 +16,13 @@ test.describe('CF2 — atom name prefill', () => {
     await mockBackend({
       conversations: [],
       preferences: {
-        filters: { nodes: {}, activeId: null, _migratedV1: true },
+        filters: { nodes: {}, activeId: null, _migratedV1: true, _migratedV2: true },
       },
     })
 
     await page.goto('/')
-    await page.getByRole('button', { name: /manage filters/i }).click()
+    await page.getByTestId('active-filter-select').click()
+    await page.getByTestId('active-filter-manage').click()
     await page.getByTestId('manage-filters-new').click()
 
     const nameInput = page.getByTestId('filter-editor-name')

@@ -56,9 +56,9 @@ test.describe('Sidebar filters (CF1)', () => {
 
     await page.goto('/');
     await page.evaluate(() => { localStorage.clear(); });
-    const manage = page.getByRole('button', { name: /manage filters/i });
-    await expect(manage).toBeVisible();
-    await manage.click();
+    // CFR1: "Manage filters…" lives in the active-filter picker dropdown.
+    await page.getByTestId('active-filter-select').click();
+    await page.getByTestId('active-filter-manage').click();
     await expect(page.getByRole('dialog', { name: /manage filters/i })).toBeVisible();
   });
 
@@ -72,17 +72,18 @@ test.describe('Sidebar filters (CF1)', () => {
         body: JSON.stringify({ data_dir: '/tmp', conversation_count: conversations.length }),
       });
     });
-    await seedPrefs(page, { filters: { nodes: {}, activeId: null, _migratedV1: true } });
+    await seedPrefs(page, { filters: { nodes: {}, activeId: null, _migratedV1: true, _migratedV2: true } });
 
     await page.goto('/');
     await page.evaluate(() => { localStorage.clear(); });
 
-    await page.getByRole('button', { name: /manage filters/i }).click();
-    // CF2: two-pane editor — click "+ New filter" then fill the editor by testid.
+    await page.getByTestId('active-filter-select').click();
+    await page.getByTestId('active-filter-manage').click();
+    // CFR1: two-pane editor — click "+ New filter" then fill the editor by testid.
     await page.getByTestId('manage-filters-new').click();
 
     await page.getByTestId('filter-editor-name').fill('MCP work');
-    await page.getByTestId('filter-editor-polarity-include').click();
+    await page.getByTestId('filter-editor-behavior-show-only').click();
     await page.getByTestId('filter-editor-mode-glob').click();
     await page.getByTestId('filter-editor-patterns').fill('*mcp*');
 
@@ -103,7 +104,7 @@ test.describe('Sidebar filters (CF1)', () => {
     await expect(page.getByText('React refactor')).toHaveCount(0);
   });
 
-  test('exclude-polarity filter (graph schema) hides matching conversations', async ({ page }) => {
+  test('hide-behavior filter (graph schema) hides matching conversations', async ({ page }) => {
     await page.route('**/api/conversations**', (route: Route) => {
       route.fulfill({ contentType: 'application/json', body: JSON.stringify(conversations) });
     });
@@ -117,11 +118,12 @@ test.describe('Sidebar filters (CF1)', () => {
       nodes: {
         'f-2': {
           type: 'atom', id: 'f-2', name: 'Hide tests', enabled: true,
-          patterns: ['*test*'], polarity: 'exclude', mode: 'glob', target: 'title',
+          patterns: ['*test*'], behavior: 'hide', mode: 'glob', target: 'title',
         },
       },
       activeId: 'f-2',
       _migratedV1: true,
+      _migratedV2: true,
     }));
 
     await page.goto('/');
@@ -144,11 +146,12 @@ test.describe('Sidebar filters (CF1)', () => {
       nodes: {
         'f-3': {
           type: 'atom', id: 'f-3', name: 'Impossible', enabled: true,
-          patterns: ['*xxxxxxxxxxx*'], polarity: 'include', mode: 'glob', target: 'title',
+          patterns: ['*xxxxxxxxxxx*'], behavior: 'show-only', mode: 'glob', target: 'title',
         },
       },
       activeId: 'f-3',
       _migratedV1: true,
+      _migratedV2: true,
     }));
 
     await page.goto('/');

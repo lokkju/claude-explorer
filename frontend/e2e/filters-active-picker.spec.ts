@@ -31,8 +31,10 @@ const otherConv = makeSummary({
 
 const conversations = [matchingConv, otherConv]
 
-// A pre-migrated FiltersState with one exclude atom referenced by a group,
-// activeId pointing at the group. Matches the user's actual prefs shape.
+// A pre-migrated v2 FiltersState with one hide atom referenced by a
+// group (groups have no behavior in v2 — pure boolean combinator over
+// children's keep/drop), activeId pointing at the group. Matches the
+// user's actual prefs shape after the v1→v2 migration.
 const filtersBlob: FiltersState = {
   nodes: {
     'scan-gmail': {
@@ -41,7 +43,7 @@ const filtersBlob: FiltersState = {
       name: 'Scan Gmail',
       enabled: true,
       patterns: ['Scan Gmail*'],
-      polarity: 'exclude',
+      behavior: 'hide',
       mode: 'glob',
       target: 'title',
     },
@@ -56,6 +58,7 @@ const filtersBlob: FiltersState = {
   },
   activeId: 'default-migrated',
   _migratedV1: true,
+  _migratedV2: true,
 }
 
 test.describe('CF1 — active-filter picker', () => {
