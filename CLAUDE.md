@@ -4,6 +4,10 @@
 
 All UX flows and rules are documented in [UX.md](./UX.md). Code changes that affect UI behavior MUST keep that document accurate; failing-test-first applies (see CLAUDE.md "Code Style" rule on TDD).
 
+## Testing Rules
+
+When writing or reviewing tests (Playwright, pytest, vitest), read [CLAUDE-TESTING.md](./CLAUDE-TESTING.md). It codifies black-box / spec-driven discipline, bidirectional verification, Playwright-specific gotchas (overflow-clipping, shadcn `<Select>`, Radix `<ScrollArea>`), fixture-design rules, and a pre-flight checklist. Other agents (pure feature work, refactors, deployments) can skip it.
+
 ## Project Structure
 
 ```
