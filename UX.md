@@ -616,11 +616,19 @@ without disturbing their list ordering.
 
 Saved title filters use a composable graph model. Two kinds of node:
 
-- **Atoms** carry one set of patterns plus a polarity (`include` /
-  `exclude`) and a mode (`glob` / `regex`).
+- **Atoms** carry one set of patterns plus a **Behavior** (`hide` /
+  `show-only`) and a mode (`glob` / `regex`). The Behavior controls
+  what happens to a conversation that matches at least one of the
+  atom's patterns: *Hide matches* drops it; *Show only matches* keeps
+  it (and drops everything else).
 - **Groups** combine other named filters. A group is either *match all
   of these* (every member must pass) or *match any of these* (at least
   one member must pass). Groups can reference atoms or other groups.
+  **Groups carry no Behavior of their own** — they are pure
+  combinators over their children's keep/drop decisions. To "hide a
+  combination", either author a single atom whose patterns enumerate
+  the combination, or build a group whose children are all hide-atoms
+  (the combination semantics fall out of each child's own keep/drop).
 
 The UI deliberately avoids AND/OR jargon — the radio labels are *"Match
 all of these filters"* and *"Match any of these filters"*.
@@ -658,8 +666,9 @@ Every filter has an `enabled` boolean.
 The `Manage filters` button opens a two-pane modal: list of saved
 filters on the left, editor for the selected filter on the right.
 
-- **Atom editor**: name, polarity (include/exclude), mode (glob/regex),
-  patterns (one per line), enabled toggle. The Name input auto-fills
+- **Atom editor**: name, Behavior (*Hide matches* / *Show only
+  matches*), mode (glob/regex), patterns (one per line), enabled
+  toggle. The Name input auto-fills
   from the first usable pattern (≥3 alphanumeric chars after stripping
   glob/regex meta-characters) until the user manually edits the name;
   clearing the name resumes auto-fill.
@@ -672,14 +681,15 @@ filters on the left, editor for the selected filter on the right.
   the filter is referenced; the block message names the referencing
   group(s) inline.
 
-#### Exclude + "any of these" warning
+#### Canonical example: hiding cron-style chatter
 
-A group whose members are ALL `exclude` atoms and whose `match` is
-*any of these* passes for nearly every conversation, because most items
-fail to match at least one of the excludes. The editor detects this
-combination at edit time and surfaces an inline warning under the Match
-radio recommending the user switch to *all of these* or change one or
-more members to *include*.
+The least-friction way to hide several unrelated patterns is one atom
+with Behavior=*Hide matches* and every pattern listed (one per line).
+For example: a single atom named `cron jobs` with patterns
+`Scan Gmail for meeting invites*` and `*automated run of a scheduled
+task*` hides every matching conversation in one node. Groups are only
+needed when the user wants to combine separately-named, separately-
+toggleable filters.
 
 #### Cycle defense
 
@@ -706,6 +716,13 @@ the app migrates legacy state once:
   clears them.
 - A sentinel `filters._migratedV1: true` is set so subsequent mounts
   skip migration.
+
+A second one-time migration (`_migratedV2: true`) carries v1 atoms
+forward to the Behavior model: each atom's previous `polarity:
+'include'` becomes `behavior: 'show-only'`, and `polarity: 'exclude'`
+becomes `behavior: 'hide'`. Groups are unchanged — they had no
+polarity in v1 and gain no Behavior in v2. Saved filters survive the
+migration with their previous semantics intact.
 
 After a successful migration the sidebar renders a one-time amber
 **Composable filters banner** above the conversation list:
