@@ -316,7 +316,7 @@ def _isolated_credentials_path(
 ) -> Iterator[Path]:
     """Pin the credentials path to ``<tmp_path>/credentials.json``.
 
-    There are THREE module-level ``DEFAULT_CREDENTIALS_PATH`` bindings to
+    There are FOUR module-level ``DEFAULT_CREDENTIALS_PATH`` bindings to
     consider:
 
     1. ``fetcher.credentials.DEFAULT_CREDENTIALS_PATH`` (line 66) \u2014 the
@@ -325,8 +325,11 @@ def _isolated_credentials_path(
        SEPARATE definition; ``backend.routers.fetch`` imports from here.
     3. ``backend.routers.fetch.DEFAULT_CREDENTIALS_PATH`` (line 19, value-
        imported at module load) \u2014 the binding the route handler reads.
+    4. ``backend.routers.orgs.DEFAULT_CREDENTIALS_PATH`` (value-imported
+       from ``fetcher.credentials`` at module load) \u2014 the binding the
+       ``/api/orgs`` route handler reads.
 
-    All three must be patched: a ``from foo import X`` does a value-binding
+    All four must be patched: a ``from foo import X`` does a value-binding
     into the importing module's namespace, so patching the source alone
     does not affect the importer's local copy. ``raising=False`` is used
     defensively in case future refactors move a constant.
@@ -339,6 +342,7 @@ def _isolated_credentials_path(
         "fetcher.credentials.DEFAULT_CREDENTIALS_PATH",
         "fetcher.bulk_fetch.DEFAULT_CREDENTIALS_PATH",
         "backend.routers.fetch.DEFAULT_CREDENTIALS_PATH",
+        "backend.routers.orgs.DEFAULT_CREDENTIALS_PATH",
     )
     for target in targets:
         monkeypatch.setattr(target, creds, raising=False)
