@@ -237,10 +237,19 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
   }
 
   const handleToggleEnabled = (node: FilterNode) => {
-    updateNode(node.id, { enabled: !node.enabled } as Partial<FilterNode>)
-    if (draft && draft.id === node.id) {
+    // Sync rule (UX.md "Atom editor: ... synced both directions"): when
+    // the row IS the active draft (not isNew), toggling on the row is
+    // part of the active edit session and only mutates the draft.
+    // Cancel reverts; Save commits. When the row is NOT the active
+    // draft, the row toggle is a live action that writes through to
+    // the persisted node immediately. This keeps the Save/Cancel
+    // transactional contract from leaking into rows that aren't being
+    // edited, while still giving instant feedback to the user.
+    if (draft && draft.id === node.id && !draft.isNew) {
       setDraft({ ...draft, enabled: !draft.enabled })
+      return
     }
+    updateNode(node.id, { enabled: !node.enabled } as Partial<FilterNode>)
   }
 
   const handleRequestDelete = (node: FilterNode) => {
@@ -350,20 +359,33 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
                     {allNodes.length === 0 ? 'No filters yet.' : 'No matches.'}
                   </div>
                 )}
-                {visibleNodes.map((n) => (
-                  <FilterRow
-                    key={n.id}
-                    node={n}
-                    selected={draft?.id === n.id && !draft?.isNew}
-                    deleteUi={deleteUi[n.id]}
-                    onSelect={() => handleSelectRow(n)}
-                    onToggleEnabled={() => handleToggleEnabled(n)}
-                    onRequestDelete={() => handleRequestDelete(n)}
-                    onCancelDelete={() => handleCancelDelete(n.id)}
-                    onConfirmDelete={() => handleConfirmDelete(n.id)}
-                    referencingGroups={findReferencingGroups(n.id, filtersState)}
-                  />
-                ))}
+                {visibleNodes.map((n) => {
+                  // CFR1 sync rule (UX.md "synced both directions"):
+                  // when this row is the active draft, the row's enabled
+                  // checkbox reflects the DRAFT value rather than the
+                  // node's persisted value. That preserves the
+                  // Save/Cancel transactional contract for editor edits
+                  // (Cancel reverts the draft AND the row visual)
+                  // while still showing the user the immediate visual
+                  // effect of toggling either control.
+                  const effectiveEnabled =
+                    draft && draft.id === n.id && !draft.isNew ? draft.enabled : n.enabled
+                  return (
+                    <FilterRow
+                      key={n.id}
+                      node={n}
+                      effectiveEnabled={effectiveEnabled}
+                      selected={draft?.id === n.id && !draft?.isNew}
+                      deleteUi={deleteUi[n.id]}
+                      onSelect={() => handleSelectRow(n)}
+                      onToggleEnabled={() => handleToggleEnabled(n)}
+                      onRequestDelete={() => handleRequestDelete(n)}
+                      onCancelDelete={() => handleCancelDelete(n.id)}
+                      onConfirmDelete={() => handleConfirmDelete(n.id)}
+                      referencingGroups={findReferencingGroups(n.id, filtersState)}
+                    />
+                  )
+                })}
               </div>
             </ScrollArea>
           </div>
@@ -401,6 +423,12 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
 
 interface FilterRowProps {
   node: FilterNode
+  /**
+   * Display-time enabled state. May differ from `node.enabled` when this
+   * row is the active draft and the user has toggled the editor's
+   * Enabled checkbox without saving yet (CFR1 sync rule).
+   */
+  effectiveEnabled: boolean
   selected: boolean
   deleteUi: 'blocked' | 'confirm' | undefined
   onSelect: () => void
@@ -413,6 +441,7 @@ interface FilterRowProps {
 
 function FilterRow({
   node,
+  effectiveEnabled,
   selected,
   deleteUi,
   onSelect,
@@ -445,14 +474,14 @@ function FilterRow({
         <label
           className="flex items-center text-xs text-zinc-500 shrink-0"
           onClick={(e) => e.stopPropagation()}
-          title={node.enabled ? 'Enabled (click to disable)' : 'Disabled (click to enable)'}
+          title={effectiveEnabled ? 'Enabled (click to disable)' : 'Disabled (click to enable)'}
         >
           <input
             type="checkbox"
             data-testid={`filter-row-toggle-${node.id}`}
-            checked={node.enabled}
+            checked={effectiveEnabled}
             onChange={onToggleEnabled}
-            aria-label={node.enabled ? 'Enabled' : 'Disabled'}
+            aria-label={effectiveEnabled ? 'Enabled' : 'Disabled'}
           />
         </label>
         <Button
@@ -604,7 +633,7 @@ function DraftEditor({ draft, state, onChange, onSave, onCancel, saveError }: Dr
         )}
       </div>
 
-      <div className="flex items-center gap-4 text-sm">
+      <div className="flex items-center gap-4 text-sm" role="radiogroup" aria-label="Type">
         <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Type:</span>
         <RadioPill
           name="type"
@@ -628,6 +657,7 @@ function DraftEditor({ draft, state, onChange, onSave, onCancel, saveError }: Dr
           <input
             type="checkbox"
             data-testid="filter-editor-enabled"
+            aria-label="Enabled"
             checked={draft.enabled}
             onChange={(e) => onChange({ ...draft, enabled: e.target.checked })}
           />
@@ -681,7 +711,7 @@ function AtomEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) =>
       {/* Behavior is the highest-impact decision — top of the editor. */}
       <div>
         <span className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Behavior</span>
-        <div className="flex gap-2">
+        <div className="flex gap-2" role="radiogroup" aria-label="Behavior">
           <RadioPill
             name="behavior"
             value="hide"
@@ -700,7 +730,7 @@ function AtomEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) =>
       </div>
       <div>
         <span className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Mode</span>
-        <div className="flex gap-2">
+        <div className="flex gap-2" role="radiogroup" aria-label="Mode">
           <RadioPill
             name="mode"
             value="glob"
@@ -803,7 +833,7 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
     <div className="flex flex-col gap-3">
       <div>
         <span className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Match</span>
-        <div className="flex gap-2">
+        <div className="flex gap-2" role="radiogroup" aria-label="Match">
           <RadioPill
             name="match"
             value="all"
@@ -861,7 +891,7 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
         <div className="flex-1 min-w-0">
           <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Add member</label>
           <Select value={pendingMemberId} onValueChange={setPendingMemberId}>
-            <SelectTrigger data-testid="filter-editor-add-member-trigger">
+            <SelectTrigger data-testid="filter-editor-add-member-trigger" aria-label="Add member">
               <SelectValue placeholder={candidates.length === 0 ? 'No more filters available' : 'Pick a filter'} />
             </SelectTrigger>
             <SelectContent>
@@ -912,9 +942,18 @@ function RadioPill({
   children: ReactNode
 }) {
   const active = current === value
+  // ARIA: the spec ("UX.md § Composable filters") describes these
+  // controls as Behavior/Mode/Match "radios". We expose role="radio" +
+  // aria-checked so screen readers and Playwright's getByRole('radio')
+  // match the contract. NOTE: keyboard interaction is currently
+  // Tab+Space (button default), not Arrow-key (standard radiogroup).
+  // A future refactor to shadcn RadioGroup would add roving-tabindex
+  // for full WCAG compliance.
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={active}
       data-testid={testId}
       onClick={() => onPick(value)}
       className={cn(
