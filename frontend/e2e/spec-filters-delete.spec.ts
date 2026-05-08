@@ -21,7 +21,10 @@ const conversations = [
 ]
 
 async function openModal(page: import('@playwright/test').Page) {
-  const picker = page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+  // Pin to the contract-implicit testid; the migration banner exposes
+  // aria-label="Filter update" which would conflict with a /filter/i
+  // label fallback in strict-mode locators.
+  const picker = page.getByTestId('active-filter-select')
   await picker.click()
   const manageOpt = page.getByRole('option', { name: /manage filters/i }).or(
     page.getByRole('menuitem', { name: /manage filters/i }),
@@ -154,11 +157,12 @@ test.describe('Delete UX', () => {
     await trash.first().click()
 
     // Inline "Used by:" naming BlockingGroup.
+    // (BlockingGroup also appears in its own row; use .first().)
     await expect(modal.getByText(/used by/i)).toBeVisible()
-    await expect(modal.getByText(/BlockingGroup/i)).toBeVisible()
+    await expect(modal.getByText(/BlockingGroup/i).first()).toBeVisible()
 
     // Atom row remains (deletion blocked).
-    await expect(modal.getByText(/AtomUsed/)).toBeVisible()
+    await expect(modal.getByText(/AtomUsed/).first()).toBeVisible()
   })
 
   test('Deleting the currently-active filter clears active to "All conversations"', async ({ page, mockBackend }) => {
@@ -203,7 +207,10 @@ test.describe('Delete UX', () => {
     await expect(page.getByText('Foo morning')).toBeVisible()
 
     // Picker shows "All conversations".
-    const picker = page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+    // Pin to the contract-implicit testid; the migration banner exposes
+    // aria-label="Filter update" which would conflict with a /filter/i
+    // label fallback in strict-mode locators.
+    const picker = page.getByTestId('active-filter-select')
     await expect(picker).toContainText(/All conversations/i)
   })
 })

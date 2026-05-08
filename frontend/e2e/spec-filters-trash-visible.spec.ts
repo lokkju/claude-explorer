@@ -61,7 +61,10 @@ test.describe('Manage Filters modal: trash icon visibility (canary)', () => {
     // "Manage filters…" item (per UX.md). The picker lives in the sidebar
     // between the title-search and the source filter (per UX.md Sidebar
     // section).
-    const picker = page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+    // Pin to the contract-implicit testid; the migration banner exposes
+    // aria-label="Filter update" which would conflict with a /filter/i
+    // label fallback in strict-mode locators.
+    const picker = page.getByTestId('active-filter-select')
     await picker.click()
     const manageItem = page.getByRole('option', { name: /manage filters/i }).or(
       page.getByRole('menuitem', { name: /manage filters/i }),

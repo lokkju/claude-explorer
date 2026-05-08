@@ -19,7 +19,10 @@ const conversations = [
 ]
 
 async function openModal(page: import('@playwright/test').Page) {
-  const picker = page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+  // Pin to the contract-implicit testid; the migration banner exposes
+  // aria-label="Filter update" which would conflict with a /filter/i
+  // label fallback in strict-mode locators.
+  const picker = page.getByTestId('active-filter-select')
   await picker.click()
   const manageOpt = page.getByRole('option', { name: /manage filters/i }).or(
     page.getByRole('menuitem', { name: /manage filters/i }),
@@ -129,7 +132,9 @@ test.describe('Cycle defense', () => {
 
     // Sidebar still functional. With a cycle that short-circuits to "passes",
     // every conversation is visible.
-    await expect(page.getByText('Foo')).toBeVisible()
-    await expect(page.getByText('Bar')).toBeVisible()
+    // (Use .first() because the conversation row renders the title and
+    // a uuid line; both contain the literal "Foo"/"Bar".)
+    await expect(page.getByText('Foo').first()).toBeVisible()
+    await expect(page.getByText('Bar').first()).toBeVisible()
   })
 })

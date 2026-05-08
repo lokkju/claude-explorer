@@ -34,18 +34,6 @@ test.describe('Migration v1 → v2 + banner', () => {
   test('Legacy savedFilters + activeFilterIds → "Default (migrated)" group + tombstone PATCH', async ({ page, mockBackend }) => {
     const patches: Array<Record<string, unknown>> = []
 
-    await page.route('**/api/preferences', async (route, req) => {
-      if (req.method() === 'PATCH' || req.method() === 'PUT') {
-        try {
-          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
-          if (parsed.data) patches.push(parsed.data)
-        } catch {
-          // ignore
-        }
-      }
-      await route.fallback()
-    })
-
     await mockBackend({
       conversations,
       preferences: {
@@ -85,6 +73,21 @@ test.describe('Migration v1 → v2 + banner', () => {
         ],
         activeFilterIds: ['legacy-1', 'legacy-2'],
       },
+    })
+
+    // PATCH spy MUST be registered AFTER mockBackend so LIFO grants it
+    // top priority. The handler delegates the actual response back to
+    // mockBackend's stateful echo via route.fallback().
+    await page.route('**/api/preferences', async (route, req) => {
+      if (req.method() === 'PATCH' || req.method() === 'PUT') {
+        try {
+          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
+          if (parsed.data) patches.push(parsed.data)
+        } catch {
+          // ignore
+        }
+      }
+      await route.fallback()
     })
 
     await page.goto('/')
@@ -127,17 +130,6 @@ test.describe('Migration v1 → v2 + banner', () => {
 
   test('v1 → v2 polarity → behavior promotion; groups unchanged; _migratedV2 sentinel', async ({ page, mockBackend }) => {
     const patches: Array<Record<string, unknown>> = []
-    await page.route('**/api/preferences', async (route, req) => {
-      if (req.method() === 'PATCH' || req.method() === 'PUT') {
-        try {
-          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
-          if (parsed.data) patches.push(parsed.data)
-        } catch {
-          // ignore
-        }
-      }
-      await route.fallback()
-    })
 
     // v1 shape: filters.nodes contain atoms with polarity (no behavior),
     // and a group. _migratedV1: true (so v1 already ran) but no
@@ -182,6 +174,19 @@ test.describe('Migration v1 → v2 + banner', () => {
       },
     })
 
+    // PATCH spy AFTER mockBackend (LIFO).
+    await page.route('**/api/preferences', async (route, req) => {
+      if (req.method() === 'PATCH' || req.method() === 'PUT') {
+        try {
+          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
+          if (parsed.data) patches.push(parsed.data)
+        } catch {
+          // ignore
+        }
+      }
+      await route.fallback()
+    })
+
     await page.goto('/')
 
     // Wait for v2 migration patch.
@@ -215,17 +220,6 @@ test.describe('Migration v1 → v2 + banner', () => {
 
   test('Migration is idempotent: no double-PATCH across mounts', async ({ page, mockBackend }) => {
     const patches: Array<Record<string, unknown>> = []
-    await page.route('**/api/preferences', async (route, req) => {
-      if (req.method() === 'PATCH' || req.method() === 'PUT') {
-        try {
-          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
-          if (parsed.data) patches.push(parsed.data)
-        } catch {
-          // ignore
-        }
-      }
-      await route.fallback()
-    })
 
     // Already-migrated state: both sentinels true.
     await mockBackend({
@@ -250,6 +244,19 @@ test.describe('Migration v1 → v2 + banner', () => {
           migrationBannerDismissed: true,
         },
       },
+    })
+
+    // PATCH spy AFTER mockBackend (LIFO).
+    await page.route('**/api/preferences', async (route, req) => {
+      if (req.method() === 'PATCH' || req.method() === 'PUT') {
+        try {
+          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
+          if (parsed.data) patches.push(parsed.data)
+        } catch {
+          // ignore
+        }
+      }
+      await route.fallback()
     })
 
     await page.goto('/')
@@ -304,17 +311,6 @@ test.describe('Migration v1 → v2 + banner', () => {
 
   test('Dismiss persists across reload (intercept PATCH then reload, banner gone)', async ({ page, mockBackend }) => {
     const patches: Array<Record<string, unknown>> = []
-    await page.route('**/api/preferences', async (route, req) => {
-      if (req.method() === 'PATCH' || req.method() === 'PUT') {
-        try {
-          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
-          if (parsed.data) patches.push(parsed.data)
-        } catch {
-          // ignore
-        }
-      }
-      await route.fallback()
-    })
 
     await mockBackend({
       conversations,
@@ -338,6 +334,19 @@ test.describe('Migration v1 → v2 + banner', () => {
           migrationBannerDismissed: false,
         },
       },
+    })
+
+    // PATCH spy AFTER mockBackend (LIFO).
+    await page.route('**/api/preferences', async (route, req) => {
+      if (req.method() === 'PATCH' || req.method() === 'PUT') {
+        try {
+          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
+          if (parsed.data) patches.push(parsed.data)
+        } catch {
+          // ignore
+        }
+      }
+      await route.fallback()
     })
 
     await page.goto('/')

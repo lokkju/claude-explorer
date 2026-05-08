@@ -22,24 +22,17 @@ const conversations = [
 ]
 
 async function pickerLocator(page: import('@playwright/test').Page) {
-  return page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+  // The migration banner exposes aria-label="Filter update", so a
+  // /filter/i label fallback would conflict with the picker's testid in
+  // strict-mode locators. The active-filter-select testid is the only
+  // contract-implicit testid sanctioned by the spec (UX.md naming the
+  // picker structurally). Use it directly.
+  return page.getByTestId('active-filter-select')
 }
 
 test.describe('Active-filter picker', () => {
   test('"All conversations" sentinel persists activeId: null via PATCH', async ({ page, mockBackend }) => {
     let lastPatchBody: Record<string, unknown> | null = null
-
-    await page.route('**/api/preferences', async (route, req) => {
-      if (req.method() === 'PATCH' || req.method() === 'PUT') {
-        try {
-          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
-          lastPatchBody = parsed.data ?? null
-        } catch {
-          lastPatchBody = null
-        }
-      }
-      await route.fallback()
-    })
 
     await mockBackend({
       conversations,
@@ -62,6 +55,21 @@ test.describe('Active-filter picker', () => {
           _migratedV2: true,
         },
       },
+    })
+
+    // Register the PATCH spy AFTER mockBackend so LIFO grants it
+    // top priority. The handler delegates the actual response back to
+    // mockBackend's stateful echo via route.fallback().
+    await page.route('**/api/preferences', async (route, req) => {
+      if (req.method() === 'PATCH' || req.method() === 'PUT') {
+        try {
+          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
+          lastPatchBody = parsed.data ?? null
+        } catch {
+          lastPatchBody = null
+        }
+      }
+      await route.fallback()
     })
 
     await page.goto('/')
@@ -130,17 +138,6 @@ test.describe('Active-filter picker', () => {
 
   test('Selection persists across reload (PATCH AND reload-displays-persisted)', async ({ page, mockBackend }) => {
     let lastPatchBody: Record<string, unknown> | null = null
-    await page.route('**/api/preferences', async (route, req) => {
-      if (req.method() === 'PATCH' || req.method() === 'PUT') {
-        try {
-          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
-          lastPatchBody = parsed.data ?? null
-        } catch {
-          lastPatchBody = null
-        }
-      }
-      await route.fallback()
-    })
 
     await mockBackend({
       conversations,
@@ -163,6 +160,19 @@ test.describe('Active-filter picker', () => {
           _migratedV2: true,
         },
       },
+    })
+
+    // PATCH spy AFTER mockBackend (LIFO).
+    await page.route('**/api/preferences', async (route, req) => {
+      if (req.method() === 'PATCH' || req.method() === 'PUT') {
+        try {
+          const parsed = JSON.parse(req.postData() ?? '{}') as { data?: Record<string, unknown> }
+          lastPatchBody = parsed.data ?? null
+        } catch {
+          lastPatchBody = null
+        }
+      }
+      await route.fallback()
     })
 
     await page.goto('/')
@@ -220,6 +230,11 @@ test.describe('Active-filter picker', () => {
 
     await page.goto('/')
     const picker = await pickerLocator(page)
+    // Wait for prefs hydration: the picker should reflect HideFoo BEFORE
+    // we snapshot beforeText, otherwise it would still show the
+    // placeholder "All conversations" and produce a misleading diff
+    // after the modal closes.
+    await expect(picker).toContainText(/HideFoo/i)
     const beforeText = await picker.innerText()
 
     await picker.click()

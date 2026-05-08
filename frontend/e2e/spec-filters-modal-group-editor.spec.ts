@@ -19,7 +19,10 @@ import { makeSummary } from './fixtures'
 const conversations = [makeSummary({ uuid: 'c-1', name: 'Foo' }), makeSummary({ uuid: 'c-2', name: 'Bar' })]
 
 async function openModal(page: import('@playwright/test').Page) {
-  const picker = page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+  // Pin to the contract-implicit testid; the migration banner exposes
+  // aria-label="Filter update" which would conflict with a /filter/i
+  // label fallback in strict-mode locators.
+  const picker = page.getByTestId('active-filter-select')
   await picker.click()
   const manageOpt = page.getByRole('option', { name: /manage filters/i }).or(
     page.getByRole('menuitem', { name: /manage filters/i }),
@@ -112,8 +115,10 @@ test.describe('Manage Filters modal — group editor', () => {
     const modal = await openModal(page)
     await modal.getByText(/GroupWithMember/).first().click()
 
-    // The chip itself must show the member's name.
-    await expect(modal.getByText(/ChipMember/)).toBeVisible()
+    // The chip itself must show the member's name. The name appears in
+    // the row, the chip, and the summary line, so use .first() to
+    // avoid strict-mode violations.
+    await expect(modal.getByText(/ChipMember/).first()).toBeVisible()
 
     // A removal affordance — typically aria-label "Remove ChipMember"
     // or similar. Loose match.

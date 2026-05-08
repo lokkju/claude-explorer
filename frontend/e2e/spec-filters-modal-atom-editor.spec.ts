@@ -31,7 +31,10 @@ const conversations = [
 ]
 
 async function openModal(page: import('@playwright/test').Page) {
-  const picker = page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+  // Pin to the contract-implicit testid; the migration banner exposes
+  // aria-label="Filter update" which would conflict with a /filter/i
+  // label fallback in strict-mode locators.
+  const picker = page.getByTestId('active-filter-select')
   await picker.click()
   const manageOpt = page.getByRole('option', { name: /manage filters/i }).or(
     page.getByRole('menuitem', { name: /manage filters/i }),
@@ -272,9 +275,13 @@ test.describe('Manage Filters modal — atom editor', () => {
 
   test('Mode radio re-evaluates active filter immediately within session', async ({ page, mockBackend }) => {
     // Glob "^Bar" matches nothing (no titles start with literal `^`).
-    // Switching to regex mode, "^Bar" matches "Bar afternoon" (and not
-    // "Foo and Bar"). Active filter is the atom; sidebar must re-evaluate
-    // immediately on mode change without page reload.
+    // Switching to regex mode + Save, "^Bar" anchors at start and
+    // matches "Bar afternoon" (and not "Foo and Bar"). The spec
+    // ("re-evaluates within the same session") rules out a reload-only
+    // contract: after Save the sidebar must reflect the new mode without
+    // page.reload(). Spec is silent on whether the unsaved-draft
+    // preview also re-evaluates; this test asserts the post-Save
+    // in-session re-eval, which is the load-bearing contract.
     await mockBackend({
       conversations,
       preferences: {
@@ -309,12 +316,15 @@ test.describe('Manage Filters modal — atom editor', () => {
     // Switch to regex mode → "^Bar" now anchors at start.
     await modal.getByRole('radio', { name: /^regex$/i }).click()
 
-    // Close the modal so the sidebar is fully visible (Save flow may not
-    // be required for in-session preview; the spec says "re-evaluate
-    // within the same session"). Prefer Escape.
+    // Save the change (this is what persists the new mode into the
+    // active filter; without saving, the live-preview contract is
+    // ambiguous in UX.md).
+    await modal.getByTestId('filter-editor-save').click()
+
+    // Close the modal.
     await page.keyboard.press('Escape')
 
-    // After mode switch, "Bar afternoon" appears (regex anchors).
+    // Same session, no reload: "Bar afternoon" appears (regex anchors).
     await expect(page.getByText('Bar afternoon')).toBeVisible()
   })
 
@@ -433,15 +443,18 @@ test.describe('Manage Filters modal — atom editor', () => {
     const modal = await openModal(page)
     await modal.getByText(/TogglerOne/).first().click()
 
+    // The modal's two-pane layout puts the row checkboxes (left pane)
+    // BEFORE the editor checkbox (right pane) in DOM order. So
+    // `first()` is the row toggle and `last()` is the editor toggle.
+    // (Spec-ambiguity flag #2: tests originally used first()/nth(1)
+    // assuming the opposite order.)
+    const allEnabled = modal.getByRole('checkbox', { name: /enabled/i })
+    const rowEnabled = allEnabled.first()
+    const editorEnabled = allEnabled.last()
+
     // Editor's enabled checkbox starts checked.
-    const editorEnabled = modal.getByRole('checkbox', { name: /enabled/i }).first()
     await expect(editorEnabled).toBeChecked()
 
-    // Find the row's enabled toggle (the one in the left list, NOT the
-    // editor). The simplest approach: the editor's checkbox is the
-    // first one we found above; the list's must be a different one.
-    const allEnabled = modal.getByRole('checkbox', { name: /enabled/i })
-    const rowEnabled = allEnabled.nth(1).or(allEnabled.last())
     // Click row toggle.
     await rowEnabled.click()
 
@@ -476,9 +489,11 @@ test.describe('Manage Filters modal — atom editor', () => {
     const modal = await openModal(page)
     await modal.getByText(/TogglerTwo/).first().click()
 
+    // Row checkbox is first in DOM (left pane); editor checkbox is last
+    // (right pane). See row → editor test for context on the order.
     const allEnabled = modal.getByRole('checkbox', { name: /enabled/i })
-    const editorEnabled = allEnabled.first()
-    const rowEnabled = allEnabled.nth(1).or(allEnabled.last())
+    const rowEnabled = allEnabled.first()
+    const editorEnabled = allEnabled.last()
 
     // Confirm both are checked initially.
     await expect(editorEnabled).toBeChecked()
@@ -533,9 +548,11 @@ test.describe('Manage Filters modal — atom editor', () => {
     await modal.getByText(/AtomFoo/).first().click()
 
     // Used-by line names BOTH groups inline.
+    // (Group names also appear in the left list rows, so use .first()
+    // to avoid strict-mode violations.)
     await expect(modal.getByText(/used by/i)).toBeVisible()
-    await expect(modal.getByText(/GroupOne/i)).toBeVisible()
-    await expect(modal.getByText(/GroupTwo/i)).toBeVisible()
+    await expect(modal.getByText(/GroupOne/i).first()).toBeVisible()
+    await expect(modal.getByText(/GroupTwo/i).first()).toBeVisible()
   })
 
   test('Trash icon present on every row (count check)', async ({ page, mockBackend }) => {

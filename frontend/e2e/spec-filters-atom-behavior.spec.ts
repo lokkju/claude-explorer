@@ -25,7 +25,10 @@ const conversations = [
 ]
 
 async function pickFilter(page: import('@playwright/test').Page, name: string | RegExp) {
-  const picker = page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+  // Pin to the contract-implicit testid; the migration banner exposes
+  // aria-label="Filter update" which would conflict with a /filter/i
+  // label fallback in strict-mode locators.
+  const picker = page.getByTestId('active-filter-select')
   await picker.click()
   const opt = page.getByRole('option', { name }).first()
   await expect(opt).toBeVisible()
@@ -249,7 +252,10 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
     })
     await page.goto('/')
 
-    const picker = page.getByTestId('active-filter-select').or(page.getByLabel(/filter/i).first())
+    // Pin to the contract-implicit testid; the migration banner exposes
+    // aria-label="Filter update" which would conflict with a /filter/i
+    // label fallback in strict-mode locators.
+    const picker = page.getByTestId('active-filter-select')
     await picker.click()
 
     // Enabled filter appears
