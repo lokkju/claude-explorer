@@ -202,6 +202,19 @@ apt-get install libpango-1.0-0 libpangocairo-1.0-0 libcairo2
 
 See: https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation
 
+### macOS DYLD bootstrap (tests + dev server)
+
+macOS Sonoma+ strips `DYLD_*` env vars from subprocess invocations
+(SIP), so prefixing `uv run pytest` with `DYLD_FALLBACK_LIBRARY_PATH=...`
+silently no-ops. The tests bootstrap this from `backend/tests/conftest.py`
+at import time (sets `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`
+before WeasyPrint imports), so `uv run pytest backend/tests` Just Works
+with no `--ignore` flags or env-var prefixes.
+
+For the live dev server (`claude-explorer serve` or
+`uvicorn backend.main:app`), set `DYLD_LIBRARY_PATH` directly on the
+command line as shown above — the server doesn't go through conftest.
+
 ## Code Style
 
 - Python: Follow PEP 8, use type hints

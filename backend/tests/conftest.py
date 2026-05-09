@@ -27,10 +27,41 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 import tempfile
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
+
+
+def _bootstrap_macos_dyld_for_weasyprint() -> None:
+    """On macOS, ensure WeasyPrint's CFFI bindings can locate Homebrew-installed
+    GLib/Pango/Cairo even though SIP strips DYLD_* env vars from subprocess
+    invocations (e.g. ``uv run pytest``).
+
+    Setting ``DYLD_FALLBACK_LIBRARY_PATH`` from inside Python at import time
+    works because :func:`ctypes.util.find_library` on macOS spawns subprocesses
+    that inherit the updated environment. The PDF-export tests rely on this.
+
+    No-op on non-Darwin or when Homebrew lib dir doesn't exist.
+    """
+    if sys.platform != "darwin":
+        return
+    for brew_lib in ("/opt/homebrew/lib", "/usr/local/lib"):
+        if not os.path.isdir(brew_lib):
+            continue
+        existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+        if brew_lib in existing.split(":"):
+            return
+        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = (
+            f"{brew_lib}:{existing}" if existing else brew_lib
+        )
+        return
+
+
+_bootstrap_macos_dyld_for_weasyprint()
+
 
 import httpx
 import pytest
@@ -39,6 +70,36 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport
 
 from backend.main import app
+
+
+def _weasyprint_available() -> bool:
+    """Detect whether WeasyPrint can import without OSError (i.e., its native
+    Pango/Cairo/GLib libs are loadable). Used by the PDF-test auto-skip
+    fixture below."""
+    try:
+        import weasyprint  # noqa: F401
+        return True
+    except (ImportError, OSError):
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _skip_pdf_tests_when_weasyprint_unavailable(request):
+    """Skip PDF-export tests with a clear, actionable message instead of a
+    cryptic CFFI ``OSError`` when WeasyPrint native libs (libgobject, libpango,
+    etc.) aren't loadable.
+
+    Trigger condition: test file or test name contains ``pdf``. Skip message
+    points at CLAUDE.md "PDF Export Dependencies" so the dev knows what to
+    install.
+    """
+    if "pdf" not in request.node.nodeid.lower():
+        return
+    if not _weasyprint_available():
+        pytest.skip(
+            "WeasyPrint native libs not loadable. "
+            "On macOS: brew install pango cairo libffi (see CLAUDE.md PDF Export Dependencies)."
+        )
 
 
 @pytest.fixture
