@@ -30,20 +30,37 @@ const detail = makeDetail(summary, [
 ])
 
 test.describe('Markdown bundle Settings persistence (Issue #4 legacy controls)', () => {
+  // V1 polish: this test mutates a shared preferences blob via PATCH
+  // /api/preferences. Under parallel workers other preference-touching
+  // tests (filter migration, sidebar dim, etc.) can race the reload.
+  // Force serial to absorb the cross-test bleed; --repeat-each=3 with
+  // workers=2 was 0/3 green before this directive.
+  test.describe.configure({ mode: 'serial' })
+
   test('Settings choices persist across reloads', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [ME]: detail } })
 
     await page.goto('/settings')
+    // Wait for the settings page to fully mount (the toggle exists +
+    // is enabled) before interacting. Under parallel load, jumping
+    // straight into .check() could race React hydration.
+    const toggleLocator = page.getByTestId('settings-markdown-bundle-images')
+    await expect(toggleLocator).toBeVisible()
+    await expect(toggleLocator).toBeEnabled()
 
     // Toggle each control and wait for the PATCH /api/preferences round-trip
     // AND the React-state settle before reloading. Without these waits the
     // reload races the persistence layer and reads back stale values.
+    // Use .click() rather than .check() because under parallel-worker load
+    // .check()'s "did the state change" verification can race React's
+    // re-render — .click() doesn't pre-verify, and we assert the state
+    // explicitly after waitForResponse.
     const togglePatch = page.waitForResponse(
       (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
     )
-    await page.getByTestId('settings-markdown-bundle-images').check()
+    await toggleLocator.click()
     await togglePatch
-    await expect(page.getByTestId('settings-markdown-bundle-images')).toBeChecked()
+    await expect(toggleLocator).toBeChecked()
 
     const radioPatch = page.waitForResponse(
       (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
