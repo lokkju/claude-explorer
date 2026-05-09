@@ -65,8 +65,11 @@ export function ConnectionStatus() {
       return
     }
 
-    // Schedule next retry with exponential backoff
-    const delay = Math.min(1000 * Math.pow(2, attempt), 10000)
+    // Schedule next retry with exponential backoff. First retry waits
+    // 4s (was 2s) so a healthy backend's `--reload` cold-start (5-10s)
+    // has time to come up before the user sees a connection dialog.
+    // Subsequent retries: 8s, 10s (cap), 10s, 10s — total 42s.
+    const delay = Math.min(2000 * Math.pow(2, attempt), 10000)
     retryTimeoutRef.current = setTimeout(() => {
       attemptConnection(attempt + 1)
     }, delay)
@@ -132,8 +135,10 @@ export function ConnectionStatus() {
     }
   }
 
-  // Show dialog during connecting (with retries) or when disconnected
-  const isDialogOpen = showDialog || (state === 'connecting' && retryCount > 0)
+  // Show dialog only after the SECOND retry attempt (or terminal failure).
+  // A one-off transient (Wi-Fi blip, single dropped request) shouldn't
+  // flash the dialog — wait until we're truly struggling.
+  const isDialogOpen = showDialog || (state === 'connecting' && retryCount >= 2)
 
   return (
     <Dialog open={isDialogOpen} onOpenChange={(open) => {
@@ -178,7 +183,12 @@ export function ConnectionStatus() {
                   </pre>
                 </>
               )}
-              {lastError && (
+              {/* Only surface lastError when we've stopped trying. While
+                  state === 'connecting', the spinner already conveys
+                  "we're attempting" — the red "Last error: …" line on
+                  top of an active retry contradicts the spinner and
+                  reads as failure when it's actually just retrying. */}
+              {lastError && state !== 'connecting' && (
                 <p className="text-xs text-red-500">
                   Last error: {lastError}
                 </p>

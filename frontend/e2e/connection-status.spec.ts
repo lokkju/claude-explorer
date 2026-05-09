@@ -8,6 +8,11 @@ import { test, expect } from './fixtures';
 // backend on :8000. With mockBackend installed first, the per-test
 // `/api` route can use `route.fallback()` to delegate to the fixture
 // mocks once `blockRequests=false`.
+//
+// V1 polish (2026-05-09): the dialog now opens only once retryCount≥2
+// (suppresses dialog flash on a single transient blip) and the first
+// retry waits 4s instead of 2s (lets a healthy backend's --reload
+// cold-start finish). Schedule: 4s, 8s, 10s, 10s, 10s = 42s to terminal.
 
 test.describe('Connection Status', () => {
   test('shows connecting dialog when backend is unavailable', async ({ page }) => {
@@ -18,8 +23,9 @@ test.describe('Connection Status', () => {
 
     await page.goto('/');
 
-    // Should show the connecting dialog
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+    // Dialog opens at retry 2 (4s + initial check). 15s timeout > the 12s
+    // worst case (4s first retry + check timeout slack).
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Connecting to Backend')).toBeVisible();
     await expect(page.getByText(/Attempt \d+ of \d+/)).toBeVisible();
   });
@@ -32,14 +38,15 @@ test.describe('Connection Status', () => {
 
     await page.goto('/');
 
-    // Wait for dialog
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+    // Wait for dialog (opens at retry 2 — see V1 polish note above).
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
 
-    // Check initial attempt
-    await expect(page.getByText('Attempt 1 of 5')).toBeVisible();
+    // Dialog opens showing "Attempt 2" (the first attempt visible to user
+    // under the V1 dialog-suppression policy).
+    await expect(page.getByText('Attempt 2 of 5')).toBeVisible();
 
-    // Wait for retry and check increment (exponential backoff: 1s, 2s, 4s...)
-    await expect(page.getByText('Attempt 2 of 5')).toBeVisible({ timeout: 3000 });
+    // Wait for retry 3 (8s after retry 2).
+    await expect(page.getByText('Attempt 3 of 5')).toBeVisible({ timeout: 10000 });
   });
 
   test('Retry Now button triggers immediate retry', async ({ page }) => {
@@ -53,8 +60,8 @@ test.describe('Connection Status', () => {
 
     await page.goto('/');
 
-    // Wait for dialog
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+    // Wait for dialog (opens at retry 2 — V1 polish).
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
 
     // Get current request count
     const initialCount = requestCount;
@@ -75,12 +82,12 @@ test.describe('Connection Status', () => {
 
     await page.goto('/');
 
-    // Wait for dialog
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+    // Wait for dialog (opens at retry 2 — V1 polish).
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
 
-    // Wait for all retries to complete (5 attempts with exponential backoff)
-    // Max wait: 1s + 2s + 4s + 8s + 10s = 25s, but we use timeout of 35s
-    await expect(page.getByText('Connection Failed')).toBeVisible({ timeout: 35000 });
+    // Wait for all 5 retries to exhaust. Schedule: 4 + 8 + 10 + 10 + 10 = 42s.
+    // Plus initial check + 5x 5s API timeout slack. Use 60s timeout.
+    await expect(page.getByText('Connection Failed')).toBeVisible({ timeout: 60000 });
 
     // Should show the failure message
     await expect(page.getByText(/Unable to connect.*after 5 attempts/)).toBeVisible();
@@ -101,15 +108,16 @@ test.describe('Connection Status', () => {
 
     await page.goto('/');
 
-    // Wait for Connection Failed
-    await expect(page.getByText('Connection Failed')).toBeVisible({ timeout: 35000 });
+    // Wait for Connection Failed (V1 polish: 60s for 4+8+10+10+10 = 42s schedule).
+    await expect(page.getByText('Connection Failed')).toBeVisible({ timeout: 60000 });
 
-    // Click Try Again
+    // Click Try Again. handleReconnect() clears showDialog, so the
+    // dialog closes briefly and re-opens when retryCount reaches 2 again
+    // (V1 polish: dialog suppressed until retry≥2). Wait up to 15s for
+    // the re-open (initial check + 4s first retry).
     await page.getByRole('button', { name: 'Try Again' }).click();
-
-    // Should restart with "Connecting to Backend" and Attempt 1
-    await expect(page.getByText('Connecting to Backend')).toBeVisible({ timeout: 3000 });
-    await expect(page.getByText('Attempt 1 of 5')).toBeVisible();
+    await expect(page.getByText('Connecting to Backend')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/Attempt [23] of 5/)).toBeVisible();
   });
 
   test('Dismiss button closes the dialog', async ({ page }) => {
@@ -120,8 +128,8 @@ test.describe('Connection Status', () => {
 
     await page.goto('/');
 
-    // Wait for Connection Failed
-    await expect(page.getByText('Connection Failed')).toBeVisible({ timeout: 35000 });
+    // Wait for Connection Failed (V1 polish: 60s for the 42s retry schedule).
+    await expect(page.getByText('Connection Failed')).toBeVisible({ timeout: 60000 });
 
     // Click Dismiss
     await page.getByRole('button', { name: 'Dismiss' }).click();
@@ -151,8 +159,8 @@ test.describe('Connection Status', () => {
 
     await page.goto('/');
 
-    // Wait for dialog to appear
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+    // Wait for dialog to appear (V1 polish: opens at retry 2, 4s+ wait).
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Connecting to Backend')).toBeVisible();
 
     // Unblock requests (simulate backend coming up)
@@ -176,11 +184,78 @@ test.describe('Connection Status', () => {
 
     await page.goto('/');
 
-    // Wait for dialog
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
+    // Wait for dialog (V1 polish: opens at retry 2, 4s+ wait).
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
 
     // Should show spinning refresh icon (has animate-spin class)
     const spinningIcon = page.locator('.animate-spin');
     await expect(spinningIcon).toBeVisible();
+  });
+
+  // V1 polish (2026-05-09): the three new behaviors get explicit
+  // regression tests so a future refactor can't quietly drop them.
+
+  test('does NOT show "Last error" while still connecting (V1 polish)', async ({ page }) => {
+    // Block API to force `connecting` state with a recorded lastError.
+    await page.route('**/api/**', (route) => {
+      route.abort('connectionrefused');
+    });
+
+    await page.goto('/');
+
+    // Dialog opens at retry 2 — by then lastError is set ("Failed to fetch")
+    // but we should NOT render the red "Last error: …" line; the spinner
+    // already conveys "we're trying", so a red error line on top of an
+    // active retry is the user's UGH.
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Connecting to Backend')).toBeVisible();
+    await expect(page.getByText(/Last error/)).toHaveCount(0);
+  });
+
+  test('first retry waits ~4 seconds (V1 polish)', async ({ page }) => {
+    const requestTimes: number[] = [];
+    await page.route('**/api/config', (route) => {
+      requestTimes.push(Date.now());
+      route.abort('connectionrefused');
+    });
+
+    await page.goto('/');
+
+    // React StrictMode in the Vite dev build double-mounts the
+    // ConnectionStatus, producing two near-simultaneous initial fetches.
+    // Wait until we have at least 4 timestamps (≥2 from the doubled
+    // initial mount + ≥2 from the first scheduled retry round) so we
+    // can measure the actual retry-delay gap regardless.
+    await expect.poll(() => requestTimes.length, { timeout: 15000 }).toBeGreaterThanOrEqual(3);
+
+    // Find the largest gap between consecutive timestamps. Under the
+    // 2s baseline this is ~2000ms; under the 4s V1-polish schedule it
+    // should be ~4000ms. Reject sub-3000ms as a regression.
+    const gaps = requestTimes.slice(1).map((t, i) => t - requestTimes[i]);
+    const maxGap = Math.max(...gaps);
+    expect(maxGap).toBeGreaterThanOrEqual(3000);
+  });
+
+  test('does NOT flash dialog after a single transient (V1 polish)', async ({ page, mockBackend }) => {
+    // mockBackend installed first so the app loads.
+    await mockBackend({});
+
+    let failuresRemaining = 1;
+    await page.route('**/api/config', async (route) => {
+      if (failuresRemaining > 0) {
+        failuresRemaining -= 1;
+        await route.abort('connectionrefused');
+        return;
+      }
+      await route.fallback();
+    });
+
+    await page.goto('/');
+
+    // The first /api/config 404s, but the second succeeds before retry 2
+    // would open the dialog. The dialog must NEVER become visible.
+    // Wait 6s (longer than the 4s first-retry) and assert no dialog.
+    await page.waitForTimeout(6000);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 });
