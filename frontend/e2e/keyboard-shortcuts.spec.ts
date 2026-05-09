@@ -174,11 +174,9 @@ test.describe('Keyboard — Cmd+G match navigation (B10, B12)', () => {
     const counter = page.locator('text=/of\\s+2\\s+matches/')
     await expect(counter).toBeVisible({ timeout: 5000 })
 
-    // Initial state shows "— of 2 matches" (no active match yet).
-    await expect(page.locator('text=/—\\s+of\\s+2\\s+matches/')).toBeVisible()
-
-    // Cmd+G → first match: counter says "1 of 2".
-    await page.keyboard.press('Meta+g')
+    // V1 polish (2026-05-09): auto-focus promotes activeMatchIndex to 0
+    // once results land, so the counter goes straight to "1 of 2"
+    // (no longer "— of 2"). The Cmd+G/Cmd+Shift+G cycle still works.
     await expect(page.locator('text=/1\\s+of\\s+2\\s+matches/')).toBeVisible()
 
     // Cmd+G → second match: counter says "2 of 2".
@@ -495,12 +493,16 @@ test.describe('Keyboard — data-allow-shortcuts (B18)', () => {
     await searchInput.fill(SEARCH_QUERY)
     await expect(page.locator('text=/of\\s+2\\s+matches/')).toBeVisible({ timeout: 5000 })
 
-    // Cmd+G fires from inside the input → match counter advances.
-    await page.keyboard.press('Meta+g')
+    // V1 polish (2026-05-09): auto-focus already promoted to "1 of 2".
     await expect(page.locator('text=/1\\s+of\\s+2\\s+matches/')).toBeVisible()
 
-    await page.keyboard.press('Meta+Shift+g')
+    // Cmd+G fires from inside the input → advances to 2.
+    await page.keyboard.press('Meta+g')
     await expect(page.locator('text=/2\\s+of\\s+2\\s+matches/')).toBeVisible()
+
+    // Cmd+Shift+G goes back to 1.
+    await page.keyboard.press('Meta+Shift+g')
+    await expect(page.locator('text=/1\\s+of\\s+2\\s+matches/')).toBeVisible()
 
     // Manual finding 2026-05-04: Esc closes the panel immediately (the
     // earlier "clear-then-close" two-step was surprising; the user
