@@ -128,12 +128,17 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
     const live = page.locator('[data-testid="search-match-aria-live"]')
     await expect(live).toHaveAttribute('aria-live', 'polite')
 
-    const isMac = process.platform === 'darwin'
-    await page.keyboard.press(isMac ? 'Meta+g' : 'Control+g')
+    // V1 polish: auto-focus promotes activeMatchIndex to 0 once results
+    // land, so the live region already shows "Match 1 of 3" without any
+    // Cmd+G press. Verify that, then advance to match 2 and 3.
     await expect(live).toContainText(/Match\s+1\s+of\s+3/i, { timeout: 3000 })
 
+    const isMac = process.platform === 'darwin'
     await page.keyboard.press(isMac ? 'Meta+g' : 'Control+g')
     await expect(live).toContainText(/Match\s+2\s+of\s+3/i, { timeout: 3000 })
+
+    await page.keyboard.press(isMac ? 'Meta+g' : 'Control+g')
+    await expect(live).toContainText(/Match\s+3\s+of\s+3/i, { timeout: 3000 })
   })
 
   test('Enter on the active match focuses the message and keeps panel open', async ({ page, mockBackend }) => {
@@ -142,9 +147,9 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
     await page.goto(`/conversations/${C}`)
     await openPanelAndType(page, 'needle')
 
-    const isMac = process.platform === 'darwin'
-    // Step to first match so there's an active card.
-    await page.keyboard.press(isMac ? 'Meta+g' : 'Control+g')
+    // V1 polish: auto-focus already promoted activeMatchIndex to 0 once
+    // results landed, so there's already an active card — no Cmd+G
+    // needed before Enter.
 
     // Enter on the input commits "open active match" → focuses the message.
     await page.keyboard.press('Enter')

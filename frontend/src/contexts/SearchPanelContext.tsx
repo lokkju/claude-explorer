@@ -248,6 +248,30 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     setActiveMatchIndexState(-1)
   }, [query])
 
+  // V1 polish: auto-focus the first match when results land for a fresh
+  // query. Without this, the user types "needle", sees results in the
+  // sidebar, but the conversation panel doesn't move — they have to
+  // press Cmd+G or click a card to bootstrap navigation.
+  //
+  // Each gate is load-bearing:
+  //   * !isSearching — wait for debounce + network to settle so we
+  //     don't jump mid-keystroke (debounce in useSearch is 200ms,
+  //     non-zero — verified before shipping).
+  //   * flatMatches.length > 0 — don't waste a re-render on empty
+  //     results.
+  //   * activeMatchIndex === -1 — auto-promote ONCE per stable-query
+  //     cycle; never overwrite the user's Cmd+G navigation when results
+  //     refresh later (e.g., a new conversation arrives).
+  //
+  // The existing SearchPanel.tsx:82-93 effect picks up this index
+  // change and calls navigateToMatch, which scrolls + ring-highlights
+  // (navigateToMatch.ts:46-54) for 2s.
+  useEffect(() => {
+    if (!isSearching && flatMatches.length > 0 && activeMatchIndex === -1) {
+      setActiveMatchIndexState(0)
+    }
+  }, [isSearching, flatMatches.length, activeMatchIndex])
+
   const open = useCallback(() => {
     setIsOpenPref(true)
   }, [setIsOpenPref])
