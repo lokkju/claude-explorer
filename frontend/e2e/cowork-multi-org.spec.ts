@@ -109,9 +109,12 @@ async function mockBackend(
     });
   });
 
-  // Bookmarks endpoint sometimes called on initial load.
+  // Bookmarks endpoint is called on initial load (BookmarkContext).
+  // The api.listBookmarks expects {bookmarks: Bookmark[]} envelope —
+  // returning a bare [] makes "bookmarks is not iterable" throw and
+  // crashes the entire React tree (workspace selector never mounts).
   await page.route('**/api/bookmarks**', (route: Route) => {
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify([]) });
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ bookmarks: [] }) });
   });
 }
 
