@@ -47,15 +47,19 @@ test.describe('Theme Functionality', () => {
     // Find the theme toggle button (has Sun, Moon, or Monitor icon)
     const themeButton = page.locator('button[title*="Theme:"]')
 
-    // Get initial state
+    // Hydration gate: wait for SettingsContext to settle the title before
+    // reading it. Single-shot getAttribute() doesn't auto-wait, and the
+    // initialTitle could be null mid-hydration (known flake — see
+    // PLANS/2026.05.06-MANUAL-TEST-PLAN.md §13).
+    await expect(themeButton).toHaveAttribute('title', /light|dark|system/i)
     const initialTitle = await themeButton.getAttribute('title')
 
     // Click to cycle
     await themeButton.click()
 
-    // Should have changed
-    const newTitle = await themeButton.getAttribute('title')
-    expect(newTitle).not.toBe(initialTitle)
+    // Use auto-retrying assertion so a single batched render frame doesn't
+    // race the post-click read.
+    await expect(themeButton).not.toHaveAttribute('title', initialTitle ?? '')
   })
 
   // B8 — verify the cycle is Light → Dark → System and back to Light.

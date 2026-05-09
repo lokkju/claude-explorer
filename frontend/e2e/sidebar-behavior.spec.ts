@@ -157,14 +157,20 @@ test.describe('Sidebar — project grouping is collapsible (B2)', () => {
     await page.getByRole('combobox').filter({ hasText: /All Conversations|Claude Desktop|Claude Code/ }).first().click()
     await page.getByRole('option', { name: 'Claude Code' }).click()
 
-    // Tick the "Group by project" checkbox (FolderTree icon, title attr).
-    const groupToggle = page.getByRole('checkbox').filter({ hasText: '' }).first()
-    // The checkbox is inside a <label title="Group sessions by project">
-    const groupLabel = page.locator('label[title*="Group sessions by project"]')
-    await groupLabel.click()
+    // Tick the "Group by project" checkbox by clicking its label (the
+    // checkbox is nested inside a <label title="..."> with an icon, no
+    // visible text). We click the label rather than the checkbox itself
+    // because the icon-only label means the click target needs to fall on
+    // the wrapper for the React change-handler to fire reliably.
+    // (The previous .first() locator was a known flake — see
+    // PLANS/2026.05.06-MANUAL-TEST-PLAN.md §13.)
+    await page.locator('label[title="Group sessions by project"]').click()
 
-    // Group header appears (project name + "(2)").
-    const groupHeader = page.getByRole('button', { name: /claude-desktop-message-exporter/ })
+    // Group header appears (project name + "(2)" count). Tighten the regex
+    // to require the trailing count so the conversation cards (which also
+    // include the project path in their accessible names) don't collide
+    // with the group <button>.
+    const groupHeader = page.getByRole('button', { name: /claude-desktop-message-exporter\s*\(2\)/ })
     await expect(groupHeader).toBeVisible()
     await expect(page.getByText(cc.name)).toBeVisible()
     await expect(page.getByText(ccSecondInSameProject.name)).toBeVisible()
@@ -178,9 +184,6 @@ test.describe('Sidebar — project grouping is collapsible (B2)', () => {
     await groupHeader.click()
     await expect(page.getByText(cc.name)).toBeVisible()
     await expect(page.getByText(ccSecondInSameProject.name)).toBeVisible()
-
-    // Silence unused-var lint.
-    void groupToggle
   })
 })
 

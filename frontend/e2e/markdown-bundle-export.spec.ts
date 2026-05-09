@@ -34,8 +34,26 @@ test.describe('Markdown bundle Settings persistence (Issue #4 legacy controls)',
     await mockBackend({ conversations: [summary], details: { [ME]: detail } })
 
     await page.goto('/settings')
+
+    // Toggle each control and wait for the PATCH /api/preferences round-trip
+    // AND the React-state settle before reloading. Without these waits the
+    // reload races the persistence layer and reads back stale values.
+    const togglePatch = page.waitForResponse(
+      (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
+    )
     await page.getByTestId('settings-markdown-bundle-images').check()
-    await page.getByLabel('Obsidian').check()
+    await togglePatch
+    await expect(page.getByTestId('settings-markdown-bundle-images')).toBeChecked()
+
+    const radioPatch = page.waitForResponse(
+      (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
+    )
+    // Radix UI radios are buttons with role="radio"+aria-checked, not native
+    // <input type="radio">. Playwright's .check() looks for `checked`
+    // property which Radix doesn't expose; .click() works regardless.
+    await page.getByLabel('Obsidian').click()
+    await radioPatch
+    await expect(page.getByLabel('Obsidian')).toBeChecked()
 
     // Reload the settings page; the toggle + radio must still be set.
     await page.reload()

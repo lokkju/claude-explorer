@@ -270,6 +270,7 @@ export function Sidebar({ className }: SidebarProps) {
               <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Group sessions by project">
                 <input
                   type="checkbox"
+                  aria-label="Group sessions by project"
                   checked={groupByProject}
                   onChange={(e) => setGroupByProject(e.target.checked)}
                   className="h-3 w-3 rounded border-zinc-300"
