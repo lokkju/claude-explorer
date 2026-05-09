@@ -96,7 +96,36 @@ def _proxy(org_id: str, file_uuid: str, variant: str) -> Response:
         raise HTTPException(status_code=502, detail=f"upstream fetch failed: {exc}") from exc
 
     if upstream.status_code == 404:
-        raise HTTPException(status_code=404, detail="image not found upstream")
+        # claude.ai garbage-collects file storage over time. Before
+        # surfacing the 404 (and breaking Markdown / PDF exporters that
+        # hit this same URL — see module docstring lines 15-18), look
+        # for a local copy the bulk fetcher cached at
+        # <attachments_root>/<conv>/<file>/<variant>.<ext>. Mirrors the
+        # /api/cc-image fallback at lines 222-237.
+        try:
+            cached = [
+                m for m in _attachments_root().glob(f"*/{file_uuid}/{variant}.*")
+                if m.is_file()  # exclude any stray directory matching the pattern
+            ]
+        except OSError:
+            cached = []
+        if cached:
+            logger.info(
+                "proxy_local_fallback",
+                extra={
+                    "file_uuid": file_uuid,
+                    "variant": variant,
+                    "path": str(cached[0]),
+                },
+            )
+            media_type = mimetypes.guess_type(str(cached[0]))[0] or "application/octet-stream"
+            return FileResponse(cached[0], media_type=media_type, headers={
+                "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+            })
+        raise HTTPException(
+            status_code=404,
+            detail="image not found upstream and no local cache",
+        )
     if upstream.status_code in (401, 403):
         raise HTTPException(
             status_code=upstream.status_code,
