@@ -122,6 +122,31 @@ claude-explorer serve --port 9000
 claude-explorer serve --reload
 ```
 
+#### `claude-explorer install-watcher` (macOS — strongly recommended)
+
+Install a launchd job that runs the CC image-cache watcher
+continuously, independent of `claude-explorer serve`. **Without this,
+the watcher only runs while the dev server is up — Claude Code can
+rotate images off disk during downtime, causing permanent data loss.**
+
+```bash
+# Install (writes ~/Library/LaunchAgents/com.claude-explorer.cc-watcher.plist
+# and `launchctl load`s it; runs at login, restarts on crash):
+uv run claude-explorer install-watcher
+
+# Verify it's running:
+launchctl list | grep claude-explorer
+
+# Logs:
+tail -f ~/Library/Logs/claude-explorer-cc-watcher.{out,err}
+
+# Customize scan interval (default 5s):
+uv run claude-explorer install-watcher --interval 10
+
+# Uninstall:
+uv run claude-explorer install-watcher --uninstall
+```
+
 #### Web UI Refresh button (Build-9)
 
 The sidebar **Refresh** button owns the full pipeline — capture + fetch — so the user never has to drop to the CLI to re-capture credentials.

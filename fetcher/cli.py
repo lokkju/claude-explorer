@@ -390,5 +390,161 @@ def warm_cc_cache(limit: int | None) -> None:
         click.echo(f"  sessions failed to read: {sessions_failed}", err=True)
 
 
+_LAUNCHD_LABEL = "com.claude-explorer.cc-watcher"
+_LAUNCHD_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_LABEL}.plist"
+
+
+def _build_launchd_plist(python_bin: str, scan_interval: float) -> str:
+    """Render a macOS launchd plist that runs the CC image watcher
+    continuously, independent of `claude-explorer serve`.
+
+    The plist runs a tiny inline script that loops `scan_once()` —
+    no FastAPI machinery, just the watcher logic. ``RunAtLoad`` plus
+    ``KeepAlive`` means launchd starts it at login and restarts on
+    crash. Logs land in `~/Library/Logs/claude-explorer-cc-watcher.{out,err}`.
+    """
+    log_dir = Path.home() / "Library" / "Logs"
+    inline_script = (
+        "import time\n"
+        "from backend.cc_image_watcher import scan_once\n"
+        f"interval = {scan_interval}\n"
+        "while True:\n"
+        "    try:\n"
+        "        scan_once()\n"
+        "    except Exception as e:\n"
+        "        print('scan failed:', e, flush=True)\n"
+        "    time.sleep(interval)\n"
+    )
+    program_args = [python_bin, "-c", inline_script]
+    args_xml = "\n        ".join(f"<string>{_xml_escape(a)}</string>" for a in program_args)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '    <key>Label</key>\n'
+        f'    <string>{_LAUNCHD_LABEL}</string>\n'
+        '    <key>ProgramArguments</key>\n'
+        '    <array>\n'
+        f'        {args_xml}\n'
+        '    </array>\n'
+        '    <key>RunAtLoad</key>\n'
+        '    <true/>\n'
+        '    <key>KeepAlive</key>\n'
+        '    <true/>\n'
+        '    <key>StandardOutPath</key>\n'
+        f'    <string>{log_dir}/claude-explorer-cc-watcher.out</string>\n'
+        '    <key>StandardErrorPath</key>\n'
+        f'    <string>{log_dir}/claude-explorer-cc-watcher.err</string>\n'
+        '    <key>WorkingDirectory</key>\n'
+        f'    <string>{Path.cwd()}</string>\n'
+        '</dict>\n'
+        '</plist>\n'
+    )
+
+
+def _xml_escape(s: str) -> str:
+    return (s.replace('&', '&amp;')
+             .replace('<', '&lt;')
+             .replace('>', '&gt;')
+             .replace('"', '&quot;'))
+
+
+@main.command("install-watcher")
+@click.option(
+    "--python",
+    "python_bin",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Python interpreter to use (default: this venv's python).",
+)
+@click.option(
+    "--interval",
+    type=float,
+    default=5.0,
+    help="Scan interval in seconds (default: 5; lower = lower latency, higher CPU).",
+)
+@click.option(
+    "--uninstall",
+    is_flag=True,
+    help="Unload and remove the launchd plist instead of installing.",
+)
+def install_watcher(python_bin: str | None, interval: float, uninstall: bool) -> None:
+    """Install (or uninstall) the macOS launchd job that runs the CC
+    image-cache watcher continuously, independent of `claude-explorer
+    serve`.
+
+    Why: without this, the watcher only runs while the dev server is
+    up. Quitting the server (or never starting it) leaves Claude Code
+    free to rotate images off disk before any reader has cached them
+    — permanent data loss. The launchd job runs at login and stays up
+    on crashes.
+
+    Logs:
+      ~/Library/Logs/claude-explorer-cc-watcher.out
+      ~/Library/Logs/claude-explorer-cc-watcher.err
+
+    Plist location:
+      ~/Library/LaunchAgents/com.claude-explorer.cc-watcher.plist
+    """
+    import sys as _sys
+
+    if uninstall:
+        # launchctl unload (safe even if not loaded; ignore errors)
+        if _LAUNCHD_PLIST_PATH.exists():
+            subprocess.run(
+                ["launchctl", "unload", str(_LAUNCHD_PLIST_PATH)],
+                check=False,
+                capture_output=True,
+            )
+            _LAUNCHD_PLIST_PATH.unlink()
+            click.echo(f"Removed {_LAUNCHD_PLIST_PATH}")
+        else:
+            click.echo(f"Not installed: {_LAUNCHD_PLIST_PATH} does not exist")
+        return
+
+    if _sys.platform != "darwin":
+        raise click.ClickException(
+            "install-watcher is macOS-only (uses launchd). "
+            "On Linux, run the watcher inside a systemd service instead."
+        )
+
+    if python_bin is None:
+        python_bin = _sys.executable
+
+    plist_body = _build_launchd_plist(python_bin, interval)
+    _LAUNCHD_PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _LAUNCHD_PLIST_PATH.write_text(plist_body)
+    click.echo(f"Wrote {_LAUNCHD_PLIST_PATH}")
+
+    # Reload to pick up changes if already loaded.
+    subprocess.run(
+        ["launchctl", "unload", str(_LAUNCHD_PLIST_PATH)],
+        check=False,
+        capture_output=True,
+    )
+    result = subprocess.run(
+        ["launchctl", "load", str(_LAUNCHD_PLIST_PATH)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"launchctl load failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+
+    click.echo("")
+    click.echo("Watcher installed and loaded.")
+    click.echo(f"  interval:  {interval}s")
+    click.echo(f"  python:    {python_bin}")
+    click.echo(f"  cwd:       {Path.cwd()}")
+    click.echo(f"  stdout:    ~/Library/Logs/claude-explorer-cc-watcher.out")
+    click.echo(f"  stderr:    ~/Library/Logs/claude-explorer-cc-watcher.err")
+    click.echo("")
+    click.echo("Verify with: launchctl list | grep claude-explorer")
+    click.echo(f"Uninstall:   {_sys.argv[0]} install-watcher --uninstall")
+
+
 if __name__ == "__main__":
     main()
