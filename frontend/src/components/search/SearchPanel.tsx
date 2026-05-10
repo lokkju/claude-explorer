@@ -63,14 +63,21 @@ export function SearchPanel() {
   // the case where the panel is already open but the user pressed Cmd+F
   // from elsewhere on the page expecting "find" muscle memory to put
   // them in the search box.
+  //
+  // The rightPaneTab dep matters because the search input is only
+  // mounted when rightPaneTab === 'search' (see line ~238). Cmd+F's
+  // handler also forces the tab to 'search', and we need this effect
+  // to re-run AFTER the tab change paints so inputRef.current is no
+  // longer null.
   useEffect(() => {
     if (!isOpen) return
+    if (rightPaneTab !== 'search') return
     const id = window.setTimeout(() => {
       inputRef.current?.focus()
       inputRef.current?.select()
     }, 0)
     return () => window.clearTimeout(id)
-  }, [isOpen, focusRequestSeq])
+  }, [isOpen, focusRequestSeq, rightPaneTab])
 
   // Scroll the active match card into view whenever activeMatchIndex
   // changes, AND auto-navigate to the active match. Article line 109:

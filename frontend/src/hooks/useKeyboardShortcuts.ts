@@ -35,7 +35,7 @@ export function useKeyboardShortcuts() {
     const match = location.pathname.match(/\/conversations\/(.+)/)
     return match?.[1]
   }, [location.pathname])
-  const { keyboardMode, showToolCalls } = useSettings()
+  const { keyboardMode, showToolCalls, setRightPaneTab } = useSettings()
   const queryClient = useQueryClient()
   const {
     selectNext,
@@ -153,8 +153,12 @@ export function useKeyboardShortcuts() {
       // AND focus the search input, even when the panel was already
       // open. Pressing Cmd+F must NEVER close the panel — that's what
       // Cmd+K and Esc are for. (Manual finding 2026-05-03.)
+      // Always force the right-pane tab to 'search' — Cmd+F means find,
+      // not "open whatever tab was last selected". A user who left
+      // Bookmarks active should still get Search when they Cmd+F.
       if (cmdOrCtrl && e.key === 'f' && !e.altKey && !e.shiftKey) {
         e.preventDefault()
+        setRightPaneTab('search')
         searchPanel.requestFocus()
         return
       }
