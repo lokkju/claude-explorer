@@ -1,7 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '../utils';
 import { MessageBubble } from '../../components/message/MessageBubble';
+import { useSettings } from '../../contexts/SettingsContext';
+import { useEffect } from 'react';
 import { mockMessages, mockMessageWithToolUse } from '../mocks/data';
+
+/**
+ * MessageBubble's tool_use / tool_result blocks are gated on
+ * `showToolCalls` from SettingsContext. The default is false (a V1
+ * UX choice — most users don't want tool noise). For the tool-block
+ * tests below, we mount a tiny helper that flips the setting on
+ * first render so the assertions can find the rendered tool labels.
+ */
+function EnableToolCalls() {
+  const { showToolCalls, setShowToolCalls } = useSettings();
+  useEffect(() => {
+    if (!showToolCalls) {
+      setShowToolCalls(true);
+    }
+  }, [showToolCalls, setShowToolCalls]);
+  return null;
+}
 
 describe('MessageBubble', () => {
   it('renders human message with correct alignment', () => {
@@ -61,21 +80,31 @@ describe('MessageBubble', () => {
     expect(screen.queryByText('(truncated)')).not.toBeInTheDocument();
   });
 
-  it('renders tool_use block as collapsible', () => {
-    render(<MessageBubble message={mockMessageWithToolUse} />);
+  it('renders tool_use block as collapsible', async () => {
+    render(
+      <>
+        <EnableToolCalls />
+        <MessageBubble message={mockMessageWithToolUse} />
+      </>,
+    );
 
-    // Should show tool name
-    expect(screen.getByText('Tool: read_file')).toBeInTheDocument();
+    // Should show tool name (after EnableToolCalls flips the setting).
+    expect(await screen.findByText('Tool: read_file')).toBeInTheDocument();
 
     // Tool block should be collapsed by default
     expect(screen.queryByText(/"path"/)).not.toBeInTheDocument();
   });
 
   it('expands tool_use block on click', async () => {
-    render(<MessageBubble message={mockMessageWithToolUse} />);
+    render(
+      <>
+        <EnableToolCalls />
+        <MessageBubble message={mockMessageWithToolUse} />
+      </>,
+    );
 
     // Click to expand
-    const toolButton = screen.getByText('Tool: read_file');
+    const toolButton = await screen.findByText('Tool: read_file');
     fireEvent.click(toolButton);
 
     // Should now show the JSON input
@@ -83,18 +112,28 @@ describe('MessageBubble', () => {
     expect(screen.getByText(/\/src\/main.ts/)).toBeInTheDocument();
   });
 
-  it('renders tool_result block as collapsible', () => {
-    render(<MessageBubble message={mockMessageWithToolUse} />);
+  it('renders tool_result block as collapsible', async () => {
+    render(
+      <>
+        <EnableToolCalls />
+        <MessageBubble message={mockMessageWithToolUse} />
+      </>,
+    );
 
     // Should show tool result label
-    expect(screen.getByText('Tool Result')).toBeInTheDocument();
+    expect(await screen.findByText('Tool Result')).toBeInTheDocument();
   });
 
   it('expands tool_result block on click', async () => {
-    render(<MessageBubble message={mockMessageWithToolUse} />);
+    render(
+      <>
+        <EnableToolCalls />
+        <MessageBubble message={mockMessageWithToolUse} />
+      </>,
+    );
 
     // Click to expand
-    const resultButton = screen.getByText('Tool Result');
+    const resultButton = await screen.findByText('Tool Result');
     fireEvent.click(resultButton);
 
     // Should now show the result content
@@ -102,10 +141,15 @@ describe('MessageBubble', () => {
   });
 
   it('has copy button in expanded tool_use block', async () => {
-    render(<MessageBubble message={mockMessageWithToolUse} />);
+    render(
+      <>
+        <EnableToolCalls />
+        <MessageBubble message={mockMessageWithToolUse} />
+      </>,
+    );
 
     // Expand the tool block
-    const toolButton = screen.getByText('Tool: read_file');
+    const toolButton = await screen.findByText('Tool: read_file');
     fireEvent.click(toolButton);
 
     // Should have a copy button (Copy icon)
