@@ -334,60 +334,38 @@ def warm_cc_cache(limit: int | None) -> None:
     """Walk every Claude Code session and copy referenced image-cache
     files into ~/.claude-exporter/cc-images/.
 
-    Equivalent to opening every CC conversation in the explorer once.
-    Useful to populate the permanent cache in bulk so future Claude
-    Code rotations don't break image rendering.
+    NOTE: this runs automatically in the background every time
+    ``claude-explorer serve`` starts. You should rarely need to invoke
+    this CLI manually — it's a one-shot override for cases like:
+      * you have a long-running launchd-backed watcher but want to
+        force a re-walk right now;
+      * you fixed a broken JSONL that previously errored out;
+      * you're running the CLI on a machine that doesn't run the
+        backend (rare).
 
-    Skipped (logged) for any marker pointing at a file that's already
-    been rotated off disk — the bytes are gone, nothing to do.
+    Idempotent: re-runs are cheap because copy_marker_image_to_cache
+    skips files already in cache.
     """
-    from backend.cc_image_cache import cache_all_markers
-    from backend.claude_code_reader import (
-        DEFAULT_CLAUDE_DIR,
-        discover_jsonl_files,
-        read_claude_code_conversation,
-    )
+    from backend.cc_image_cache import warm_all_sessions
 
-    sessions = list(discover_jsonl_files(DEFAULT_CLAUDE_DIR))
-    if limit is not None:
-        sessions = sessions[:limit]
+    def _print_progress(state: dict) -> None:
+        i = state["sessions_walked"]
+        total = state["total_sessions"]
+        click.echo(
+            f"  [{i}/{total}] sessions with cached markers: "
+            f"{state['sessions_with_markers']}; files cached: "
+            f"{state['files_cached']}"
+        )
 
-    total_sessions = len(sessions)
-    click.echo(f"Walking {total_sessions} Claude Code session(s)...")
-
-    sessions_with_markers = 0
-    files_cached = 0
-    sessions_failed = 0
-    for i, jsonl_path in enumerate(sessions, start=1):
-        try:
-            data = read_claude_code_conversation(jsonl_path)
-        except Exception as exc:  # noqa: BLE001
-            click.echo(f"  [{i}/{total_sessions}] {jsonl_path.name}: read FAILED ({exc})", err=True)
-            sessions_failed += 1
-            continue
-        if not data:
-            continue
-        # read_claude_code_conversation already calls cache_all_markers,
-        # but the in-memory cache may have served a stale result. Call
-        # it again here directly to guarantee the warm-cache pass runs
-        # for every session this command was asked to process.
-        written = cache_all_markers(data)
-        if written:
-            sessions_with_markers += 1
-            files_cached += len(written)
-        if i % 50 == 0 or i == total_sessions:
-            click.echo(
-                f"  [{i}/{total_sessions}] sessions with cached markers: {sessions_with_markers}; "
-                f"files cached: {files_cached}"
-            )
+    state = warm_all_sessions(limit=limit, progress=_print_progress)
 
     click.echo("")
     click.echo("Done.")
-    click.echo(f"  sessions walked:         {total_sessions}")
-    click.echo(f"  sessions with markers:   {sessions_with_markers}")
-    click.echo(f"  files cached (incl. dupes): {files_cached}")
-    if sessions_failed:
-        click.echo(f"  sessions failed to read: {sessions_failed}", err=True)
+    click.echo(f"  sessions walked:         {state['sessions_walked']}")
+    click.echo(f"  sessions with markers:   {state['sessions_with_markers']}")
+    click.echo(f"  files cached (incl. dupes): {state['files_cached']}")
+    if state["sessions_failed"]:
+        click.echo(f"  sessions failed to read: {state['sessions_failed']}", err=True)
 
 
 _LAUNCHD_LABEL = "com.claude-explorer.cc-watcher"

@@ -17,10 +17,12 @@ the conversation marker to the most recent.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
 from pathlib import Path
+from typing import Callable
 
 from .config import get_settings
 
@@ -116,3 +118,106 @@ def cache_all_markers(conversation_json: dict) -> list[Path]:
                 if dst is not None:
                     out.append(dst)
     return out
+
+
+def warm_all_sessions(
+    *,
+    limit: int | None = None,
+    progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """Walk every Claude Code session JSONL on disk and copy referenced
+    image-cache files into the permanent cache.
+
+    Idempotent: ``copy_marker_image_to_cache`` skips files already in
+    cache (sha8 collision check), so re-running this is safe and
+    cheap. Sessions whose markers point at already-rotated files are
+    silently skipped (the bytes are gone, nothing to do).
+
+    Used by:
+      * the FastAPI lifespan startup hook (auto-warms in the
+        background — see ``backend/main.py``), so the user never has
+        to remember to run a CLI.
+      * the ``claude-explorer warm-cc-cache`` CLI as a manual
+        override / one-shot.
+
+    Args:
+        limit: Optional cap on number of sessions to walk.
+        progress: Optional callback invoked with a dict of running
+            counters at every batch checkpoint (every 50 sessions
+            and at completion). Keys: ``sessions_walked``,
+            ``sessions_with_markers``, ``files_cached``,
+            ``sessions_failed``, ``total_sessions``.
+
+    Returns:
+        Dict with the same keys as the progress callback's last call.
+    """
+    from .claude_code_reader import (
+        discover_jsonl_files,
+        read_claude_code_conversation,
+    )
+
+    # Use the live settings, not the import-time DEFAULT_CLAUDE_DIR
+    # constant — tests + CLAUDE_DIR overrides require this.
+    claude_dir = get_settings().claude_dir
+    sessions = list(discover_jsonl_files(claude_dir))
+    if limit is not None:
+        sessions = sessions[:limit]
+    total_sessions = len(sessions)
+
+    state = {
+        "sessions_walked": 0,
+        "sessions_with_markers": 0,
+        "files_cached": 0,
+        "sessions_failed": 0,
+        "total_sessions": total_sessions,
+    }
+
+    for i, jsonl_path in enumerate(sessions, start=1):
+        state["sessions_walked"] = i
+        try:
+            data = read_claude_code_conversation(jsonl_path)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("warm_all_sessions: read FAILED for %s: %s", jsonl_path.name, exc)
+            state["sessions_failed"] += 1
+            continue
+        if not data:
+            continue
+        # read_claude_code_conversation already calls cache_all_markers,
+        # but the in-memory cache may have served a stale result. Call
+        # it again here directly to guarantee the warm-cache pass runs
+        # for every session this command was asked to process.
+        written = cache_all_markers(data)
+        if written:
+            state["sessions_with_markers"] += 1
+            state["files_cached"] += len(written)
+        if progress is not None and (i % 50 == 0 or i == total_sessions):
+            progress(dict(state))
+
+    return state
+
+
+async def warm_all_sessions_async(*, limit: int | None = None) -> dict:
+    """Async wrapper for :func:`warm_all_sessions` that runs the
+    blocking work in a thread so it doesn't stall the event loop.
+
+    Used by the FastAPI lifespan startup hook. Logs a summary at
+    completion (INFO) so dashboard tails can confirm the warm pass
+    ran. Errors at the per-session level are already swallowed by the
+    sync function; any whole-pass failure here is logged at WARNING
+    and absorbed (a partial cache is still better than crashing the
+    backend).
+    """
+    try:
+        state = await asyncio.to_thread(warm_all_sessions, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("warm_all_sessions_async aborted: %s", exc)
+        return {"error": str(exc)}
+    log.info(
+        "CC warm pass complete: %d session(s) walked, %d with markers, "
+        "%d files cached, %d failed.",
+        state["sessions_walked"],
+        state["sessions_with_markers"],
+        state["files_cached"],
+        state["sessions_failed"],
+    )
+    return state

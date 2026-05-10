@@ -166,6 +166,19 @@ async def lifespan(app: FastAPI):
 
         watcher_task = asyncio.create_task(run_watcher(watcher_stop))
 
+    # Auto-warm the CC image cache: walk every CC session JSONL and
+    # ensure referenced [Image: source: ...] files are copied to the
+    # permanent cache. Catches the case where a user has CC sessions
+    # they haven't yet opened in the explorer (the lazy per-render
+    # copy at /api/cc-image only triggers on view). Runs in the
+    # background — non-blocking, so the server is up immediately.
+    # User can never lose images to "I forgot to run warm-cc-cache".
+    warm_task: asyncio.Task | None = None
+    if os.environ.get("CLAUDE_EXPORTER_DISABLE_CC_WARM") != "1":
+        from backend.cc_image_cache import warm_all_sessions_async
+
+        warm_task = asyncio.create_task(warm_all_sessions_async())
+
     try:
         yield
     finally:
@@ -183,6 +196,15 @@ async def lifespan(app: FastAPI):
                 await asyncio.wait_for(watcher_task, timeout=2.0)
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 watcher_task.cancel()
+        # Cancel the auto-warm task if it's still running at shutdown.
+        # Best-effort — partial warm pass is fine, the next startup
+        # will pick up where it left off (idempotent).
+        if warm_task is not None and not warm_task.done():
+            warm_task.cancel()
+            try:
+                await warm_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 app = FastAPI(
