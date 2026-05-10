@@ -1,11 +1,34 @@
-"""Full-text search implementation."""
+"""Full-text search implementation.
+
+Two paths:
+  * **FTS5 fast path** (preferred). When :mod:`backend.search_index` reports
+    the index is ready and FTS5 is available, queries hit the SQLite FTS5
+    inverted index. The index returns ``(conv_uuid, message_uuid)`` pairs;
+    we then walk only those conversations from the cache and run the same
+    snippet/sort code as the linear path. Latency target: <50 ms per query.
+  * **Linear-scan fallback**. When the index isn't ready (initial build
+    still in progress), FTS5 isn't compiled into the local sqlite3 build,
+    or any sqlite3 error fires, we fall back to the original full-walk
+    code path. Search never goes "down".
+
+The two paths produce byte-for-byte identical ``SearchResult`` objects for
+whole-word queries (the common case). Sub-string queries that don't align
+with token boundaries (e.g., ``"py"`` matching the substring inside
+``"happy"``) are a documented behavior change: the FTS5 path returns
+prefix-matches only.
+"""
 
 import json
+import logging
 import re
+import sqlite3
 from typing import Any, Literal
 
 from .models import SearchResult, MessageSnippet
 from .store import ConversationStore, _parse_datetime
+
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_searchable_text(message: dict[str, Any]) -> str:
@@ -144,6 +167,12 @@ def search_conversations(
 ) -> list[SearchResult]:
     """Search across all conversations for matching messages.
 
+    Dispatches to the FTS5 fast path when the index is ready (see module
+    docstring); falls back to the linear-scan path on any failure mode
+    (index not ready, FTS5 unavailable, sqlite3 error). Both paths produce
+    byte-for-byte identical ``SearchResult`` objects for whole-word
+    queries.
+
     Scope filters (manual finding 2026-05-04):
       - ``conversation_uuid``: restrict to a single conversation. Most
         specific filter; wins over ``project_path`` / ``bookmarks`` when
@@ -162,6 +191,59 @@ def search_conversations(
     if not query or len(query.strip()) < 1:
         return []
 
+    # Fast path: FTS5 inverted index when ready. Imported lazily so the
+    # test suite can patch get_search_index() without import cycles.
+    try:
+        from .search_index import get_search_index
+
+        idx = get_search_index()
+        if idx is not None and idx.is_ready():
+            try:
+                return _search_via_index(
+                    store, idx, query,
+                    source=source, context_size=context_size,
+                    sort=sort, sort_order=sort_order,
+                    conversation_uuid=conversation_uuid,
+                    project_path=project_path,
+                    bookmarks=bookmarks,
+                )
+            except sqlite3.Error:
+                logger.exception(
+                    "search_index: query failed; falling back to linear scan"
+                )
+                # fall through to linear scan
+    except ImportError:
+        # search_index module isn't importable — definitely use linear scan.
+        pass
+
+    return _search_via_linear_scan(
+        store, query,
+        source=source, context_size=context_size,
+        sort=sort, sort_order=sort_order,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+    )
+
+
+def _search_via_linear_scan(
+    store: ConversationStore,
+    query: str,
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+    context_size: Literal["snippet", "full"] = "snippet",
+    sort: SortField = "updated_at",
+    sort_order: SortOrder = "desc",
+    conversation_uuid: str | None = None,
+    project_path: str | None = None,
+    bookmarks: set[str] | None = None,
+) -> list[SearchResult]:
+    """Original linear-scan implementation; now the fallback path.
+
+    Walks every conversation, runs a Python regex against each message's
+    flattened searchable text. Slow on large corpora (~0.8-2.3s on Ray's
+    1.5GB corpus) but always correct and never depends on an index file
+    being present.
+    """
     query_lower = query.lower()
     pattern = re.compile(re.escape(query), re.IGNORECASE)
     results = []
@@ -293,3 +375,107 @@ def search_conversations(
         )
 
     return results
+
+
+def _search_via_index(
+    store: ConversationStore,
+    idx: Any,
+    query: str,
+    *,
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"],
+    context_size: Literal["snippet", "full"],
+    sort: SortField,
+    sort_order: SortOrder,
+    conversation_uuid: str | None,
+    project_path: str | None,
+    bookmarks: set[str] | None,
+) -> list[SearchResult]:
+    """FTS5 fast path: scatter-gather over the inverted index.
+
+    1. Ask the FTS5 index for the set of matched ``(conv_uuid,
+       message_uuid)`` pairs (subject to source/scope filters at the SQL
+       layer too — they're cheap UNINDEXED-column filters).
+    2. AND the FTS5 conv set with any user-supplied ``bookmarks`` /
+       ``conversation_uuid`` / ``project_path`` filter so the
+       linear-scan walk that follows is bounded.
+    3. Hand off to :func:`_search_via_linear_scan` with the conv set as
+       the ``bookmarks`` arg. The linear scan re-applies its own
+       per-message regex on the messages of those conversations, which
+       is what gives us byte-for-byte identical snippets and ordering.
+
+    Why re-walk after the FTS5 hit? Because FTS5's own ``snippet()``
+    function uses different boundary heuristics than our
+    :func:`create_snippet`. Re-running the existing Python path on
+    matched conversations is essentially free (FileCache is warm) and
+    guarantees compat. The win is that we walk ~1-200 conversations
+    instead of ~1,200.
+    """
+    # Step 1: ask FTS5 for body+title MATCH hits (subject to scope at
+    # the SQL layer).
+    matches = idx.query(
+        query,
+        source=source,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+    )
+    body_matched_uuids: set[str] = {m["conv_uuid"] for m in matches}
+
+    # Step 2: title-substring sweep. The linear scan emits a title pseudo-
+    # message when the conversation NAME contains the query (case-
+    # insensitive substring). FTS5 catches token-aligned title matches,
+    # but a substring that crosses token boundaries (e.g. "ned" inside
+    # "scheduled") would NOT hit FTS5 yet WOULD hit the linear scan.
+    # To preserve byte-for-byte compat we do a fast Python substring
+    # sweep over conversation names ONLY (not bodies). Use the lightweight
+    # ``list_conversations`` path so we never load message content for
+    # CC sessions whose body wasn't even matched by FTS5.
+    query_lower = query.lower()
+    title_matched_uuids: set[str] = set()
+    summaries = store.list_conversations(source=source)
+    for s in summaries:
+        cu = s.uuid
+        if conversation_uuid and cu != conversation_uuid:
+            continue
+        if conversation_uuid is None:
+            if project_path and s.project_path != project_path:
+                continue
+            if bookmarks is not None and cu not in bookmarks:
+                continue
+        if query_lower in (s.name or "").lower():
+            title_matched_uuids.add(cu)
+
+    candidate_uuids = body_matched_uuids | title_matched_uuids
+
+    # Step 3: AND with any user scope.
+    if bookmarks is not None:
+        candidate_uuids &= bookmarks
+    if conversation_uuid is not None:
+        candidate_uuids &= {conversation_uuid}
+
+    if not candidate_uuids:
+        return []
+
+    # Step 4: hand off to the linear-scan path with the candidate set as
+    # the bookmarks scope. The linear scan walks only those convs (cheap
+    # via FileCache) and produces snippets/sort using the existing
+    # battle-tested code, so the response shape is identical to the
+    # all-linear-scan path.
+    if conversation_uuid is not None:
+        return _search_via_linear_scan(
+            store, query,
+            source=source, context_size=context_size,
+            sort=sort, sort_order=sort_order,
+            conversation_uuid=conversation_uuid,
+            project_path=project_path,
+            bookmarks=bookmarks,
+        )
+
+    return _search_via_linear_scan(
+        store, query,
+        source=source, context_size=context_size,
+        sort=sort, sort_order=sort_order,
+        conversation_uuid=None,
+        project_path=project_path,
+        bookmarks=candidate_uuids,
+    )
