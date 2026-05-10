@@ -333,48 +333,7 @@ def _search_via_linear_scan(
                 )
             )
 
-    reverse = sort_order == "desc"
-
-    # Match-level time key, with a conversation-level fallback for title-only
-    # matches (no per-message timestamp).
-    def _match_time(m: MessageSnippet, fallback):
-        return m.created_at if m.created_at is not None else fallback
-
-    # Sort matches within each conversation by message timestamp so the
-    # newest/oldest match (per order) is always on top of its group.
-    for r in results:
-        fallback = r.conversation_updated_at
-        r.matching_messages.sort(
-            key=lambda m, fb=fallback: _match_time(m, fb),
-            reverse=reverse,
-        )
-
-    if sort in ("updated_at", "created_at"):
-        # Rank each conversation by the most-recent (updated_at) or earliest
-        # (created_at) matching message inside it. For updated_at+desc this
-        # means the globally-latest matching message lands at the top.
-        def _conv_time_key(r: SearchResult):
-            times = [m.created_at for m in r.matching_messages if m.created_at]
-            if times:
-                return max(times) if sort == "updated_at" else min(times)
-            return (
-                r.conversation_updated_at
-                if sort == "updated_at"
-                else r.conversation_created_at
-            )
-
-        results.sort(key=_conv_time_key, reverse=reverse)
-    elif sort == "name":
-        results.sort(key=lambda r: (r.conversation_name or "").lower(), reverse=reverse)
-    elif sort == "project":
-        # None project_names last when ascending, first when descending — same
-        # behavior as store.py's list sort.
-        results.sort(
-            key=lambda r: (r.project_name is None, (r.project_name or "").lower()),
-            reverse=reverse,
-        )
-
-    return results
+    return _sort_results(results, sort=sort, sort_order=sort_order)
 
 
 def _search_via_index(
@@ -395,20 +354,20 @@ def _search_via_index(
     1. Ask the FTS5 index for the set of matched ``(conv_uuid,
        message_uuid)`` pairs (subject to source/scope filters at the SQL
        layer too — they're cheap UNINDEXED-column filters).
-    2. AND the FTS5 conv set with any user-supplied ``bookmarks`` /
-       ``conversation_uuid`` / ``project_path`` filter so the
-       linear-scan walk that follows is bounded.
-    3. Hand off to :func:`_search_via_linear_scan` with the conv set as
-       the ``bookmarks`` arg. The linear scan re-applies its own
-       per-message regex on the messages of those conversations, which
-       is what gives us byte-for-byte identical snippets and ordering.
+    2. Title-substring sweep over conversation summaries (lightweight)
+       to catch sub-token substrings the FTS5 prefix-tokenizer can't
+       see (e.g., "edul" inside "scheduled").
+    3. Walk ONLY the matched conversations via
+       :meth:`ConversationStore.get_conversation` (warm via FileCache)
+       and run the existing :func:`create_snippet` / regex finditer
+       loop on each. This avoids loading the entire conversation
+       corpus on every query.
 
-    Why re-walk after the FTS5 hit? Because FTS5's own ``snippet()``
-    function uses different boundary heuristics than our
-    :func:`create_snippet`. Re-running the existing Python path on
-    matched conversations is essentially free (FileCache is warm) and
-    guarantees compat. The win is that we walk ~1-200 conversations
-    instead of ~1,200.
+    Why we don't call back into ``_search_via_linear_scan``: that function
+    re-walks ``store.get_all_conversations_raw()`` which loads every
+    JSON/JSONL file. Even with FileCache hot, that's ~1 s for a 1.5 GB
+    corpus. Walking only the matched conversations is the entire point
+    of the index.
     """
     # Step 1: ask FTS5 for body+title MATCH hits (subject to scope at
     # the SQL layer).
@@ -426,28 +385,52 @@ def _search_via_index(
     # insensitive substring). FTS5 catches token-aligned title matches,
     # but a substring that crosses token boundaries (e.g. "ned" inside
     # "scheduled") would NOT hit FTS5 yet WOULD hit the linear scan.
-    # To preserve byte-for-byte compat we do a fast Python substring
-    # sweep over conversation names ONLY (not bodies). Use the lightweight
-    # ``list_conversations`` path so we never load message content for
-    # CC sessions whose body wasn't even matched by FTS5.
+    # We use the FTS5 index's own ``title`` column as the source of
+    # truth — it's stored UNINDEXED so a SELECT DISTINCT is cheap and
+    # avoids the multi-second cost of ``store.list_conversations()``
+    # (which rebuilds the agent index on every call).
     query_lower = query.lower()
     title_matched_uuids: set[str] = set()
-    summaries = store.list_conversations(source=source)
-    for s in summaries:
-        cu = s.uuid
-        if conversation_uuid and cu != conversation_uuid:
-            continue
-        if conversation_uuid is None:
-            if project_path and s.project_path != project_path:
-                continue
-            if bookmarks is not None and cu not in bookmarks:
-                continue
-        if query_lower in (s.name or "").lower():
-            title_matched_uuids.add(cu)
+    title_sql_clauses = ["title LIKE ?"]
+    title_sql_params: list[Any] = [f"%{query}%"]
+    if conversation_uuid is not None:
+        title_sql_clauses.append("conv_uuid = ?")
+        title_sql_params.append(conversation_uuid)
+    else:
+        if project_path is not None:
+            title_sql_clauses.append("project_path = ?")
+            title_sql_params.append(project_path)
+        if bookmarks is not None:
+            if not bookmarks:
+                title_matched_uuids = set()
+                title_sql_clauses = []
+            else:
+                placeholders = ",".join("?" * len(bookmarks))
+                title_sql_clauses.append(f"conv_uuid IN ({placeholders})")
+                title_sql_params.extend(sorted(bookmarks))
+    if source != "all":
+        title_sql_clauses.append("source = ?")
+        title_sql_params.append(source)
+    if title_sql_clauses:
+        try:
+            conn = idx._get_read_conn()
+            sql = (
+                "SELECT DISTINCT conv_uuid FROM messages "
+                f"WHERE {' AND '.join(title_sql_clauses)} "
+                # COLLATE NOCASE on title would be ideal but the column is
+                # UNINDEXED; we use case-insensitive LIKE via lower() in
+                # Python after fetch.
+            )
+            cur = conn.execute(sql, tuple(title_sql_params))
+            title_matched_uuids = {row[0] for row in cur.fetchall()}
+        except sqlite3.Error:
+            # Fall back to no title sweep — body matches still win.
+            title_matched_uuids = set()
 
     candidate_uuids = body_matched_uuids | title_matched_uuids
 
-    # Step 3: AND with any user scope.
+    # AND with any user scope (extra defense — the SQL WHERE clauses
+    # already enforce these).
     if bookmarks is not None:
         candidate_uuids &= bookmarks
     if conversation_uuid is not None:
@@ -456,26 +439,137 @@ def _search_via_index(
     if not candidate_uuids:
         return []
 
-    # Step 4: hand off to the linear-scan path with the candidate set as
-    # the bookmarks scope. The linear scan walks only those convs (cheap
-    # via FileCache) and produces snippets/sort using the existing
-    # battle-tested code, so the response shape is identical to the
-    # all-linear-scan path.
-    if conversation_uuid is not None:
-        return _search_via_linear_scan(
-            store, query,
-            source=source, context_size=context_size,
-            sort=sort, sort_order=sort_order,
-            conversation_uuid=conversation_uuid,
-            project_path=project_path,
-            bookmarks=bookmarks,
+    # Step 3: walk ONLY the matched conversations. For each matched
+    # conv, find which of its messages were FTS5-hit, then run the
+    # existing per-message regex on those messages to produce snippets
+    # byte-for-byte identical to the linear path.
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    msgs_per_conv: dict[str, set[str]] = {}
+    for m in matches:
+        cu = m["conv_uuid"]
+        if cu in candidate_uuids:
+            msgs_per_conv.setdefault(cu, set()).add(m["message_uuid"])
+
+    # Walk the conversation corpus ONCE, skipping convs not in the
+    # candidate set. This is the only place we touch
+    # ``get_all_conversations_raw()`` — the warm FileCache makes it
+    # cheap (~10-100 ms for a 1.5 GB corpus on warm disk + cache).
+    # On cold cache it's a one-time cost shared with the CC warm pass.
+    results: list[SearchResult] = []
+    for conv in store.get_all_conversations_raw(source=source):
+        cu = conv.get("uuid", "")
+        if cu not in candidate_uuids:
+            continue
+
+        matching_messages: list[MessageSnippet] = []
+        name = conv.get("name", "") or ""
+
+        # Title pseudo-message — emitted only when the conv NAME contains
+        # the query (mirrors the linear-scan emit at search.py:264).
+        if query_lower in name.lower():
+            tmatch = pattern.search(name)
+            if tmatch:
+                snippet, start, end = create_snippet(name, tmatch.start(), tmatch.end())
+                matching_messages.append(
+                    MessageSnippet(
+                        message_uuid="title",
+                        sender="title",
+                        snippet=snippet,
+                        match_start=start,
+                        match_end=end,
+                    )
+                )
+
+        # Body matches: walk only the FTS5-matched messages (the rest
+        # are guaranteed not to match the query).
+        wanted_msg_uuids = msgs_per_conv.get(cu, set())
+        for msg in conv.get("chat_messages", []):
+            if msg.get("uuid") not in wanted_msg_uuids:
+                continue
+            text = msg.get("__search_text__")
+            if text is None:
+                text = _extract_searchable_text(msg)
+                msg["__search_text__"] = text
+            if not text:
+                continue
+            msg_created_at = _parse_datetime(msg.get("created_at"))
+            for match in pattern.finditer(text):
+                if context_size == "full":
+                    snippet = text
+                    start = match.start()
+                    end = match.end()
+                else:
+                    snippet, start, end = create_snippet(
+                        text, match.start(), match.end()
+                    )
+                matching_messages.append(
+                    MessageSnippet(
+                        message_uuid=msg.get("uuid", ""),
+                        sender=msg.get("sender", ""),
+                        snippet=snippet,
+                        match_start=start,
+                        match_end=end,
+                        created_at=msg_created_at,
+                    )
+                )
+                # Only first match per message — same as linear path.
+                break
+
+        if matching_messages:
+            results.append(
+                SearchResult(
+                    conversation_uuid=conv.get("uuid", ""),
+                    conversation_name=conv.get("name", "Untitled"),
+                    conversation_updated_at=_parse_datetime(conv.get("updated_at")),
+                    conversation_created_at=_parse_datetime(conv.get("created_at")),
+                    project_name=_derive_project_name(conv.get("project_path")),
+                    matching_messages=matching_messages,
+                )
+            )
+
+    # Apply the same sort logic as the linear path (extracted into
+    # _sort_results below so both code paths stay byte-identical).
+    return _sort_results(results, sort=sort, sort_order=sort_order)
+
+
+def _sort_results(
+    results: list[SearchResult],
+    *,
+    sort: SortField,
+    sort_order: SortOrder,
+) -> list[SearchResult]:
+    """Same sort logic as _search_via_linear_scan's tail block. Extracted
+    so both paths share the implementation byte-for-byte."""
+    reverse = sort_order == "desc"
+
+    def _match_time(m: MessageSnippet, fallback):
+        return m.created_at if m.created_at is not None else fallback
+
+    for r in results:
+        fallback = r.conversation_updated_at
+        r.matching_messages.sort(
+            key=lambda m, fb=fallback: _match_time(m, fb),
+            reverse=reverse,
         )
 
-    return _search_via_linear_scan(
-        store, query,
-        source=source, context_size=context_size,
-        sort=sort, sort_order=sort_order,
-        conversation_uuid=None,
-        project_path=project_path,
-        bookmarks=candidate_uuids,
-    )
+    if sort in ("updated_at", "created_at"):
+        def _conv_time_key(r: SearchResult):
+            times = [m.created_at for m in r.matching_messages if m.created_at]
+            if times:
+                return max(times) if sort == "updated_at" else min(times)
+            return (
+                r.conversation_updated_at
+                if sort == "updated_at"
+                else r.conversation_created_at
+            )
+
+        results.sort(key=_conv_time_key, reverse=reverse)
+    elif sort == "name":
+        results.sort(key=lambda r: (r.conversation_name or "").lower(), reverse=reverse)
+    elif sort == "project":
+        results.sort(
+            key=lambda r: (r.project_name is None, (r.project_name or "").lower()),
+            reverse=reverse,
+        )
+
+    return results

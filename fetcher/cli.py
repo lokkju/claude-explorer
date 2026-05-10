@@ -323,6 +323,62 @@ def serve(host: str, port: int, reload: bool):
         raise
 
 
+@main.command("reindex-search")
+@click.option(
+    "--full/--drift",
+    default=True,
+    help="--full rebuilds from scratch (DROP+rebuild). --drift only re-indexes files whose mtime changed.",
+)
+def reindex_search(full: bool) -> None:
+    """Manually rebuild the SQLite FTS5 search index.
+
+    NOTE: this runs automatically in the background every time
+    ``claude-explorer serve`` starts, and the watcher keeps it in sync.
+    You should rarely need to invoke this CLI manually — it's a one-shot
+    override for cases like:
+
+      * the index file got corrupted (delete it and re-run);
+      * you want to verify a fresh build matches your data;
+      * you bumped the schema version and want to force a rebuild
+        without restarting the server.
+
+    Idempotent: re-runs are cheap because the upsert is a no-op for
+    unchanged files (mtime check).
+    """
+    from backend.search_index import (
+        build_full_index,
+        get_search_index,
+        update_drifted_files,
+    )
+    from backend.store import ConversationStore
+
+    idx = get_search_index()
+    if idx is None:
+        raise click.ClickException(
+            "FTS5 not available in this sqlite3 build. Search will use "
+            "linear-scan fallback. Check your Python install: "
+            "`python -c \"import sqlite3; "
+            "sqlite3.connect(':memory:').execute('CREATE VIRTUAL TABLE x USING fts5(c)')\"`"
+        )
+
+    store = ConversationStore()
+    if full:
+        click.echo("Wiping index and rebuilding from scratch...")
+        idx.clear_all()
+
+        def _progress(i: int, total: int) -> None:
+            if i % 50 == 0 or i == total:
+                click.echo(f"  [{i}/{total}] conversations indexed")
+
+        files, msgs = build_full_index(store, index=idx, on_progress=_progress)
+        click.echo("")
+        click.echo(f"Done. Indexed {files} files / {msgs} messages.")
+    else:
+        click.echo("Drift pass: re-indexing only files whose mtime changed...")
+        updated = update_drifted_files(store, index=idx)
+        click.echo(f"Done. Re-indexed {updated} file(s).")
+
+
 @main.command("warm-cc-cache")
 @click.option(
     "--limit",

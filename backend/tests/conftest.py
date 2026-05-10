@@ -440,3 +440,38 @@ def reset_refresh_flag() -> Iterator[None]:
     """
 
     yield from _reset_refresh_flag_body()
+
+
+@pytest.fixture(autouse=True)
+def isolate_search_index_singleton(tmp_path_factory, monkeypatch) -> Iterator[None]:
+    """Prevent any test from accidentally instantiating or writing to the
+    user's real ``~/.claude-exporter/search-index.sqlite``.
+
+    ``backend.search.search_conversations`` (the function tested by
+    ``test_search_*.py``) calls ``get_search_index()`` which lazily
+    creates a singleton at ``default_index_path()``. Without this
+    fixture, every search test would scribble against the user's real
+    index file — possibly indexing every conversation on disk during
+    a unit-test run (observed: 445 MB of writes during a `pytest -q`
+    invocation).
+
+    Strategy:
+      1. Reset the singleton to None so each test starts clean.
+      2. Repoint ``default_index_path()`` to a per-session tmp path.
+         (Tests that explicitly need their OWN per-test path can
+         monkeypatch the singleton directly — the
+         ``test_search_equivalence.fixture_store`` does this.)
+      3. Reset again on teardown so cross-test leakage is impossible.
+    """
+    from backend import search_index as si
+
+    # Per-session tmp file (cheap; never grows because most tests don't
+    # actually trigger an index build).
+    safe_path = tmp_path_factory.mktemp("search_index_test_root") / "search-index.sqlite"
+    monkeypatch.setattr(si, "default_index_path", lambda: safe_path)
+
+    si.reset_search_index_for_tests()
+    try:
+        yield
+    finally:
+        si.reset_search_index_for_tests()

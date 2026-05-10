@@ -74,13 +74,21 @@ def _write_conv(by_org: Path, conv: dict) -> Path:
 
 
 @pytest.fixture
-def fixture_store(tmp_path):
+def fixture_store(tmp_path, monkeypatch):
     """Build a synthetic 5-conversation store with predictable hits.
 
     Title-only match: 'cron' is in the name of conv-c only.
     Body-only match: 'pythonic' is in the body of conv-p only.
     Both: 'budget' appears in the title of conv-b1 and the body of conv-b2.
     No match: 'xyzzy' is nowhere.
+
+    Test isolation: the module singleton ``_search_index`` is REPLACED
+    with the fixture's index instance for the duration of the test, so
+    any call to ``get_search_index()`` from production code (e.g., from
+    ``search_conversations()``'s dispatcher) returns this test's index
+    — NEVER the user's real ``~/.claude-exporter/search-index.sqlite``.
+    Without this we'd silently scribble against the user's real index
+    and possibly crawl their real conversations.
     """
     by_org = tmp_path / "by-org" / "org-1"
     convs = [
@@ -101,11 +109,14 @@ def fixture_store(tmp_path):
     cc_dir.mkdir()
     store = ConversationStore(data_dir=tmp_path, claude_dir=cc_dir)
 
-    # Build a fresh index against this fixture.
+    # Build a fresh index against this fixture and inject it as the
+    # module-level singleton so production-code paths
+    # (search_conversations -> get_search_index) hit the test index.
     clear_cache()
     si.reset_search_index_for_tests()
     idx = si.SearchIndex(tmp_path / "index.sqlite")
     si.build_full_index(store, index=idx)
+    monkeypatch.setattr(si, "_search_index", idx)
 
     yield store, idx, paths
 

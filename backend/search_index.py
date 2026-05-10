@@ -541,10 +541,17 @@ def reset_search_index_for_tests() -> None:
 
     Production code MUST NOT call this. Used by pytest fixtures so each
     test starts with a fresh index pointed at its own tmp_path.
+
+    Best-effort close: tests sometimes inject mock objects that don't
+    implement ``close()``; we tolerate AttributeError so the fixture
+    teardown doesn't crash.
     """
     global _search_index
     if _search_index is not None:
-        _search_index.close()
+        try:
+            _search_index.close()
+        except (AttributeError, sqlite3.Error):
+            pass
         _search_index = None
 
 
@@ -633,6 +640,15 @@ def build_full_index(
                 mtime = path.stat().st_mtime
             except OSError:
                 mtime = 0.0
+        # Skip the DELETE+INSERT when we already have this file at the
+        # same mtime — saves the round-trip per-file on warm restarts.
+        # The first build (empty index) always upserts because
+        # needs_update returns True on the not-found path.
+        if not index.needs_update(path, mtime):
+            files_indexed += 1
+            if on_progress is not None:
+                on_progress(i + 1, total)
+            continue
         try:
             messages_indexed += index.upsert_conversation(conv, path, mtime)
             files_indexed += 1

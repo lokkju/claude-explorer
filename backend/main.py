@@ -179,6 +179,45 @@ async def lifespan(app: FastAPI):
 
         warm_task = asyncio.create_task(warm_all_sessions_async())
 
+    # Build the FTS5 search index in the background. Search falls back
+    # to the linear-scan path until this completes, so the server is
+    # immediately responsive. Set CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX=1
+    # to skip (useful when debugging linear-scan equivalence).
+    #
+    # We use print() not log.info() because uvicorn's default log
+    # config doesn't propagate to ``backend`` package loggers (the
+    # existing "Data directory:" print at lifespan top is the same
+    # pattern). The user wants to see "search index build complete"
+    # on stdout without configuring a logging.dictConfig.
+    search_index_task: asyncio.Task | None = None
+    if os.environ.get("CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX") != "1":
+        async def _build_search_index() -> None:
+            try:
+                from backend.search_index import build_full_index, get_search_index
+                from backend.store import ConversationStore
+
+                idx = get_search_index()
+                if idx is None:
+                    print(
+                        "search index: skipped (FTS5 not available in sqlite3)",
+                        flush=True,
+                    )
+                    return
+                files, msgs = await asyncio.to_thread(
+                    build_full_index, ConversationStore(), index=idx
+                )
+                print(
+                    f"search index build complete: {files} files / {msgs} messages",
+                    flush=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"search index: initial build failed: {exc!r}",
+                    flush=True,
+                )
+
+        search_index_task = asyncio.create_task(_build_search_index())
+
     try:
         yield
     finally:
@@ -203,6 +242,16 @@ async def lifespan(app: FastAPI):
             warm_task.cancel()
             try:
                 await warm_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        # Cancel the search-index build task if still running.
+        # Idempotent: every conversation it indexed survives in the
+        # SQLite file, and the next startup picks up where it left off
+        # (the drift-detection pass catches any stragglers).
+        if search_index_task is not None and not search_index_task.done():
+            search_index_task.cancel()
+            try:
+                await search_index_task
             except (asyncio.CancelledError, Exception):
                 pass
 

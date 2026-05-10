@@ -147,6 +147,47 @@ uv run claude-explorer install-watcher --interval 10
 uv run claude-explorer install-watcher --uninstall
 ```
 
+#### `claude-explorer reindex-search` (manual override only)
+
+Force a rebuild of the SQLite FTS5 search index at
+`~/.claude-exporter/search-index.sqlite`. **You should not need this in
+normal operation:** the index is built automatically at backend startup
+(non-blocking lifespan task) and kept in sync by the same 5s watcher
+loop that handles CC images. Use only when:
+
+- the index file got corrupted (delete it, then run this);
+- you want a known-fresh full rebuild;
+- a future schema bump requires manual rebuild without restarting `serve`.
+
+```bash
+# Default: full DROP + rebuild from scratch.
+uv run claude-explorer reindex-search
+
+# Drift-only pass (re-index only files whose mtime changed since last index).
+uv run claude-explorer reindex-search --drift
+```
+
+**How search works in the running server:**
+
+- `backend/search_index.py` owns the SQLite FTS5 schema, lifecycle,
+  and queries. Singleton via `get_search_index()`; returns `None` on
+  sqlite3 builds without FTS5.
+- `backend/search.py:search_conversations` is a dispatcher: prefer
+  the FTS5 fast path when `idx.is_ready()`, fall back to the
+  linear-scan code on any failure (initial build still running, FTS5
+  unavailable, sqlite3 error). Search never goes "down".
+- Architecture is **Scatter-Gather**: FTS5 returns `(conv_uuid,
+  message_uuid)` pairs; the existing Python `create_snippet`/sort
+  code runs on the matched conversations only (warm via FileCache).
+  Result: byte-for-byte identical `SearchResult` shape to the linear
+  path for whole-word queries.
+- The CC image watcher (`backend/cc_image_watcher.py:scan_once`) runs
+  the search-index drift pass once per scan (5s); failures in either
+  pass are isolated.
+
+If you change the schema, bump `backend/search_index.SCHEMA_VERSION`
+and the next process startup will drop+rebuild on its own.
+
 #### Web UI Refresh button (Build-9)
 
 The sidebar **Refresh** button owns the full pipeline — capture + fetch — so the user never has to drop to the CLI to re-capture credentials.

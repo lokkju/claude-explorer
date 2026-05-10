@@ -92,28 +92,52 @@ def scan_once() -> int:
     """Walk every file under ``~/.claude/image-cache/`` and ensure it
     has been copied into the permanent cache. Returns the count of
     paths newly handled this pass (i.e. not in ``_seen`` before).
+
+    Side effect: also runs the search-index drift-detection pass
+    (:func:`backend.search_index.update_drifted_files`). This is the
+    same 5s cadence and same lifespan-spawned task — co-locating the
+    two passes avoids spinning up a second watcher loop. Failures in
+    each pass are isolated by their own try/except so an image-cache
+    error can't break search and vice versa.
     """
     root = _live_image_cache_root()
-    if not root.exists():
-        return 0
     handled = 0
-    for path in root.rglob("*"):
-        if path in _seen or not path.is_file():
-            continue
-        if path.suffix.lower() not in ALLOWED_SUFFIXES:
+    if root.exists():
+        for path in root.rglob("*"):
+            if path in _seen or not path.is_file():
+                continue
+            if path.suffix.lower() not in ALLOWED_SUFFIXES:
+                _seen.add(path)
+                continue
+            sess = path.parent.name
+            try:
+                copy_marker_image_to_cache(str(path), sess)
+            except Exception:  # noqa: BLE001
+                logger.exception("watcher: failed to cache %s", path)
+                # Don't add to _seen so a transient error retries next pass.
+                continue
             _seen.add(path)
-            continue
-        sess = path.parent.name
-        try:
-            copy_marker_image_to_cache(str(path), sess)
-        except Exception:  # noqa: BLE001
-            logger.exception("watcher: failed to cache %s", path)
-            # Don't add to _seen so a transient error retries next pass.
-            continue
-        _seen.add(path)
-        handled += 1
-    if handled:
-        logger.info("CC image watcher: handled %d new path(s) this pass", handled)
+            handled += 1
+        if handled:
+            logger.info("CC image watcher: handled %d new path(s) this pass", handled)
+
+    # Search-index drift pass. Isolated from the image-cache pass —
+    # any error here is logged and swallowed; image-cache continues to
+    # run regardless.
+    try:
+        from backend.search_index import get_search_index, update_drifted_files
+        from backend.store import ConversationStore
+
+        idx = get_search_index()
+        if idx is not None and idx.is_ready():
+            updated = update_drifted_files(ConversationStore(), index=idx)
+            if updated:
+                logger.info(
+                    "search index drift pass: re-indexed %d file(s)", updated
+                )
+    except Exception:  # noqa: BLE001
+        logger.exception("watcher: search-index drift pass failed")
+
     return handled
 
 
