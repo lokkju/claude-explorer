@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star, ImageOff } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MessageAttachments } from './MessageAttachments'
@@ -8,7 +8,25 @@ import { useSettings } from '@/contexts/SettingsContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { dedupeImageFiles } from '@/lib/imageFiles'
+import {
+  recordImageFailure,
+  isImageFailureTombstoned,
+  subscribeImageFailures,
+} from '@/lib/imageFailureRegistry'
 import type { Message, ContentBlock, ImageFile } from '@/lib/types'
+
+/**
+ * Subscribe to the image-failure registry so a component re-renders
+ * the moment ANY image URL crosses the failure threshold (a sibling
+ * referencing the same URL might have just tombstoned it).
+ */
+function useImageFailureTombstone(url: string): boolean {
+  return useSyncExternalStore(
+    subscribeImageFailures,
+    () => isImageFailureTombstoned(url),
+    () => false, // SSR / hydration: never report tombstoned on first paint
+  )
+}
 
 interface MessageBubbleProps {
   message: Message
@@ -401,13 +419,18 @@ function CcImageMarkerTile({
 }) {
   const [errored, setErrored] = useState(false)
   const [retried, setRetried] = useState(false)
+  // V1 polish: once a URL has failed >= 10x in this session, render
+  // the fallback tile directly without issuing another <img> request.
+  // The per-component errored state below resets on remount (scroll
+  // out of viewport, navigate away/back, etc.); the registry persists.
+  const tombstoned = useImageFailureTombstone(url)
   // P4d: on the first <img> error, swap to a cache-busted URL and let the
   // browser retry once. The backend /api/cc-image already falls back to
   // the permanent on-disk cache (see P4b, commit 4032c5a), so this also
   // catches transient network hiccups before showing the friendly
   // fallback tile.
   const finalUrl = retried ? `${url}${url.includes('?') ? '&' : '?'}retry=1` : url
-  if (errored) {
+  if (errored || tombstoned) {
     return (
       <button
         type="button"
@@ -442,6 +465,7 @@ function CcImageMarkerTile({
         decoding="async"
         draggable={false}
         onError={() => {
+          recordImageFailure(url)
           if (!retried) {
             setRetried(true)
           } else {
@@ -510,13 +534,18 @@ function InlineImageBlock({
   if (!source) return null
   const src = imageSourceUrl(source)
   if (!src) return null
+  // V1 polish: session-level tombstone after 10 failures stops the
+  // browser from re-fetching this URL on every remount. Only network
+  // URLs get tombstoned — data: URLs are loaded inline and can't fail
+  // a network request anyway.
+  const isNetworkUrl = !src.startsWith('data:')
+  const tombstoned = useImageFailureTombstone(isNetworkUrl ? src : '')
   // P4d: retry once with a cache-buster on the first error, but only for
   // network URLs — base64 / data: URLs can't be cache-busted, so for
   // those we skip straight to the fallback as before.
-  const isNetworkUrl = !src.startsWith('data:')
   const finalSrc =
     retried && isNetworkUrl ? `${src}${src.includes('?') ? '&' : '?'}retry=1` : src
-  if (errored) {
+  if (errored || tombstoned) {
     return (
       <button
         type="button"
@@ -547,6 +576,9 @@ function InlineImageBlock({
         decoding="async"
         draggable={false}
         onError={() => {
+          if (isNetworkUrl) {
+            recordImageFailure(src)
+          }
           if (!retried && isNetworkUrl) {
             setRetried(true)
           } else {
