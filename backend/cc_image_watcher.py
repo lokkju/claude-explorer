@@ -45,13 +45,21 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_interval() -> float:
-    """Polling interval in seconds. Overridable for testing /
-    aggressive deployments via ``CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC``.
+    """Polling interval in seconds. Overridable via
+    ``CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC``.
 
-    Default 60s: Claude Code rotates image-cache files on the order of
-    minutes-to-hours, not seconds, so polling more aggressively just
-    burns wakeups. Lower values trade idle cost for tighter latency
-    against fast rotations.
+    Default 5s. The watcher is the only line of defense against CC
+    rotating an image off disk before any reader sees it. CC's
+    rotation cadence is undocumented and not guaranteed to be slow —
+    we observed at least one user complaint where an image vanished
+    within hours of creation, before any conversation fetch could
+    capture it. A 5s scan over a tiny tree (handful of files) is
+    cheap; the cost of MISSING an image (permanent data loss) far
+    outweighs the cost of an extra wakeup.
+
+    Earlier history: this was 5s, then bumped to 60s as a wakeup-cost
+    optimization (08e9458). V1-readiness reverted it: data integrity
+    > idle CPU.
     """
     raw = os.environ.get("CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC")
     if raw:
@@ -61,7 +69,7 @@ def _resolve_interval() -> float:
             logger.warning(
                 "Bad CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC=%r; using default", raw
             )
-    return 60.0
+    return 5.0
 
 
 SCAN_INTERVAL_SEC = _resolve_interval()
