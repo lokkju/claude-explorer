@@ -379,6 +379,193 @@ def reindex_search(full: bool) -> None:
         click.echo(f"Done. Re-indexed {updated} file(s).")
 
 
+_PLACEHOLDER_TEXT = "This block is not supported on your current device yet."
+
+
+@main.command("rehydrate")
+@click.option(
+    "--data-dir",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=Path.home() / ".claude-exporter" / "conversations",
+    help="Where conversations live.",
+)
+@click.option(
+    "--credentials",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path.home() / ".claude-exporter" / "credentials.json",
+    help="Path to credentials.json.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Cap on number of conversations to attempt (default: all).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="List candidates without re-fetching.",
+)
+def rehydrate(
+    data_dir: Path,
+    credentials: Path,
+    limit: int | None,
+    dry_run: bool,
+) -> None:
+    """Re-fetch on-disk Desktop conversations whose tool_use / tool_result
+    blocks are stored as the legacy "This block is not supported on your
+    current device yet." placeholder string.
+
+    Background: claude.ai's chat_conversations API only returns
+    structured tool blocks when ``?render_all_tools=true`` is set. Our
+    fetcher has used that flag since 2026-03-09 (commit c94ce6f), but
+    conversations fetched BEFORE that date are stuck with the legacy
+    placeholder strings. This command finds them and re-fetches with the
+    correct flag.
+
+    claude.ai aggressively garbage-collects old Desktop conversations,
+    so many candidates will return 404 — those are logged and skipped
+    (not retried; the data is upstream-gone).
+
+    Idempotent. Re-runs are cheap because already-rehydrated
+    conversations no longer have the placeholder + empty content[]
+    pattern that flags them as candidates.
+    """
+    import json
+    import time
+    from collections import defaultdict
+
+    from fetcher.bulk_fetch import ClaudeFetcher
+    from fetcher.credentials import load_credentials
+
+    click.echo(f"Scanning {data_dir} for placeholder-affected conversations...")
+
+    # Discover the on-disk layout (by-org/<org>/<uuid>.json or flat <uuid>.json).
+    by_org_root = data_dir / "by-org"
+    if by_org_root.exists():
+        candidate_paths = sorted(by_org_root.glob("*/*.json"))
+    else:
+        candidate_paths = sorted(data_dir.glob("*.json"))
+
+    # Identify candidates: file contains the placeholder string AND no
+    # message has populated content[] (meaning the structured blocks are
+    # entirely missing, not just nested-as-verbatim-file-content).
+    candidates: list[dict] = []
+    for path in candidate_paths:
+        try:
+            raw = path.read_text()
+        except OSError:
+            continue
+        if _PLACEHOLDER_TEXT not in raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        has_structured_content = any(
+            (msg.get("content") or [])
+            for msg in (data.get("chat_messages") or [])
+        )
+        if has_structured_content:
+            continue
+        org_id = data.get("organization_id")
+        if not org_id:
+            org_id = path.parent.name if by_org_root.exists() else None
+        if not org_id:
+            click.echo(
+                f"  ⚠ {path.name}: cannot determine organization_id; skipping",
+                err=True,
+            )
+            continue
+        candidates.append({
+            "path": path,
+            "uuid": data.get("uuid", path.stem),
+            "org_id": org_id,
+            "name": data.get("name", "")[:60],
+        })
+
+    if limit is not None:
+        candidates = candidates[:limit]
+
+    click.echo(f"Found {len(candidates)} candidate conversation(s).")
+    if not candidates:
+        return
+    if dry_run:
+        for c in candidates:
+            click.echo(
+                f"  {c['uuid']} (org {c['org_id'][:8]}) {c['name']!r}"
+            )
+        return
+
+    # Group by org so we instantiate one ClaudeFetcher per org.
+    by_org: dict[str, list[dict]] = defaultdict(list)
+    for c in candidates:
+        by_org[c["org_id"]].append(c)
+
+    creds = load_credentials(credentials)
+
+    rescued = 0
+    upstream_gone = 0
+    errors = 0
+
+    for org_id, org_candidates in by_org.items():
+        # Build the orgs list for ClaudeFetcher (it requires its own
+        # primary_org_id to be one of the entries).
+        orgs_for_fetcher = [
+            {"uuid": o.get("uuid"), "name": o.get("name")}
+            for o in (creds.get("orgs") or [])
+        ]
+        if org_id not in {o["uuid"] for o in orgs_for_fetcher}:
+            # Fallback: synthesize a one-entry list. Matches the on-disk
+            # convention; the API only cares about the uuid in the URL.
+            orgs_for_fetcher = [{"uuid": org_id, "name": org_id}]
+
+        fetcher = ClaudeFetcher(
+            session_key=creds["session_key"],
+            orgs=orgs_for_fetcher,
+            primary_org_id=org_id,
+            output_dir=data_dir,
+            cf_bm=creds.get("cf_bm"),
+            cf_clearance=creds.get("cf_clearance"),
+            verbose=False,
+        )
+
+        click.echo(
+            f"Re-fetching {len(org_candidates)} candidate(s) for org "
+            f"{org_id[:8]}..."
+        )
+        for c in org_candidates:
+            try:
+                full = fetcher.fetch_conversation(c["uuid"])
+            except Exception as e:  # noqa: BLE001
+                errors += 1
+                click.echo(
+                    f"  ⚠ {c['uuid']} {c['name']!r}: {e}", err=True
+                )
+                time.sleep(0.3)
+                continue
+            if full is None:
+                upstream_gone += 1
+                click.echo(
+                    f"  ❌ {c['uuid']} {c['name']!r}: 404 (upstream-gone)"
+                )
+            else:
+                # save_conversation downloads file attachments + injects
+                # organization metadata + atomic-writes to by-org/<org>/.
+                fetcher.save_conversation(full)
+                rescued += 1
+                click.echo(
+                    f"  ✅ {c['uuid']} {c['name']!r}: rehydrated"
+                )
+            time.sleep(0.3)
+
+    click.echo("")
+    click.echo("Done.")
+    click.echo(f"  rescued:        {rescued}")
+    click.echo(f"  upstream-gone:  {upstream_gone}")
+    click.echo(f"  errors:         {errors}")
+
+
 @main.command("warm-cc-cache")
 @click.option(
     "--limit",
