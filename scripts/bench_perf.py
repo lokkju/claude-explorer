@@ -11,11 +11,11 @@ This script hits both endpoints N times each, discards the first call as
 cold-cache warm-up, and prints mean / median / p95 / max in milliseconds
 so we can ship article numbers we actually believe.
 
-Usage (server must be running on http://localhost:8000):
+Usage (server must be running on http://localhost:8765):
 
     uv run python scripts/bench_perf.py
     uv run python scripts/bench_perf.py --runs 20 --query handshake
-    uv run python scripts/bench_perf.py --base http://localhost:9000
+    uv run python scripts/bench_perf.py --base http://localhost:8766
 
 The harness uses urllib (stdlib) so it has zero dependencies; it deliberately
 does not start its own server because we want to measure real on-disk
@@ -105,7 +105,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark search + list endpoints.")
     parser.add_argument(
         "--base",
-        default="http://localhost:8000",
+        default="http://localhost:8765",
         help="Base URL for the running Claude Explorer backend",
     )
     parser.add_argument(

@@ -13,7 +13,7 @@ backend acts as a same-origin shim so:
   - ``MessageAttachments`` <img> tags ``src="/api/<org>/files/<file>/thumbnail"``
     work without CORS gymnastics.
   - The Markdown export's image refs render in any Markdown viewer that
-    can reach localhost:8000.
+    can reach localhost:8765.
   - The PDF export's WeasyPrint pass can fetch the bytes through the
     same URL.
 

@@ -195,7 +195,7 @@ export const test = base.extend<Fixtures>({
       // default below — or by an extraRoutes/per-test override — falls
       // through to here, gets a noisy 500, and surfaces as a test
       // failure instead of silently leaking to whatever backend is
-      // running on :8000. This is the load-bearing safety net for the
+      // running on :8765. This is the load-bearing safety net for the
       // whole mock-data-conversion plan.
       // -----------------------------------------------------------------
       await page.route('**/api/**', (route: Route) => {

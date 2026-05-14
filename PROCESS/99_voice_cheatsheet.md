@@ -36,6 +36,22 @@ Every part after #1 opens with a recap + link to the prior part:
 - **H3** for subsections: `### Guiding Principles`, `### CRUD Class Design`, `### Design Considerations`
 - Keep them short and declarative. No gerunds-as-headers unless required.
 
+## Section openings
+
+When opening a major section (especially *Install / Setup / First Run* sections), lead with the **named product or tool**, not with meta-framing about how to approach it.
+
+- ❌ *"The fastest way to get value out of this project is to treat it like a local tool you can run in an afternoon..."* (meta-framing — tells the reader how to think about the thing before introducing the thing; *"in an afternoon"* also ages badly the moment the install gets faster)
+- ✅ *"`claude-explorer` is a local tool you can get running in just a few minutes..."* (direct — the product name in backticks is the first thing the reader sees, and the time-to-value claim is verifiable today)
+
+**Time-to-value claims must reflect the current install.** If you write *"runs in an afternoon"* and the next refactor compresses install to one command, the article reads as stale even though every other fact is true. Either keep the claim ground-truth-current, or drop it and let the bash block speak for itself.
+
+**Early forward-references are cheap insurance.** If a follow-on article in the series will earn its own dedicated teaser at the end of this part, a one-line forward hook in the *body* (often the Install section opener or the introductory paragraph) catches readers who don't scroll all the way through. When the choice is between a voice flourish and an early hook, prefer the hook if the flourish doesn't add product value the hook would.
+
+- ❌ *"We'll keep it boring on purpose; boring is what you want from anything that handles credentials and writes thousands of files onto your machine."* (nice voice aside, but it doesn't move the reader toward the next part of the series)
+- ✅ *"We'll leave the MCP server for the next article in the series. It'll let you use the same corpus of Claude conversations to have Claude analyze itself for a bunch of different use cases."* (same prose budget, with a strategic hook the late teaser will then pay off)
+
+The article ends up with a **two-stage tease**: an early hint here, the full setup later. The late teaser feels earned rather than abrupt because the reader has already been primed.
+
 ## Sentence rhythm
 
 - Average 20–30 words.
@@ -57,6 +73,11 @@ Every part after #1 opens with a recap + link to the prior part:
   When in doubt between a period and one of the above, and the two clauses are thematically paired (contrast, parallel structure, cause/effect, reframing), avoid the period. Periods go between thematic units, not inside them.
 
 - **Prefer technical vocabulary when it fits.** Small but real: Raymond will pick *query* over *ask*, *iterate* over *loop*, *idempotent* over *safe to re-run*, when the more-technical word is accurate. This is not showing off; it's precision. The "I love it when I get to use the word isomorphic!" moment (in Tone tics) is the archetype.
+
+- **`backend` / `frontend` are adjectives; `back end` / `front end` are the noun forms.** Two words when it's the thing itself, one word when it modifies another noun.
+  - ✅ Noun (two words): *"The back end is FastAPI."* *"The front end `PATCH`es `/api/preferences`."* *"The back end serves both out of one process."*
+  - ✅ Adjective (one word): *"the FTS5 index is built at backend startup"*, *"the local backend proxy"*, *"a backend integration test"*.
+  - Code identifiers and on-disk paths (`backend.store`, `frontend/src/foo.ts`, the literal `backend/` directory in the repo) stay as written; they're Python identifiers and POSIX paths, not English nouns.
 
 ## Paragraphs
 

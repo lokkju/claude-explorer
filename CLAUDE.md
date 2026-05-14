@@ -34,7 +34,7 @@ claude-explorer fetch
 
 # Step 3: Start the web server to browse
 claude-explorer serve
-# Then open http://localhost:8000
+# Then open http://localhost:8765
 ```
 
 ### Command Reference
@@ -106,7 +106,7 @@ Start the web server to browse and export conversations.
 ```
 Options:
   --host TEXT       Host to bind to (default: 127.0.0.1)
-  --port INTEGER    Port to bind to (default: 8000)
+  --port INTEGER    Port to bind to (default: 8765)
   --reload          Enable auto-reload for development
 ```
 
@@ -212,7 +212,7 @@ Use `uv` to manage the Python virtual environment:
 uv sync
 
 # Run backend server
-uv run uvicorn backend.main:app --reload --port 8000
+uv run uvicorn backend.main:app --reload --port 8765
 
 # Run with dev dependencies
 uv sync --extra dev
@@ -235,7 +235,7 @@ npm run build  # Production build
 1. Start the backend:
    ```bash
    # On macOS with Homebrew, set library path for WeasyPrint PDF support:
-   DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --reload --port 8000
+   DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --reload --port 8765
    ```
 
 2. Start the frontend (in another terminal):

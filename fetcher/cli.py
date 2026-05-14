@@ -294,13 +294,13 @@ def mcp():
 
 @main.command()
 @click.option("--host", default="127.0.0.1", help="Host to bind to")
-@click.option("--port", default=8000, help="Port to bind to")
+@click.option("--port", default=8765, help="Port to bind to")
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")
 def serve(host: str, port: int, reload: bool):
     """Start the web server to browse conversations.
 
     The server provides both the API and the web UI.
-    Open http://localhost:8000 in your browser to view conversations.
+    Open http://localhost:8765 in your browser to view conversations.
     """
     import uvicorn
 

@@ -5,7 +5,7 @@ import { test, expect } from './fixtures';
 // mockBackend at all. Test 8 ("dialog closes automatically") needs the
 // mocked backend to be reachable AFTER the initial block lifts —
 // previously it used `route.continue()`, which would leak to the live
-// backend on :8000. With mockBackend installed first, the per-test
+// backend on :8765. With mockBackend installed first, the per-test
 // `/api` route can use `route.fallback()` to delegate to the fixture
 // mocks once `blockRequests=false`.
 //
@@ -142,7 +142,7 @@ test.describe('Connection Status', () => {
     // Install the mocked backend FIRST so its routes exist when we lift
     // the per-test block. Once `blockRequests=false`, the per-test
     // `**/api/**` handler falls through (via `route.fallback()`) to the
-    // mockBackend defaults — never to the live :8000 backend.
+    // mockBackend defaults — never to the live :8765 backend.
     await mockBackend({});
 
     let blockRequests = true;

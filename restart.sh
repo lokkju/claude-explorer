@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 
 # Kill processes on backend and frontend ports (selective, not broad pkill)
-for port in 8000 5173; do
+for port in 8765 5173; do
     pids=$(lsof -ti :$port 2>/dev/null) || true
     if [ -n "$pids" ]; then
         echo "Stopping port $port (pids: $pids)"
@@ -14,9 +14,9 @@ for port in 8000 5173; do
     fi
 done
 
-# Start backend in background
-echo "Starting backend on http://localhost:8000"
-DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --reload --port 8000 &
+# Start back end in background
+echo "Starting back end on http://localhost:8765"
+DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --reload --port 8765 &
 
 # Start frontend in background
 echo "Starting frontend on http://localhost:5173"

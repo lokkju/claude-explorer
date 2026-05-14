@@ -12,7 +12,7 @@ import { test, expect } from './fixtures'
  * mobile viewport doesn't break basic page rendering.
  *
  * M5.5: converted to the shared `./fixtures` `mockBackend` so the suite
- * runs Python-free (no live backend on :8000 → ConnectionStatus modal
+ * runs Python-free (no live backend on :8765 → ConnectionStatus modal
  * would otherwise intercept pointer events on the hamburger).
  */
 

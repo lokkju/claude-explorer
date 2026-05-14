@@ -101,7 +101,7 @@ claude-explorer serve
 
 **Options:**
 - `--host TEXT` — Host to bind (default: 127.0.0.1)
-- `--port N` — Port to bind (default: 8000)
+- `--port N` — Port to bind (default: 8765)
 - `--reload` — Enable auto-reload for development
 
 ## Troubleshooting

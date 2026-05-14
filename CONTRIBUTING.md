@@ -21,8 +21,8 @@ uv run playwright install chromium
 
 ## Running locally (dev mode)
 
-- Backend (with auto-reload):
-  `DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --reload --port 8000`
+- Back end (with auto-reload):
+  `DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --reload --port 8765`
   (On macOS the `DYLD_LIBRARY_PATH` prefix is needed for WeasyPrint; see [CLAUDE.md](./CLAUDE.md) for details.)
 - Frontend (separate dev server): `cd frontend && npm run dev`
 - Tests:

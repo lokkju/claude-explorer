@@ -11,7 +11,7 @@ A tool to extract, browse, search, and export your Claude conversation history â
 uvx claude-explorer serve
 ```
 
-That's it. Open `http://localhost:8000` in your browser and your Claude Code sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
+That's it. Open `http://localhost:8765` in your browser and your Claude Code sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
 
 If you'd rather hack on the project than install it, see [From source (for contributors)](#from-source-for-contributors) below.
 
@@ -267,7 +267,7 @@ Options:
 uv run claude-explorer serve
 ```
 
-Opens the web app at `http://localhost:8000`.
+Opens the web app at `http://localhost:8765`.
 
 #### One-button Refresh (Build-9)
 
