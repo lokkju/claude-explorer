@@ -1,0 +1,69 @@
+name: "CLA Assistant"
+
+# Run the CLA check on every PR (open + new commits) and also on issue
+# comments so contributors can re-trigger the signature check by
+# commenting "recheck" if it ever stalls.
+#
+# Uses contributor-assistant/github-action — the actively-maintained
+# fork of cla-assistant/github-action (the original is archived). The
+# action runs entirely inside this repo: no third-party service
+# dependency, signatures stored as JSON in .github/cla-signatures/.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+# Token permissions the action needs to comment on PRs, add status
+# checks, and commit signature updates back to the repo.
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  CLAAssistant:
+    runs-on: ubuntu-latest
+    # Skip the job on PR closures unless it's a "recheck" issue comment.
+    # Saves CI minutes; PRs that close without signing don't need to
+    # re-evaluate the check.
+    if: >
+      (github.event_name == 'issue_comment' && github.event.comment.body == 'recheck') ||
+      (github.event_name == 'pull_request_target' &&
+       (github.event.action == 'opened' || github.event.action == 'synchronize'))
+    steps:
+      - name: "CLA Assistant"
+        uses: contributor-assistant/github-action@v2
+        env:
+          # The default GITHUB_TOKEN is scoped to this repo only and
+          # has the write perms granted above. No PAT needed.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Where signatures get persisted. Lives in this repo so the
+          # data is portable + auditable. The path is intentionally
+          # versioned (`v1`) so a future CLA revision can start a fresh
+          # signature ledger without losing the old one.
+          path-to-signatures: '.github/cla-signatures/v1.json'
+
+          # Public URL to the CLA text contributors agree to. Using the
+          # repo-hosted CLA.md so updates ride with normal commits.
+          path-to-document: 'https://github.com/rpeck/claude-explorer/blob/main/CLA.md'
+
+          # Where signature commits land. Always main, per the project's
+          # single-trunk workflow.
+          branch: 'main'
+
+          # Allowlist for accounts whose PRs don't require signing.
+          # `rpeck` because the maintainer obviously agrees to their own
+          # CLA. `bot*` covers Dependabot, Renovate, and similar
+          # automated bumps. `*[bot]` covers GitHub App actor accounts
+          # (which use a `[bot]` suffix).
+          allowlist: rpeck,bot*,*[bot]
+
+          # Custom message strings — overridable, but the defaults are
+          # already in our voice (terse, technical). Leave commented as
+          # documentation of what's customizable.
+          # custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+          # custom-allsigned-prcomment: '✅ All contributors have signed the CLA'
+          # custom-notsigned-prcomment: 'Thanks for your contribution! Please sign the CLA at the link below.'
