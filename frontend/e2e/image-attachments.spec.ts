@@ -308,8 +308,15 @@ test.describe('Claude Code [Image: source: <path>] text markers (Pattern B)', ()
     // The marker is replaced with an image-rendering tile — either an
     // actual <img> (success path) OR a fallback button with the
     // ImageOff glyph (manual finding 2026-05-04 broken-image fallback).
+    // Cold-vite-compile + two-round-trip 404 retry render path (initial
+    // <img onError> → cache-busted retry → setErrored → fallback button)
+    // can exceed the 5s default on a freshly-started dev server. The
+    // surrounding tests already cover both success and failure paths;
+    // here we only assert the marker is replaced, so a generous timeout
+    // is the right synchronization rather than coupling to the specific
+    // request count. (Flake repro 2026-05-12, council fix.)
     const tile = bubble.locator('[data-cc-image-marker]').first()
-    await expect(tile).toBeVisible()
+    await expect(tile).toBeVisible({ timeout: 10_000 })
 
     // If rendered as <img>, the src must NOT be the raw absolute path
     // that the browser can't fetch.

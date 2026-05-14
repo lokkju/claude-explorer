@@ -2,11 +2,12 @@ import { memo, useCallback, useMemo, useState, useSyncExternalStore } from 'reac
 import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star, ImageOff } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MessageAttachments } from './MessageAttachments'
+import { SlashCommandBadge } from './SlashCommandBadge'
 import { Button } from '@/components/ui/button'
 import { useConversationLightbox } from '@/contexts/ConversationLightboxContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
-import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent } from '@/lib/utils'
+import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent, isExcludableMarker } from '@/lib/utils'
 import { dedupeImageFiles } from '@/lib/imageFiles'
 import {
   recordImageFailure,
@@ -65,6 +66,32 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
   const hasImages = imageFiles.length > 0
   const hasToolBlocks = message.content.some((b) => b.type === 'tool_use' || b.type === 'tool_result')
   const [bubbleToolsCollapsed, setBubbleToolsCollapsed] = useState(false)
+
+  // V1 polish cleanup (2026-05-13): Argless command markers
+  // (`is_command_marker=true`: `/exit`, `/clear`, `/compact`, prelude rows)
+  // are CHROME — muted SlashCommandBadge bubbles that the viewer renders
+  // for orientation but that the backend export, search, and full-conversation
+  // copy all exclude via `_is_excludable_marker` / `isExcludableMarker`.
+  // The per-block hover-revealed action overlay (copy + bookmark buttons
+  // below) calls `messageToMarkdown(message, ...)` directly, which BYPASSES
+  // the conversation-level `isExcludableMarker` filter. Without this guard,
+  // hovering an argless marker bubble and clicking the per-block copy icon
+  // would put `**You:**\n\nSession: /exit` on the clipboard — leaking chrome
+  // into a user-content surface. Apply the same predicate AT THE OUTERMOST
+  // surface (the hover overlay) so the affordance simply isn't offered.
+  //
+  // Argful markers (`/coding <prose>`, `/plan <prose>`,
+  // `is_command_marker=false`) DO render a SlashCommandBadge but carry the
+  // user's real prose, so they remain copyable AND bookmarkable — the
+  // predicate is keyed on `is_command_marker === true`, not on
+  // `slash_command` truthiness.
+  //
+  // Bookmarks are also hidden for argless chrome: a bookmark whose snippet
+  // is "Session: /exit" has no information value and breaks the mental
+  // model of bookmarks as a "save meaningful content" affordance.
+  // The tool-collapse button is naturally guarded by `hasToolBlocks` —
+  // argless markers never carry tool blocks, so no extra guard is needed.
+  const isExcludable = isExcludableMarker(message)
 
   // Issue #1 — Claude Code images (inline base64 content blocks AND
   // `[Image: source: <abs-path>]` text markers) used to open in a new
@@ -148,7 +175,7 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
               <ChevronsUpDown className="h-3.5 w-3.5" />
             </Button>
           )}
-          {conversationId && (
+          {!isExcludable && conversationId && (
             <Button
               variant="ghost"
               size="icon"
@@ -165,19 +192,21 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
               <Star className={cn('h-3.5 w-3.5', bookmarked && 'fill-amber-500')} />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 shadow-sm"
-            onClick={handleCopyMessage}
-            title="Copy message as Markdown"
-          >
-            {copied ? (
-              <Check className="h-3.5 w-3.5 text-green-500" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
-          </Button>
+          {!isExcludable && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 bg-white dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 shadow-sm"
+              onClick={handleCopyMessage}
+              title="Copy message as Markdown"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          )}
         </div>
         {bookmarked && <span data-bookmarked aria-hidden className="hidden" />}
 
@@ -193,6 +222,16 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
             </span>
           )}
         </div>
+
+        {/* Slash-command badge (V1 polish round 3, 2026-05-12). Rendered
+            ABOVE the body so the user can see which `/foo` produced the
+            bubble even when the body is the argful prompt text (e.g.
+            "Double-check your plan." for a /coding marker). The truthy
+            guard `if (message.slash_command)` correctly skips null,
+            undefined, AND the empty string. */}
+        {message.slash_command && (
+          <SlashCommandBadge command={message.slash_command} />
+        )}
 
         {/* Message content */}
         <div className="text-sm text-zinc-900 dark:text-zinc-100">

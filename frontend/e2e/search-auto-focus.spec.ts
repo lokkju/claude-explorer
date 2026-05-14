@@ -108,11 +108,13 @@ test.describe('Search — auto-focus first match on results land (V1 polish)', (
     await expect(page.locator('text=/of\\s+1\\s+match/')).toBeVisible({ timeout: 10000 })
 
     // The auto-focus effect should fire WITHOUT any click on a result.
-    // Assert the ring-2 class lands on the target message bubble; it's
-    // applied for ~2s by navigateToMatch, so use auto-retry assertion.
+    // Assert the YELLOW ring class lands on the target message bubble.
+    // (We assert `ring-yellow-400` specifically, not `ring-2`, because
+    // `ring-blue-500` is a different state — keyboard-nav selection
+    // ring — and matching `/ring-2/` would let that regress unnoticed.)
     const target = page.locator('[data-message-uuid="af-target"]')
     await expect(target).toBeVisible()
-    await expect(target).toHaveClass(/ring-2/, { timeout: 5000 })
+    await expect(target).toHaveClass(/ring-yellow-400/, { timeout: 5000 })
     await expect(target).toBeInViewport()
   })
 
@@ -160,15 +162,17 @@ test.describe('Search — auto-focus first match on results land (V1 polish)', (
 
     // Auto-focus picks match 1 (af-m1). Wait for the ring on it, then
     // wait it back out so the second navigateToMatch can re-apply.
+    // Assert the YELLOW search ring, not the generic ring-2 (which would
+    // accept the blue keyboard-nav ring and miss real regressions).
     const m1 = page.locator('[data-message-uuid="af-m1"]')
-    await expect(m1).toHaveClass(/ring-2/, { timeout: 5000 })
+    await expect(m1).toHaveClass(/ring-yellow-400/, { timeout: 5000 })
 
     // Press Cmd+G to advance to match 2. activeMatchIndex goes 0 → 1.
     await page.keyboard.press('Meta+g')
 
     // The target message gets the ring; the user is now on match 2.
     const target = page.locator('[data-message-uuid="af-target"]')
-    await expect(target).toHaveClass(/ring-2/, { timeout: 5000 })
+    await expect(target).toHaveClass(/ring-yellow-400/, { timeout: 5000 })
 
     // Crucial: the auto-focus effect must NOT fire again here. It was
     // gated on activeMatchIndex === -1; once we set 0 and then 1 it
@@ -176,8 +180,8 @@ test.describe('Search — auto-focus first match on results land (V1 polish)', (
     // would have run.
     await page.waitForTimeout(2500)
     // The target's ring may have aged out (2s timeout). Either way,
-    // m1 must NOT have the ring (which would mean the effect yanked
-    // us back).
-    await expect(m1).not.toHaveClass(/ring-2/)
+    // m1 must NOT have the yellow ring (which would mean the effect
+    // yanked us back).
+    await expect(m1).not.toHaveClass(/ring-yellow-400/)
   })
 })

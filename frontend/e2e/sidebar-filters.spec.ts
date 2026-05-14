@@ -266,4 +266,25 @@ test.describe('Sidebar title search scope (P1.2)', () => {
     // project_path contains "polish" -> row stays visible.
     await expect(page.getByText(projectPathMatch.name)).toBeVisible();
   });
+
+  test('sidebar title-search input has verbatim placeholder copy', async ({ page }) => {
+    // G7 — spec calls for the verbatim placeholder "Search titles and
+    // projects" (renamed from the legacy "Search conversations..." when
+    // the scope was widened to include project_path). toHaveAttribute
+    // asserts the literal value, not just that A placeholder exists.
+    await mockOnly(page, [summaryOnlyMatch]);
+    await page.goto('/');
+
+    const searchInput = page.getByTestId('sidebar-title-search');
+    await expect(searchInput).toBeVisible();
+    await expect(searchInput).toHaveAttribute('placeholder', 'Search titles and projects');
+
+    // Bidirectional check: the placeholder must NOT be empty or the
+    // legacy "Search conversations..." copy (the rename is load-bearing
+    // for the user understanding that project_path is also queried).
+    const ph = await searchInput.getAttribute('placeholder');
+    expect(ph).toBeTruthy();
+    expect(ph).not.toBe('Search conversations...');
+    expect(ph).not.toBe('');
+  });
 });

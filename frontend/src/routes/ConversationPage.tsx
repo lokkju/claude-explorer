@@ -18,6 +18,7 @@ import { useBookmarks } from '@/contexts/BookmarkContext'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
 import { PinScopeButton } from '@/components/search/PinScopeButton'
 import { MarkdownExportDialog } from '@/components/conversation/MarkdownExportDialog'
+import { SessionPreludeAffordance } from '@/components/conversation/SessionPreludeAffordance'
 import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
 
@@ -58,6 +59,18 @@ export function ConversationPage() {
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [showTopButton, setShowTopButton] = useState(false)
   const [activeCompactIdx, setActiveCompactIdx] = useState<number | null>(null)
+  // V1 polish (2026-05-12, council round 2): CC sessions that opened with
+  // one or more /exit runs have a "prelude" of synthetic markers BEFORE
+  // the first real user turn (each marker absorbs its canned-response
+  // assistant via `assistant_canned_response_consumed`). We hide them by
+  // default so scroll-to-top lands on the real conversation start, and
+  // surface a click-to-reveal affordance above the stream.
+  const [showPrelude, setShowPrelude] = useState(false)
+  // Reset the toggle when navigating between conversations so the next
+  // CC session also opens with the prelude hidden.
+  useEffect(() => {
+    setShowPrelude(false)
+  }, [uuid])
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -77,6 +90,22 @@ export function ConversationPage() {
 
   const isCC = conversation?.source === 'CLAUDE_CODE'
   const hasCompactMarkers = (conversation?.compact_markers ?? []).length > 0
+
+  // V1 polish (2026-05-12, council round 2): prelude markers (leading
+  // `is_prelude: true` rows on CC sessions that opened with /exit) are
+  // hidden by default. The `SessionPreludeAffordance` button above the
+  // stream toggles `showPrelude`, which un-filters them.
+  //
+  // We filter at the LIST level (not inside MessageBubble) so the keyboard
+  // navigation registration and the scrollTop landing position both ignore
+  // the hidden messages — otherwise scroll-to-top would land on a hidden
+  // bubble and the user would still see the prelude dominate.
+  const preludeHiddenCount = conversation?.prelude_hidden_count ?? 0
+  const visibleMessages = useMemo(() => {
+    if (!conversation?.messages) return []
+    if (showPrelude || preludeHiddenCount === 0) return conversation.messages
+    return conversation.messages.filter((m) => !m.is_prelude)
+  }, [conversation?.messages, showPrelude, preludeHiddenCount])
 
   const focusCompactMarker = useCallback((index: number) => {
     if (compactMarkers.length === 0) return
@@ -124,8 +153,16 @@ export function ConversationPage() {
   // message at the same numeric index.
   useEffect(() => {
     if (conversation?.messages) {
+      // V1 polish (2026-05-12, council round 2): also exclude `is_prelude`
+      // messages when the prelude is collapsed, so arrow-key navigation
+      // doesn't try to focus a hidden bubble. When the user clicks "show"
+      // the affordance, showPrelude flips and this re-runs, re-including
+      // the prelude rows.
       const messageInfos: MessageInfo[] = conversation.messages
-        .filter((msg) => messageHasVisibleContent(msg, showToolCalls))
+        .filter((msg) => {
+          if (!showPrelude && msg.is_prelude) return false
+          return messageHasVisibleContent(msg, showToolCalls)
+        })
         .map((msg) => ({
           uuid: msg.uuid,
           sender: msg.sender,
@@ -135,7 +172,7 @@ export function ConversationPage() {
     return () => {
       setMessages([])
     }
-  }, [conversation?.messages, showToolCalls, setMessages, setMessagesAndPinSelection])
+  }, [conversation?.messages, showToolCalls, showPrelude, setMessages, setMessagesAndPinSelection])
 
   // Auto-scroll to selected message
   useEffect(() => {
@@ -510,7 +547,12 @@ export function ConversationPage() {
           onScroll={handleScroll}
         >
           <div className="mx-auto max-w-3xl space-y-6">
-            {conversation.messages.map((message) => {
+            <SessionPreludeAffordance
+              hiddenCount={preludeHiddenCount}
+              expanded={showPrelude}
+              onToggle={() => setShowPrelude((v) => !v)}
+            />
+            {visibleMessages.map((message) => {
               const selectedId = getSelectedMessageId()
               const isSelected = focusArea === 'detail' && message.uuid === selectedId
               const compactEntry = compactMarkerByUuid.get(message.uuid)

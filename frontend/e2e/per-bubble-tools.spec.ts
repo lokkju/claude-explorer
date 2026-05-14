@@ -99,3 +99,97 @@ test.describe('Per-bubble tool-block toggle', () => {
     await expect(bubble).not.toHaveAttribute('data-collapsed', '');
   });
 });
+
+/**
+ * M3 from PLANS/articles/part2_revision_plan.md.
+ *
+ * Article promise (line ~208 of part_2_web_app.md):
+ *
+ *   "alongside the Markdown and PDF export buttons, there's an
+ *    *Expand / Collapse All Tools* control... It only appears when
+ *    the Tools toggle is on."
+ *
+ * Implementation: ConversationPage.tsx wraps the Expand/Collapse
+ * button in `{showToolCalls && (...)}`. This test pins both halves:
+ *
+ *   (a) Tools toggle OFF  -> Expand/Collapse button is NOT in DOM.
+ *   (b) Tools toggle ON   -> Expand/Collapse button IS in DOM and
+ *       clicking it flips every tool bubble between collapsed and
+ *       expanded states at once.
+ */
+test.describe('M3: Expand/Collapse All Tools visibility-gated on Tools toggle', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockBackend(page);
+  });
+
+  test('Expand/Collapse button is hidden when Tools is off, visible when Tools is on', async ({
+    page,
+  }) => {
+    await page.goto(`/conversations/${FAKE_UUID}`);
+
+    // Confirm we land in a known state. The default for showToolCalls
+    // is false (SettingsContext.tsx:61), so Tools is off and the
+    // Expand button must be absent.
+    const toolsButton = page.getByRole('button', { name: /^Tools$/ });
+    await expect(toolsButton).toBeVisible();
+
+    // Settle signal: the conversation header has rendered if the
+    // Tools button is visible — the conditional Expand button has
+    // had its chance to render or not.
+    const expandButton = page.getByRole('button', { name: /^(Expand|Collapse)$/ });
+    await expect(expandButton).toHaveCount(0);
+
+    // Flip Tools on. The conditional render means the Expand button
+    // appears in the DOM.
+    await toolsButton.click();
+    await expect(expandButton).toBeVisible();
+
+    // Flip Tools back off. The button disappears again.
+    await toolsButton.click();
+    await expect(expandButton).toHaveCount(0);
+  });
+
+  test('clicking Expand/Collapse forces every tool block open or closed', async ({
+    page,
+  }) => {
+    await page.goto(`/conversations/${FAKE_UUID}`);
+
+    // Tools ON so the Expand button + tool blocks render.
+    await page.getByRole('button', { name: /^Tools$/ }).click();
+
+    const bubble = page.locator('[data-message-uuid="msg-tools"]');
+    await expect(bubble).toBeVisible();
+
+    // The tool-block expanded state shows the JSON `<pre>` (for
+    // tool_use) and the result body (for tool_result). When
+    // expandAllTools=false (the default), neither is visible. When
+    // true, both are. We pin behaviour by checking the rendered
+    // contents, not internal CSS state.
+    const inputJson = bubble.locator('pre', { hasText: '"path"' });
+    const resultBody = bubble.locator('text=result body');
+
+    // Initial state: tool blocks are collapsed → JSON/body hidden.
+    await expect(inputJson).toHaveCount(0);
+    await expect(resultBody).toHaveCount(0);
+
+    // The Expand button label reflects the NEXT action, not the
+    // current state. When expandAllTools=false, button reads
+    // "Expand". After clicking, button reads "Collapse".
+    const expandButton = page.getByRole('button', { name: /^(Expand|Collapse)$/ });
+    await expect(expandButton).toHaveText(/^Expand$/);
+
+    // Click to force-expand. Settle signal: the JSON content
+    // appears in DOM.
+    await expandButton.click();
+    await expect(expandButton).toHaveText(/^Collapse$/);
+    await expect(inputJson).toBeVisible();
+    await expect(resultBody).toBeVisible();
+
+    // Click to force-collapse. Settle signal: the JSON content is
+    // gone again.
+    await expandButton.click();
+    await expect(expandButton).toHaveText(/^Expand$/);
+    await expect(inputJson).toHaveCount(0);
+    await expect(resultBody).toHaveCount(0);
+  });
+});

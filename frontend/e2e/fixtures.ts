@@ -49,6 +49,21 @@ export interface MockBackendOptions {
    * mutate this state in-memory.
    */
   preferences?: Record<string, unknown>
+  /**
+   * G1 audit — pass a caller-owned prefs state map so multiple Pages
+   * (e.g. two browser contexts in a single test) can share the same
+   * server-side prefs blob. Behavior:
+   *   - When provided, mockBackend uses this object's `data` map for
+   *     GET / merges PATCH bodies into it / overwrites it on PUT.
+   *   - The `preferences` option is ignored in this mode (caller seeds
+   *     the shared state directly).
+   *   - When NOT provided, behavior is unchanged: each call gets its
+   *     own private state. Existing tests remain isolated by default.
+   *
+   * Used by `preferences-cross-context.spec.ts` to prove cross-context
+   * persistence without spinning up a real uvicorn process.
+   */
+  sharedPrefsState?: { data: Record<string, unknown> }
   /** Optional extra route handlers (priority over the defaults). */
   extraRoutes?: (page: Page) => Promise<void>
 }
@@ -163,9 +178,16 @@ export const test = base.extend<Fixtures>({
 
       // Per-test mutable preferences state. Deep-copy seed so callers
       // can safely reuse the same object across tests.
-      const prefsState: { data: Record<string, unknown> } = {
-        data: JSON.parse(JSON.stringify(opts.preferences ?? {})),
-      }
+      //
+      // G1 audit: when `sharedPrefsState` is supplied, the caller owns
+      // the map and we wire route handlers to mutate it directly — that
+      // lets two different page contexts in the same test see each
+      // other's PATCHes. Default path (no sharedPrefsState) is unchanged
+      // and remains test-isolated.
+      const prefsState: { data: Record<string, unknown> } =
+        opts.sharedPrefsState ?? {
+          data: JSON.parse(JSON.stringify(opts.preferences ?? {})),
+        }
 
       // -----------------------------------------------------------------
       // Catch-all leakage guard (registered FIRST so LIFO order runs it

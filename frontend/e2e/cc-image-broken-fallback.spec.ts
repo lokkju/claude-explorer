@@ -58,13 +58,18 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
 
     await page.goto(`/conversations/${C}`)
 
-    const tile = page.locator('[data-cc-image-marker]').first()
+    // F3 audit: scope to THIS message's tile rather than .first(). The
+    // current fixture happens to render only one tile, but a sibling
+    // marker added later would silently shift coverage onto the wrong
+    // tile. Anchor on the message uuid that owns the marker.
+    const messageScope = page.locator('[data-message-uuid="msg-marker"]')
+    const tile = messageScope.locator('[data-cc-image-marker]')
     await expect(tile).toBeVisible({ timeout: 5000 })
 
     // Wait for the <img> to error (network 404 has been mocked).
     // Friendly fallback: the same button gains data-cc-image-broken
     // and shows an ImageOff icon + filename instead of the <img>.
-    const fallback = page.locator('[data-cc-image-marker][data-cc-image-broken]').first()
+    const fallback = messageScope.locator('[data-cc-image-marker][data-cc-image-broken]')
     await expect(fallback).toBeVisible({ timeout: 5000 })
     await expect(fallback).toContainText('14.png')
 
@@ -90,9 +95,12 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
 
     await page.goto(`/conversations/${C}`)
 
-    const tile = page.locator('[data-content-image]').first()
+    // F3 audit: scope to msg-inline so a future sibling fixture can't
+    // shift coverage to the wrong tile.
+    const messageScope = page.locator('[data-message-uuid="msg-inline"]')
+    const tile = messageScope.locator('[data-content-image]')
     await expect(tile).toBeVisible({ timeout: 5000 })
-    const fallback = page.locator('[data-content-image][data-content-image-broken]').first()
+    const fallback = messageScope.locator('[data-content-image][data-content-image-broken]')
     await expect(fallback).toBeVisible({ timeout: 5000 })
     await expect(fallback.locator('img')).toHaveCount(0)
   })
@@ -115,7 +123,9 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
 
     await page.goto(`/conversations/${C}`)
 
-    const fallback = page.locator('[data-cc-image-marker][data-cc-image-broken]').first()
+    // F3 audit: scope to msg-marker-copy.
+    const messageScope = page.locator('[data-message-uuid="msg-marker-copy"]')
+    const fallback = messageScope.locator('[data-cc-image-marker][data-cc-image-broken]')
     await expect(fallback).toBeVisible({ timeout: 5000 })
 
     // Clearer copy: explicitly says the image is not in cache (not just
@@ -171,10 +181,14 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
 
     await page.goto(`/conversations/${C}`)
 
-    const tile = page.locator('[data-cc-image-marker]').first()
+    // F3 audit: scope to cc-marker-retry message.
+    const messageScope = page.locator('[data-message-uuid="cc-marker-retry"]')
+    const tile = messageScope.locator('[data-cc-image-marker]')
     await expect(tile).toBeVisible({ timeout: 5000 })
     await expect(tile.locator('img')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('[data-cc-image-marker][data-cc-image-broken]')).toHaveCount(0)
+    await expect(
+      messageScope.locator('[data-cc-image-marker][data-cc-image-broken]'),
+    ).toHaveCount(0)
     expect(calls).toBeGreaterThanOrEqual(2)
   })
 })

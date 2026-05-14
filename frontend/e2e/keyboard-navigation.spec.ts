@@ -313,18 +313,44 @@ test.describe('Accessibility', () => {
 
   // B9 — Cmd+R (or Ctrl+R) is intercepted: it triggers a React Query
   // invalidation of the conversation list rather than a full browser
-  // reload. The article calls this out (line 135) because losing the
+  // reload. The article calls this out (line ~154) because losing the
   // single-page state on every refresh is the classic SPA gotcha.
-  test('Cmd+R invalidates the conversation list query without a browser reload (B9)', async ({ page, mockBackend }) => {
-    await mockBackend({});
+  //
+  // V1 update (Stream C, 2026-05-11): Cmd+R is no longer a plain
+  // queryClient.invalidateQueries() — it now fires the same Build-9
+  // capture+fetch SSE pipeline as the sidebar Refresh button (the
+  // article promised "the same one the sidebar button triggers", and
+  // the binding now matches the promise). The B9 test was updated to
+  // pin the new behavior: Cmd+R hits /api/fetch/refresh, the SSE
+  // completes, and the list-invalidation that follows still re-fetches
+  // /api/conversations. The no-browser-reload sentinel still holds.
+  // Detailed behavior is covered by cmd-r-refresh-pipeline.spec.ts.
+  test('Cmd+R invalidates the conversation list (via the refresh pipeline) without a browser reload (B9)', async ({ page, mockBackend }) => {
     let listRequestCount = 0
-    await page.route('**/api/conversations*', (route) => {
-      const url = new URL(route.request().url())
-      if (!/\/api\/conversations\/[^/?]+/.test(url.pathname)) {
-        listRequestCount += 1
-      }
-      route.fulfill({ contentType: 'application/json', body: '[]' })
-    })
+    await mockBackend({
+      extraRoutes: async (p) => {
+        await p.route('**/api/conversations*', (route) => {
+          const url = new URL(route.request().url())
+          if (!/\/api\/conversations\/[^/?]+/.test(url.pathname)) {
+            listRequestCount += 1
+            route.fulfill({ contentType: 'application/json', body: '[]' })
+          } else {
+            route.fallback()
+          }
+        })
+        // Mock the refresh SSE so the pipeline completes promptly
+        // and the post-complete invalidateQueries() runs.
+        await p.route('**/api/fetch/refresh*', async (route) => {
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body:
+              'data: {"type":"start","message":"Fetching..."}\n\n' +
+              'data: {"type":"complete","message":"Fetched 0 conversations.","current":0,"total":0}\n\n',
+          })
+        })
+      },
+    });
 
     await page.goto('/')
     await expect.poll(() => listRequestCount).toBeGreaterThan(0)
@@ -340,7 +366,9 @@ test.describe('Accessibility', () => {
     // Use Meta+R on macOS-style keyboards; Playwright accepts the alias.
     await page.keyboard.press('Meta+r')
 
-    // List re-fetched (query invalidation).
+    // After the refresh SSE 'complete' event, the pipeline calls
+    // queryClient.invalidateQueries({ queryKey: ['conversations'] }),
+    // so the list re-fetches. This poll is the settle signal.
     await expect.poll(() => listRequestCount).toBeGreaterThan(before)
     // Sentinel survived → no browser reload.
     const sentinel = await page.evaluate(() => {

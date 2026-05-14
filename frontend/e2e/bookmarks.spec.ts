@@ -196,6 +196,12 @@ test.describe('Message bookmarks (Build-4)', () => {
 
     const star = bubble.getByRole('button', { name: /bookmark/i });
     await expect(star).toBeVisible();
+    // The star sits in a `opacity-0 transition-opacity group-hover:opacity-100`
+    // wrapper (~150ms Tailwind transition). Playwright's `.click()` happily
+    // dispatches at any opacity > 0, which on cold render can land mid-transition
+    // and miss. Wait for the opacity transition to settle to opacity:1 before
+    // clicking. (Flake repro 2026-05-12, council fix.)
+    await expect(star).toHaveCSS('opacity', '1');
     await star.click();
 
     // After bookmarking, star should reflect filled state via aria.
@@ -203,7 +209,9 @@ test.describe('Message bookmarks (Build-4)', () => {
 
     // Click again to remove.
     await bubble.hover();
-    await bubble.getByRole('button', { name: /bookmark/i }).click();
+    const star2 = bubble.getByRole('button', { name: /bookmark/i });
+    await expect(star2).toHaveCSS('opacity', '1');
+    await star2.click();
     await expect(bubble.locator('[data-bookmarked]')).toHaveCount(0);
   });
 
@@ -211,6 +219,19 @@ test.describe('Message bookmarks (Build-4)', () => {
     await page.goto(`/conversations/${FAKE_UUID}`);
     const bubble = page.locator('[data-message-uuid="msg-B"]');
     await bubble.click();
+    // The 'b' handler reads `getSelectedMessageId()` from React context.
+    // `bubble.click()` triggers two state updates (`setSelectedMessageIndex`
+    // on the wrapper, then `setFocusArea('detail')` on the bubbling outer
+    // container), and `page.keyboard.press('b')` can fire before React has
+    // committed either, leading to a stale read that bookmarks msg-A (the
+    // default index-0 selection). The bubble's inner content div gets
+    // `ring-2 ring-blue-500 ring-offset-2` *only* when both states have
+    // committed (`isKeyboardSelected = focusArea === 'detail' && uuid match`),
+    // so waiting for that ring is a deterministic commit barrier.
+    // TODO: replace with a `data-testid` or `aria-selected` attribute when
+    // the bubble selection state gets a dedicated marker.
+    // (Flake repro 2026-05-12, council fix.)
+    await expect(bubble.locator('.ring-2')).toBeVisible();
     await page.keyboard.press('b');
 
     await expect(bubble.locator('[data-bookmarked]')).toHaveCount(1);

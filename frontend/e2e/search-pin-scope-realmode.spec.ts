@@ -57,14 +57,44 @@ const details = {
   [OTHER]: detailFor(OTHER, 'Other conversation', '/work/realmode'),
 }
 
-// Wait for the SearchPanel slide-in CSS transition (200ms) to finish so
-// the chip's bounding box reflects its final on-screen position rather
+// Wait for the SearchPanel slide-in CSS transition to finish so the
+// chip's bounding box reflects its final on-screen position rather
 // than a mid-animation snapshot.
+//
+// F6 audit: the previous implementation slept 350ms unconditionally.
+// Replace with a deterministic `transitionend` listener — fires the
+// moment the slide-in commits, never races a slow CI tick, and never
+// sleeps longer than the actual transition. A hard timeout absorbs the
+// edge case where the browser elides transitionend (e.g. panel was
+// already at final position when we attached).
 async function waitForPanelSettled(page: import('@playwright/test').Page) {
   const aside = page.locator('aside[aria-label="Search panel"]')
   await aside.waitFor({ state: 'visible' })
-  // The transition is 200ms; 350ms gives margin for slow CI runs.
-  await page.waitForTimeout(350)
+  await aside.evaluate((el) => {
+    const target = el as HTMLElement
+    const style = window.getComputedStyle(target)
+    const duration = parseFloat(style.transitionDuration) || 0
+    if (duration === 0) {
+      return new Promise<void>((r) => requestAnimationFrame(() => r()))
+    }
+    return new Promise<void>((resolve) => {
+      let done = false
+      const settle = () => {
+        if (done) return
+        done = true
+        target.removeEventListener('transitionend', settle)
+        resolve()
+      }
+      target.addEventListener('transitionend', settle, { once: true })
+      // Hard fallback: max of either 350ms (the previous floor) or the
+      // computed transition duration + a small grace.
+      setTimeout(settle, Math.max(350, duration * 1000 + 50))
+    })
+  })
+  // rAF flush so layout commits before callers measure boundingBox.
+  await page.evaluate(
+    () => new Promise<void>((r) => requestAnimationFrame(() => r())),
+  )
 }
 
 test.describe('Search pin scope chip — real-mode provider tree (P2 2026-05-04)', () => {

@@ -57,7 +57,15 @@ export interface ImageBlockSource {
 }
 
 export interface ContentBlock {
-  type: 'text' | 'tool_use' | 'tool_result' | 'image'
+  // 'thinking' carries Claude's internal reasoning text (CC + extended-
+  // thinking-enabled Desktop). The V1 viewer has no `case 'thinking':`
+  // renderer in MessageBubble.tsx — these blocks are silently dropped
+  // from the rendered output (paired with the backend search exclusion
+  // in search.py:_extract_searchable_text). The type is included here
+  // so the field round-trips through the API without TypeScript
+  // narrowing it to `never`, and so any future "Show thinking"
+  // affordance can branch on it without re-widening the union.
+  type: 'text' | 'tool_use' | 'tool_result' | 'image' | 'thinking'
   text?: string
   name?: string // tool_use
   input?: unknown // tool_use
@@ -104,6 +112,29 @@ export interface Message {
   // claude.ai sometimes ships a v2 array alongside the legacy 'files'
   // with overlapping entries. Render after deduping by file_uuid.
   files_v2?: ImageFile[]
+  // CC-only flags emitted by the backend's collapse/fold/prelude passes
+  // for slash-command boilerplate (V1 polish, 2026-05-12). Absent on
+  // Desktop messages and on regular CC turns.
+  //   - is_command_marker: this row is the synthetic "Session: /foo"
+  //     marker that replaces a /exit-style triplet.
+  //   - is_prelude: this marker is part of the LEADING run of session
+  //     prelude markers. The ConversationPage hides these by default
+  //     and surfaces them via <SessionPreludeAffordance />.
+  //   - assistant_canned_response_consumed: the marker absorbed CC's
+  //     literal "No response requested." reply. Carried for debugging
+  //     / future UI surfacing; renderers currently ignore it.
+  is_command_marker?: boolean
+  is_prelude?: boolean
+  assistant_canned_response_consumed?: boolean
+  // Slash-command name (e.g. "/coding", "/plan") for CC command-marker
+  // rows; null/undefined for any other message. V1 polish round 3,
+  // 2026-05-12 — paired with the args-preservation change that puts the
+  // user's real prompt text into `Message.text` when the command carried
+  // `<command-args>`. The MessageBubble renders a muted
+  // `<SlashCommandBadge command="/coding" />` above the body whenever
+  // this is truthy. Render guard MUST be `if (message.slash_command)`
+  // so empty-string / null / undefined are all skipped.
+  slash_command?: string | null
 }
 
 export interface CompactMarker {
@@ -119,6 +150,10 @@ export interface ConversationDetail extends ConversationSummary {
   current_leaf_message_uuid: string
   file_path?: string | null
   compact_markers?: CompactMarker[]
+  // CC-only count of LEADING is_prelude messages (V1 polish, 2026-05-12).
+  // 0 for Desktop conversations and for CC conversations whose first
+  // message isn't a slash-command marker.
+  prelude_hidden_count?: number
 }
 
 export interface MessageNode {

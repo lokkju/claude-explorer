@@ -68,11 +68,18 @@ export const api = {
 
   search: (
     query: string,
-    source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all',
-    contextSize: 'snippet' | 'full' = 'snippet',
-    sort: SortField = 'updated_at',
-    sortOrder: SortOrder = 'desc',
-    scope?: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] }
+    source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE',
+    contextSize: 'snippet' | 'full',
+    sort: SortField,
+    sortOrder: SortOrder,
+    scope: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] } | undefined,
+    // 2026-05-11: REQUIRED, no default. The backend default is True (for
+    // backward compat with external scripts hitting /api/search), but every
+    // in-app call site MUST pass the user's showToolCalls preference so
+    // hits in hidden tool/thinking blocks don't bleed into the sidebar.
+    // Making this mandatory means TypeScript catches any new call site
+    // that forgets to wire useSettings().showToolCalls.
+    includeToolCalls: boolean,
   ): Promise<SearchResult[]> => {
     const params = new URLSearchParams({ q: query })
     if (source !== 'all') params.set('source', source)
@@ -84,6 +91,9 @@ export const api = {
     if (scope?.bookmarks && scope.bookmarks.length > 0) {
       params.set('bookmarks', scope.bookmarks.join(','))
     }
+    // Only append the query param when filtering — keeps URLs short
+    // for the common-case (tool calls visible) request.
+    if (!includeToolCalls) params.set('include_tool_calls', 'false')
     return fetchJson<SearchResult[]>(`/search?${params.toString()}`)
   },
 

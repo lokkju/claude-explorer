@@ -11,6 +11,7 @@ import { useSearch } from '@/hooks/useConversations'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
+import { useSettings } from '@/contexts/SettingsContext'
 import { usePreferences } from '@/hooks/usePreferences'
 import type { SearchResult, SortField, SortOrder } from '@/lib/types'
 
@@ -75,6 +76,11 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   const { sourceFilter } = useSourceFilter()
   const { scope: pinScope } = useSearchPin()
   const { bookmarks } = useBookmarks()
+  // 2026-05-11: thread the UI's "Show tool calls" pref into search so
+  // the sidebar only shows hits the user can actually navigate to in
+  // the conversation pane. When the toggle flips, useSearch's queryKey
+  // changes and the network call re-fires automatically.
+  const { showToolCalls } = useSettings()
 
   // P3e: dual-read/dual-write via usePreferences. The hook resolves
   // value as server.data[key] ?? localStorage[key] ?? fallback, and
@@ -121,7 +127,8 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     contextSize,
     sortField,
     sortOrder,
-    scope
+    scope,
+    showToolCalls,
   )
 
   // Client-side filter: while the user keeps typing (debounced query hasn't

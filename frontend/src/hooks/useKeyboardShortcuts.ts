@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import { useSearchPanel } from '@/contexts/SearchPanelContext'
+import { useFetchPipeline } from '@/contexts/FetchPipelineContext'
 import { queryKeys } from '@/lib/queryClient'
 import { messageToMarkdown } from '@/lib/utils'
 import type { ConversationDetail } from '@/lib/types'
@@ -62,6 +63,7 @@ export function useKeyboardShortcuts() {
     getSelectedMessageId,
   } = useKeyboardNavigation()
   const searchPanel = useSearchPanel()
+  const { startRefresh, isRunning: isRefreshRunning } = useFetchPipeline()
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -83,10 +85,20 @@ export function useKeyboardShortcuts() {
       }
       const cmdOrCtrl = e.metaKey || e.ctrlKey
 
-      // Cmd+R to refresh conversation list (prevent browser refresh)
+      // Cmd+R triggers the same Build-9 capture+fetch pipeline the
+      // sidebar Refresh button runs — matches the article's "Cmd+R does
+      // the same thing as the sidebar Refresh button" promise. The
+      // pipeline context guards itself with a sourceRef so a rapid
+      // double-press can't double-fire; we also short-circuit on the
+      // hook's isRunning flag to avoid even calling startRefresh while
+      // a refresh is in flight (defense in depth). preventDefault is
+      // load-bearing — without it, Cmd+R reloads the SPA and the user
+      // loses their place.
       if (e.key === 'r' && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         e.preventDefault()
-        queryClient.invalidateQueries({ queryKey: queryKeys.conversations.all })
+        if (!isRefreshRunning) {
+          startRefresh(true)
+        }
         return
       }
 
@@ -433,7 +445,8 @@ export function useKeyboardShortcuts() {
      selectNextMessage, selectPreviousMessage, selectFirstMessage, selectLastMessage,
      selectNextUserMessage, selectPreviousUserMessage,
      selectNextAssistantMessage, selectPreviousAssistantMessage,
-     pageDown, pageUp, getSelectedMessageId, searchPanel]
+     pageDown, pageUp, getSelectedMessageId, searchPanel,
+     setRightPaneTab, startRefresh, isRefreshRunning]
   )
 
   useEffect(() => {

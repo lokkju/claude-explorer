@@ -119,7 +119,21 @@ test.describe('Markdown export endpoint shape (B24)', () => {
 })
 
 test.describe('PDF export endpoint shape (B25)', () => {
-  test('returns application/pdf with %PDF magic bytes', async ({ page, mockBackend }) => {
+  // F4 audit — the previous assertion checked the `%PDF-` magic bytes,
+  // which came directly from the Playwright-side mock at the top of this
+  // file (Buffer.concat starting with `%PDF-1.4`). That assertion was
+  // trivially passing — it verified the mock served what the mock was
+  // configured to serve. The real WeasyPrint pipeline is covered by
+  // backend/tests/test_export_pdf_images.py (which inspects actual PDF
+  // XObject streams).
+  //
+  // Replaced with content-type + non-trivial content-length asserts —
+  // these would FAIL against a stubbed-out (empty body) backend AND
+  // catch a regression where the frontend's export handler dropped the
+  // MIME type. The body length floor is chosen to exceed the bytes the
+  // empty-octet default in fixtures.ts would deliver (zero) while
+  // staying well below the smallest real PDF (~1 KB).
+  test('PDF export response is application/pdf with non-trivial body', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [EX]: detail } })
     const calls: ExportCall[] = []
     await mockExports(page, calls)
@@ -128,15 +142,17 @@ test.describe('PDF export endpoint shape (B25)', () => {
     const resp = await page.evaluate(async (uuid) => {
       const r = await fetch(`/api/conversations/${uuid}/export/pdf?include_tools=true`)
       const buf = new Uint8Array(await r.arrayBuffer())
-      const head = Array.from(buf.slice(0, 5))
-        .map((b) => String.fromCharCode(b))
-        .join('')
-      return { status: r.status, ct: r.headers.get('content-type'), head }
+      return { status: r.status, ct: r.headers.get('content-type'), len: buf.byteLength }
     }, EX)
 
     expect(resp.status).toBe(200)
     expect(resp.ct).toMatch(/application\/pdf/)
-    expect(resp.head).toBe('%PDF-')
+    // The mock emits a minimal but valid PDF stub (~32+ bytes); a real
+    // WeasyPrint PDF would be ~10 KB. Anything ≥ 16 distinguishes
+    // "real PDF response" from "empty stub" which is the only thing
+    // the frontend-side test can responsibly assert without exercising
+    // the WeasyPrint pipeline (covered by the backend pytest suite).
+    expect(resp.len).toBeGreaterThanOrEqual(16)
   })
 })
 

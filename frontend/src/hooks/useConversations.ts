@@ -58,7 +58,13 @@ export function useSearch(
   contextSize: 'snippet' | 'full' = 'snippet',
   sort: SortField = 'updated_at',
   sortOrder: SortOrder = 'desc',
-  scope?: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] }
+  scope: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] } | undefined = undefined,
+  // 2026-05-11: REQUIRED, no default. Threaded all the way down to the
+  // /api/search query param. Mandatory so any future call site is
+  // forced (via TypeScript) to wire in useSettings().showToolCalls
+  // rather than silently inheriting an unfiltered default — which
+  // would re-introduce the sidebar/conv-pane mismatch bug.
+  includeToolCalls: boolean,
 ) {
   const [debouncedQuery, setDebouncedQuery] = useState(query)
 
@@ -68,8 +74,11 @@ export function useSearch(
   }, [query])
 
   const queryResult = useQuery({
-    queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder, scope),
-    queryFn: () => api.search(debouncedQuery, source, contextSize, sort, sortOrder, scope),
+    // Include includeToolCalls in the key so toggling re-fires the network
+    // call and React Query doesn't return a stale cached payload that
+    // contains tool-block snippets.
+    queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls),
+    queryFn: () => api.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls),
     enabled: debouncedQuery.length >= 2,
     staleTime: 60 * 1000, // 1 minute
     placeholderData: keepPreviousData, // keep last results visible while narrowing query

@@ -75,8 +75,11 @@ test.describe('P1.3a — Tool placeholder text is hidden in the viewer', () => {
 
     const bubble = page.locator('[data-message-uuid="fenced-placeholder"]')
     await expect(bubble).toBeVisible()
-    // Friendly badge should appear.
-    await expect(bubble).toContainText('Tool call or artifact not captured in export')
+    // Friendly badge should appear with EXACT copy. We scope to the badge
+    // span so the assertion fails if the renderer ever inlines extra
+    // characters (icon caption, punctuation drift, etc.).
+    const badge = bubble.getByText('Tool call or artifact not captured in export', { exact: true })
+    await expect(badge).toHaveText('Tool call or artifact not captured in export')
   })
 
   test('placeholder mid-paragraph is also hidden', async ({ page, mockBackend }) => {

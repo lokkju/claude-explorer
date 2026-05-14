@@ -152,6 +152,38 @@ export function messageToMarkdown(message: Message, showToolCalls: boolean): str
   return `**${sender}:**\n\n${content.trim()}${imagesMd}`
 }
 
+/**
+ * Mirror of `backend/export.py::_is_excludable_marker` (export.py:159) —
+ * V1 polish cleanup (2026-05-13).
+ *
+ * Argless slash markers (`is_command_marker=True`: `/exit`, `/clear`,
+ * `/compact`) and leading prelude rows (`is_prelude=True`, which post-Fix-2
+ * implies `is_command_marker=True`) are CHROME, not user content. The
+ * viewer hides them behind `SessionPreludeAffordance` / `SlashCommandBadge`,
+ * the backend export drops them via `_is_excludable_marker`, and search
+ * excludes them via `_extract_searchable_text`'s early-return. This mirror
+ * applies the same exclusion to the client-side "Copy as Markdown" action
+ * so the clipboard payload matches the viewer's rendered output and the
+ * backend export bundles. Spec invariant "one truth, three (now four)
+ * surfaces": viewer + search + server export + client copy.
+ *
+ * Argful markers (`/coding <prose>`, `/plan <prose>`) carry
+ * `is_command_marker=False` post-Fix-2, so they pass through this filter
+ * and copy normally — they carry the user's real prose.
+ *
+ * Why duplicate the predicate in the frontend instead of routing copy
+ * through the backend's `/api/conversations/{uuid}/export/markdown`
+ * endpoint? Copy is a clipboard action that must feel instant; a network
+ * round-trip would introduce latency and a failure mode (offline / slow
+ * backend) for a hotpath the user invokes often. The predicate is also
+ * trivial — a single boolean field check — so duplication is cheap.
+ * Keep the two implementations in sync: any change to `_is_excludable_marker`
+ * in `backend/export.py` MUST be mirrored here.
+ */
+export function isExcludableMarker(message: Message): boolean {
+  return message.is_command_marker === true
+}
+
 export function conversationToMarkdown(
   title: string,
   messages: Message[],
@@ -159,6 +191,7 @@ export function conversationToMarkdown(
 ): string {
   const header = `# ${title}\n\n`
   const body = messages
+    .filter((msg) => !isExcludableMarker(msg))
     .filter((msg) => messageHasVisibleContent(msg, showToolCalls))
     .map((msg) => messageToMarkdown(msg, showToolCalls))
     .join('\n\n---\n\n')

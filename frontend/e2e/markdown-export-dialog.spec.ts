@@ -118,10 +118,11 @@ test.describe('Markdown export dialog (Phase 7)', () => {
     const dialog = page.getByTestId('markdown-export-dialog')
     await expect(dialog).toBeVisible()
 
-    // Three radios: Inline / Bundle CommonMark / Bundle Obsidian.
-    await expect(dialog.getByLabel('Inline')).toBeVisible()
-    await expect(dialog.getByLabel('Bundle CommonMark')).toBeVisible()
-    await expect(dialog.getByLabel('Bundle Obsidian')).toBeVisible()
+    // Three radios: Inline / Bundle CommonMark / Bundle Obsidian. Use
+    // role+name to avoid ambiguous label matches (see F5 audit).
+    await expect(dialog.getByRole('radio', { name: 'Inline' })).toBeVisible()
+    await expect(dialog.getByRole('radio', { name: 'Bundle CommonMark' })).toBeVisible()
+    await expect(dialog.getByRole('radio', { name: 'Bundle Obsidian' })).toBeVisible()
   })
 
   test('pre-selected radio matches stored markdownExportMode preference', async ({ page, mockBackend }) => {
@@ -135,7 +136,10 @@ test.describe('Markdown export dialog (Phase 7)', () => {
 
     const dialog = page.getByTestId('markdown-export-dialog')
     await expect(dialog).toBeVisible()
-    await expect(dialog.getByLabel('Bundle Obsidian')).toBeChecked()
+    // Use radio role scoping — getByLabel can ambiguously resolve to other
+    // controls (the "Save as default" checkbox, the Download button) when
+    // text overlaps. role+name is the load-bearing selector.
+    await expect(dialog.getByRole('radio', { name: 'Bundle Obsidian' })).toBeChecked()
   })
 
   test('Bundle Obsidian + Download triggers the bundle endpoint with dialect=obsidian and closes dialog', async ({ page, mockBackend }) => {
@@ -149,7 +153,7 @@ test.describe('Markdown export dialog (Phase 7)', () => {
 
     const dialog = page.getByTestId('markdown-export-dialog')
     await expect(dialog).toBeVisible()
-    await dialog.getByLabel('Bundle Obsidian').check()
+    await dialog.getByRole('radio', { name: 'Bundle Obsidian' }).check()
     await dialog.getByRole('button', { name: 'Download' }).click()
 
     await expect.poll(() => calls.length, { timeout: 5_000 }).toBeGreaterThan(0)
@@ -171,7 +175,7 @@ test.describe('Markdown export dialog (Phase 7)', () => {
 
     const dialog = page.getByTestId('markdown-export-dialog')
     await expect(dialog).toBeVisible()
-    await dialog.getByLabel('Inline').check()
+    await dialog.getByRole('radio', { name: 'Inline' }).check()
     await dialog.getByRole('button', { name: 'Download' }).click()
 
     await expect.poll(() => calls.length, { timeout: 5_000 }).toBeGreaterThan(0)
@@ -191,7 +195,10 @@ test.describe('Markdown export dialog (Phase 7)', () => {
 
     const dialog = page.getByTestId('markdown-export-dialog')
     await expect(dialog).toBeVisible()
-    await dialog.getByLabel('Bundle CommonMark').check()
+    await dialog.getByRole('radio', { name: 'Bundle CommonMark' }).check()
+    // "Save as default" is a checkbox — getByLabel is fine here, the
+    // role-scoping rule (F5) only matters where role-overload could
+    // ambiguate against radios in the same dialog.
     await dialog.getByLabel('Save as default').check()
     await dialog.getByRole('button', { name: 'Download' }).click()
 
@@ -201,4 +208,46 @@ test.describe('Markdown export dialog (Phase 7)', () => {
     )
     expect(sawModePatch).toBe(true)
   })
+
+  // G5 audit — save-then-reopen round trip. The PATCH-emission assertion
+  // proves the network side, but a regression that drops the value
+  // *between* the PATCH and the next dialog mount would still pass. This
+  // test closes that loop by re-opening the dialog after Save-as-default
+  // and asserting the chosen radio is the one that was saved.
+  //
+  // We run the cycle with TWO radios to prove the assertion captures
+  // real state, not just a stale default (if the read path were broken
+  // and always returned 'bundle-obsidian', the second sub-test would
+  // catch it).
+  for (const mode of ['bundle-commonmark', 'bundle-obsidian'] as const) {
+    const radioLabel = mode === 'bundle-commonmark' ? 'Bundle CommonMark' : 'Bundle Obsidian'
+    test(`Save-as-default then re-open dialog → ${radioLabel} stays selected`, async ({ page, mockBackend }) => {
+      await mockBackend({ conversations: [summary], details: { [ME]: detail } })
+      await installPrefsRoute(page, {})
+      const calls: ExportCall[] = []
+      await installExportRoutes(page, calls)
+
+      await page.goto(`/conversations/${ME}`)
+      await page.getByRole('button', { name: 'Markdown', exact: true }).click()
+
+      const dialog = page.getByTestId('markdown-export-dialog')
+      await expect(dialog).toBeVisible()
+      await dialog.getByRole('radio', { name: radioLabel }).check()
+      await dialog.getByLabel('Save as default').check()
+
+      // Wait for the PATCH to commit before closing — otherwise the
+      // re-open below could race the persistence layer.
+      const patchSettled = page.waitForResponse(
+        (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
+      )
+      await dialog.getByRole('button', { name: 'Download' }).click()
+      await patchSettled
+      await expect(dialog).not.toBeVisible()
+
+      // Re-open the dialog and assert the saved radio is still chosen.
+      await page.getByRole('button', { name: 'Markdown', exact: true }).click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog.getByRole('radio', { name: radioLabel })).toBeChecked()
+    })
+  }
 })

@@ -62,8 +62,12 @@ test.describe('Header layout — actions must not occlude metadata (Issue #3)', 
       await mockBackend({ conversations: [summary], details: { [HL]: detail } })
       await page.goto(`/conversations/${HL}`)
 
-      // Wait for the header to render.
-      await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+      // Wait for the header to render. Scope to <header> from the
+      // start: the sidebar ships its own <h1>Claude Explorer</h1>, so
+      // an unscoped getByRole('heading', { level: 1 }) is a strict-mode
+      // violation that blows up before any geometry assertion.
+      const header = page.locator('header').first()
+      await expect(header.getByRole('heading', { level: 1 })).toBeVisible()
 
       const uuidButton = page.getByTitle('Click to copy UUID')
       const filePathButton = page.getByTitle('Click to copy file path')
@@ -73,7 +77,6 @@ test.describe('Header layout — actions must not occlude metadata (Issue #3)', 
       // Metadata row that sits directly under the title: "Code" badge,
       // model badge, full date, message count, "View branches".
       // Scope to <header> so the sidebar's mini-card doesn't shadow.
-      const header = page.locator('header').first()
       const codeBadge = header.getByText('Code', { exact: true })
       const modelBadge = header.getByText('claude-opus-4-5-20251101')
       const messageCount = header.getByText(/1 messages?/)

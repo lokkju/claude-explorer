@@ -30,12 +30,17 @@ const detail = makeDetail(summary, [
 ])
 
 test.describe('Markdown bundle Settings persistence (Issue #4 legacy controls)', () => {
-  // V1 polish: this test mutates a shared preferences blob via PATCH
-  // /api/preferences. Under parallel workers other preference-touching
-  // tests (filter migration, sidebar dim, etc.) can race the reload.
-  // Force serial to absorb the cross-test bleed; --repeat-each=3 with
-  // workers=2 was 0/3 green before this directive.
-  test.describe.configure({ mode: 'serial' })
+  // F2 audit — the serial-mode directive that used to live here was
+  // installed under the assumption that the prefs mock state was
+  // shared across tests in the same worker. As of the M1 fixture
+  // extension, `prefsState` is closure-scoped per `mockBackend` call,
+  // so each test gets its own isolated map; nothing the prefs mock
+  // does is observable to a sibling test. Drop the serial directive
+  // and let Playwright parallelize the suite (CI throughput wins).
+  //
+  // We deliberately ship this WITHOUT introducing a `sharedPrefs`
+  // option (G1 takes the shared-state path via a single test holding
+  // two contexts) — see the LLM-council G1 resolution.
 
   test('Settings choices persist across reloads', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [ME]: detail } })

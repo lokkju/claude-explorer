@@ -8,7 +8,7 @@ import { test, expect } from './fixtures'
  * Today only /api/config, /api/orgs, /api/conversations** are covered;
  * the rest leak to whichever backend is running. Post-P3 (server-side
  * preferences) the leakage means tests hit the user's real
- * ~/.claude-exporter/preferences.json, producing ~30 flakes under
+ * ~/.claude-explorer/preferences.json, producing ~30 flakes under
  * PLAYWRIGHT_LIVE_DATA=1.
  *
  * RED-first: each `it()` below calls a route via page.evaluate(fetch...)

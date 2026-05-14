@@ -198,21 +198,43 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
       })
     })
 
-    // Open conversation A. Open SearchPanel. Type query. Cmd+G to active. Enter.
+    // F7 audit — assert BEFORE state right after panel opens, BEFORE
+    // typing the query. Once results land, the V1 auto-focus effect
+    // navigates cross-conv on its own and the URL changes; the BEFORE
+    // state has to be captured before that happens, otherwise a
+    // regression where navigation fires on input mount (not Enter)
+    // would still pass.
+    //
+    // 1. URL is on conv A — auto-focus hasn't fired yet.
+    // 2. B's bubble is NOT in the DOM yet (cross-conv navigation hasn't
+    //    happened).
+    // 3. The search input has focus (panel opened, ready to type).
     await page.goto(`/conversations/${A}`)
     const isMac = process.platform === 'darwin'
     await page.keyboard.press(isMac ? 'Meta+f' : 'Control+f')
     const input = page.getByPlaceholder('Search messages...')
     await expect(input).toBeVisible({ timeout: 3000 })
+
+    await expect(page).toHaveURL(new RegExp(`/conversations/${A}`))
+    await expect(page.locator('[data-message-uuid="b-msg-1"]')).toHaveCount(0)
+    await expect(input).toBeFocused()
+
+    // Type query. Auto-focus then navigates cross-conv to B, mounts B's
+    // bubble, and (via ConversationPage's ?highlight= handler) focuses
+    // the target bubble after a 100ms timer. Wait for that full
+    // settling so the Cmd+G+Enter below is exercising the openActiveMatch
+    // re-navigate path, not racing the initial navigation.
     await input.fill('needle')
     await expect(page.getByText(/of\s+1\s+matches/)).toBeVisible({ timeout: 5000 })
+
     await page.keyboard.press(isMac ? 'Meta+g' : 'Control+g')
     await page.keyboard.press('Enter')
 
-    // URL should change to /conversations/B (cross-conv navigation).
+    // URL changed to B (auto-focus + Enter both target same conv now);
+    // bubble in B is visible AND focused (openActiveMatch enforces focus
+    // via rAF + .focus() — also reinforced by ConversationPage's
+    // ?highlight= effect).
     await expect(page).toHaveURL(new RegExp(`/conversations/${B}`))
-
-    // Bubble in B should be visible AND focused.
     const bubble = page.locator('[data-message-uuid="b-msg-1"]')
     await expect(bubble).toBeVisible({ timeout: 5000 })
     await expect(bubble).toBeFocused({ timeout: 5000 })

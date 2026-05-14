@@ -64,4 +64,71 @@ test.describe('Settings Page', () => {
     // Should show conversation count
     await expect(page.locator('text=Total Conversations')).toBeVisible()
   })
+
+  // G2 audit — all four §16.1 preferences must coexist across a single
+  // hard-reload. Individual prefs are covered by their own specs, but
+  // those tests pass even if the persistence layer can only carry ONE
+  // change at a time (a regression where each PATCH overwrites the
+  // server blob would still let them pass individually). This test
+  // toggles all four in the same session and asserts the post-reload
+  // state shows all four.
+  test('all four §16.1 preferences (theme, keyboard, bundle-images, dialect) persist together across reload', async ({
+    page,
+  }) => {
+    await page.goto('/settings')
+
+    // Wait for the page to mount fully (toggle visible + enabled). The
+    // shared mock /api/preferences in fixtures.ts is stateful within a
+    // single page context, so PATCH bodies merge into the same blob and
+    // a subsequent reload reads them all back.
+    const bundleToggle = page.getByTestId('settings-markdown-bundle-images')
+    await expect(bundleToggle).toBeVisible()
+
+    // 1. Theme → Dark.
+    const themePatch = page.waitForResponse(
+      (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
+    )
+    await page.locator('label:has-text("Dark")').click()
+    await themePatch
+
+    // 2. Keyboard → Vim.
+    const keyboardPatch = page.waitForResponse(
+      (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
+    )
+    await page.locator('label:has-text("Vim")').click()
+    await keyboardPatch
+
+    // 3. Bundle images → checked.
+    const bundlePatch = page.waitForResponse(
+      (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
+    )
+    await bundleToggle.click()
+    await bundlePatch
+    await expect(bundleToggle).toBeChecked()
+
+    // 4. Dialect → Obsidian.
+    const dialectPatch = page.waitForResponse(
+      (r) => r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH',
+    )
+    await page.locator('label:has-text("Obsidian")').click()
+    await dialectPatch
+
+    // Hard reload — the persistence layer must serve ALL four prefs back.
+    await page.reload()
+
+    // Theme: <html> still carries the `dark` class.
+    await expect(page.locator('html')).toHaveClass(/dark/)
+    // Keyboard mode: vim radio is checked.
+    await expect(page.locator('button[role="radio"][value="vim"]')).toHaveAttribute(
+      'data-state',
+      'checked',
+    )
+    // Bundle images: checkbox stays on.
+    await expect(page.getByTestId('settings-markdown-bundle-images')).toBeChecked()
+    // Dialect: obsidian radio is checked.
+    await expect(page.locator('button[role="radio"][value="obsidian"]')).toHaveAttribute(
+      'data-state',
+      'checked',
+    )
+  })
 })
