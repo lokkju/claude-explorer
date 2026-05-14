@@ -7,7 +7,7 @@ marker. Claude Code rotates / deletes those files; the explorer's
 viewer then breaks.
 
 We copy each referenced file at fetch time into a permanent cache:
-    ``~/.claude-exporter/cc-images/<conv-uuid>/<sess>--<N>.<sha8>.png``
+    ``~/.claude-explorer/cc-images/<conv-uuid>/<sess>--<N>.<sha8>.png``
 
 The ``sha8`` suffix prevents collisions if a re-fetch produces different
 bytes for the same ``<sess>--<N>`` slot — both copies survive; the
@@ -36,7 +36,7 @@ OTHER_PNG_BYTES = TINY_PNG_BYTES + b"\x00extra-bytes"
 
 @pytest.fixture
 def cc_env(tmp_path, monkeypatch):
-    """Stand up isolated CLAUDE_DIR + CLAUDE_EXPORTER_DATA_DIR.
+    """Stand up isolated CLAUDE_DIR + CLAUDE_EXPLORER_DATA_DIR.
 
     Mirrors the fixture pattern in test_search_scope.py: monkeypatch
     both env vars, then clear the lru_cache so the new settings are
@@ -47,7 +47,7 @@ def cc_env(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     from backend import config as cfg
 
     cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
@@ -189,20 +189,130 @@ def test_no_image_marker_no_cache_write(cc_env):
 
 
 def test_marker_with_missing_file_logged_not_raised(cc_env, caplog):
+    """A marker that resolves to a path missing in BOTH the live cache
+    and the permanent cache is the genuine permanent-data-loss case —
+    must log at WARNING so dashboard tails surface it."""
     from backend import cc_image_cache
 
     bogus = cc_env["claude_dir"] / "image-cache" / "ghost" / "99.png"
-    # Note: deliberately do NOT create this file.
+    # Note: deliberately do NOT create this file. And do NOT populate
+    # the permanent cache — this is the "missing in both" case.
     conv = _conv_with_marker("conv-missing", bogus)
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("WARNING", logger="backend.cc_image_cache"):
         written = cc_image_cache.cache_all_markers(conv)
 
     assert written == []
-    # A warning was emitted referencing the missing path.
-    assert any("conv-missing" in r.message or str(bogus) in r.message for r in caplog.records), [
-        r.message for r in caplog.records
+    # A warning was emitted referencing the missing path. Filter to the
+    # WARNING level explicitly so a stray DEBUG record can't satisfy the
+    # assertion (would defeat the bidirectional check).
+    warnings = [
+        r for r in caplog.records
+        if r.levelname == "WARNING"
+        and ("conv-missing" in r.message or str(bogus) in r.message)
     ]
+    assert warnings, (
+        "missing-in-both case must WARN; got records: "
+        f"{[(r.levelname, r.message) for r in caplog.records]!r}"
+    )
+
+
+def test_marker_missing_live_but_present_in_permanent_cache_does_not_warn(
+    cc_env, caplog
+):
+    """Steady-state case: Claude Code rotated the live file off disk
+    but our earlier eager/lazy/watcher pass already copied it. The
+    bytes are recovered — log at DEBUG (not WARNING) so dashboard tails
+    aren't polluted with false-alarm signals.
+
+    Bidirectional: the sibling test above ('logged_not_raised') proves
+    a WARNING IS emitted when the bytes are missing in both places. If
+    a regression dropped the permanent-cache check, this test would
+    flip from passing to failing (because a WARNING would appear).
+    """
+    from backend import cc_image_cache
+
+    sess = "sess-recovered"
+    conv_uuid = "conv-recovered"
+    bogus_live = (
+        cc_env["claude_dir"] / "image-cache" / sess / "5.png"
+    )
+    # Note: deliberately do NOT create the live file.
+
+    # Pre-populate the permanent cache by hand — simulates "an earlier
+    # process already cached these bytes, then CC rotated them away".
+    # Filename shape must match cc_image_cache.cache_path_for():
+    # <cache_dir>/<conv_uuid>/<sess>--<N>.<sha8>.<ext>
+    cache_root = cc_image_cache.cache_dir() / conv_uuid
+    cache_root.mkdir(parents=True, exist_ok=True)
+    (cache_root / f"{sess}--5.deadbeef.png").write_bytes(TINY_PNG_BYTES)
+
+    with caplog.at_level("DEBUG", logger="backend.cc_image_cache"):
+        result = cc_image_cache.copy_marker_image_to_cache(
+            str(bogus_live), conv_uuid
+        )
+
+    # Return value contract unchanged: None when nothing was copied.
+    assert result is None
+
+    # No WARNING for the recovered case. Filter on level to avoid
+    # accidentally matching a DEBUG record's message text.
+    bad_warnings = [
+        r for r in caplog.records
+        if r.levelname == "WARNING"
+        and ("not on disk" in r.message or str(bogus_live) in r.message)
+    ]
+    assert not bad_warnings, (
+        "recovered case (permanent-cache hit) must NOT WARN; got: "
+        f"{[(r.levelname, r.message) for r in bad_warnings]!r}"
+    )
+
+    # And the existing permanent-cache copy was NOT touched (idempotent
+    # — we didn't re-write the same sha8 or invent a new one).
+    surviving = list(cache_root.iterdir())
+    assert len(surviving) == 1, surviving
+    assert surviving[0].name == f"{sess}--5.deadbeef.png"
+
+
+def test_marker_missing_live_with_wrong_conv_uuid_in_permanent_cache_still_warns(
+    cc_env, caplog
+):
+    """The permanent-cache check is scoped to the *exact* conv_uuid
+    subdirectory. A copy under a *different* conv's directory does NOT
+    satisfy 'recovered' for this conv — the warning must still fire.
+
+    This pins the scoping behavior: globbing the wrong directory tree
+    (e.g. <cache_dir>/* instead of <cache_dir>/<conv_uuid>/) would let
+    cross-conversation hits silently pass, which is a real correctness
+    bug if the same sess/N pair ever recurs across conversations.
+    """
+    from backend import cc_image_cache
+
+    sess = "sess-isolated"
+    bogus_live = (
+        cc_env["claude_dir"] / "image-cache" / sess / "9.png"
+    )
+    # Different conv has the bytes; queried conv does NOT.
+    other_conv = cc_image_cache.cache_dir() / "some-other-conv"
+    other_conv.mkdir(parents=True, exist_ok=True)
+    (other_conv / f"{sess}--9.cafef00d.png").write_bytes(TINY_PNG_BYTES)
+
+    with caplog.at_level("WARNING", logger="backend.cc_image_cache"):
+        result = cc_image_cache.copy_marker_image_to_cache(
+            str(bogus_live), "conv-asking"
+        )
+
+    assert result is None
+    warnings = [
+        r for r in caplog.records
+        if r.levelname == "WARNING"
+        and ("conv-asking" in r.message or str(bogus_live) in r.message)
+    ]
+    assert warnings, (
+        "cross-conv permanent-cache hit must NOT count as recovery for "
+        "the queried conv; expected a WARNING. Got: "
+        f"{[(r.levelname, r.message) for r in caplog.records]!r}"
+    )
 
 
 # ----------------------------------------------------------------------

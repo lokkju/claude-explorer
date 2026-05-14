@@ -36,6 +36,16 @@ async def search(
         None,
         description="Comma-separated UUIDs to restrict search to bookmarked conversations",
     ),
+    include_tool_calls: bool = Query(
+        True,
+        description=(
+            "When False, search ignores tool_use / tool_result / thinking "
+            "blocks so the sidebar only shows results whose owning message "
+            "is rendered in the conversation pane (mirrors the UI's "
+            "showToolCalls toggle). Default True preserves backward "
+            "compat for external scripts hitting /api/search directly."
+        ),
+    ),
 ) -> list[SearchResult]:
     """Search across all conversations."""
     store = ConversationStore()
@@ -54,4 +64,5 @@ async def search(
         conversation_uuid=conversation_uuid,
         project_path=project_path,
         bookmarks=bookmark_set,
+        include_tool_calls=include_tool_calls,
     )

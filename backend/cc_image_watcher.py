@@ -13,11 +13,12 @@ images that CC writes between reads can be rotated before any read
 ever sees them.
 
 This watcher closes that gap with a periodic polling loop. Every
-``SCAN_INTERVAL_SEC`` seconds (default 60; override via
-``CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC``) it walks the live
-image-cache root and copies any file we haven't already seen this
-process into
-``~/.claude-exporter/cc-images/<sess>/<sess>--<N>.<sha8>.<ext>``.
+``SCAN_INTERVAL_SEC`` seconds (default 5; override via
+``CLAUDE_EXPLORER_CC_WATCHER_INTERVAL_SEC``, with the legacy
+``CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC`` also honored for one
+release) it walks the live image-cache root and copies any file we
+haven't already seen this process into
+``~/.claude-explorer/cc-images/<sess>/<sess>--<N>.<sha8>.<ext>``.
 For CC sessions the conversation UUID equals the session UUID equals
 the parent dir name in the live tree, so the destination layout
 matches what the eager and lazy paths produce.
@@ -34,11 +35,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 from .cc_image_cache import copy_marker_image_to_cache
-from .config import get_settings
+from .config import get_settings, read_env
 
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 
 def _resolve_interval() -> float:
     """Polling interval in seconds. Overridable via
-    ``CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC``.
+    ``CLAUDE_EXPLORER_CC_WATCHER_INTERVAL_SEC`` (legacy
+    ``CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC`` honored for one release).
 
     Default 5s. The watcher is the only line of defense against CC
     rotating an image off disk before any reader sees it. CC's
@@ -61,13 +62,16 @@ def _resolve_interval() -> float:
     optimization (08e9458). V1-readiness reverted it: data integrity
     > idle CPU.
     """
-    raw = os.environ.get("CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC")
+    raw = read_env(
+        "CLAUDE_EXPLORER_CC_WATCHER_INTERVAL_SEC",
+        "CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC",
+    )
     if raw:
         try:
             return max(1.0, float(raw))
         except ValueError:
             logger.warning(
-                "Bad CLAUDE_EXPORTER_CC_WATCHER_INTERVAL_SEC=%r; using default", raw
+                "Bad CC watcher interval %r; using default", raw
             )
     return 5.0
 

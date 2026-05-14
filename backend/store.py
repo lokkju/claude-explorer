@@ -6,18 +6,11 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-
-# Top-level files that should be considered conversation JSONs.
-# UUID-shaped names only — excludes _index.json, .migration_log.json, etc.
-_UUID_FILENAME_RE = re.compile(r"^[0-9a-f-]{36}\.json$", re.IGNORECASE)
-_MIGRATION_SENTINEL = "by-org/.migrated_v2"
-
 from .config import get_settings
 from .claude_code_reader import (
     list_claude_code_conversations,
     read_claude_code_conversation,
     discover_jsonl_files,
-    DEFAULT_CLAUDE_DIR,
 )
 from .models import (
     ConversationSummary,
@@ -28,6 +21,12 @@ from .models import (
     ContentBlock,
     SubagentSummary,
 )
+
+
+# Top-level files that should be considered conversation JSONs.
+# UUID-shaped names only — excludes _index.json, .migration_log.json, etc.
+_UUID_FILENAME_RE = re.compile(r"^[0-9a-f-]{36}\.json$", re.IGNORECASE)
+_MIGRATION_SENTINEL = "by-org/.migrated_v2"
 
 
 def _parse_datetime(dt_str: str | None) -> datetime:
@@ -87,9 +86,40 @@ def _parse_content_blocks(content: list[dict[str, Any]]) -> list[ContentBlock]:
     return blocks
 
 
+# CC-only flags set by claude_code_reader's collapse/fold/prelude passes
+# (V1 polish, 2026-05-12). Default values so Desktop messages round-trip
+# unchanged.
+#
+# Plumbing-fragility note (V1 polish 2026-05-13): these flags are
+# hand-forwarded from the raw dict into the Pydantic `Message` model.
+# Earlier we lost an hour debugging `slash_command` because the forward
+# line was omitted from `_parse_message`. To prevent recurrence, we keep
+# the field list in ONE place (this constant) and forward via dict-
+# comprehension below. The companion test
+# `test_cc_only_passthrough_fields_matches_model_fields` introspects
+# `Message.model_fields` and FAILS the moment anyone adds a new CC-only
+# field to the model without updating this constant — so the next field
+# can't silently fall through the floor.
+_CC_ONLY_PASSTHROUGH_FIELDS: tuple[str, ...] = (
+    "is_command_marker",
+    "is_prelude",
+    "assistant_canned_response_consumed",
+    "slash_command",
+)
+_CC_ONLY_DEFAULTS: dict[str, Any] = {
+    "is_command_marker": False,
+    "is_prelude": False,
+    "assistant_canned_response_consumed": False,
+    "slash_command": None,
+}
+
+
 def _parse_message(raw: dict[str, Any]) -> Message:
     """Parse a raw message dict into a Message model."""
     content = raw.get("content", [])
+    cc_kwargs = {
+        k: raw.get(k, _CC_ONLY_DEFAULTS[k]) for k in _CC_ONLY_PASSTHROUGH_FIELDS
+    }
     return Message(
         uuid=raw.get("uuid", ""),
         sender=raw.get("sender", "human"),
@@ -102,6 +132,7 @@ def _parse_message(raw: dict[str, Any]) -> Message:
         attachments=raw.get("attachments", []),
         files=raw.get("files", []),
         files_v2=raw.get("files_v2", []),
+        **cc_kwargs,
     )
 
 
@@ -218,10 +249,11 @@ class ConversationStore:
 
     def __init__(self, data_dir: Path | None = None, claude_dir: Path | None = None):
         # Both directories fall back through the constructor argument first,
-        # then the global Settings (which reads CLAUDE_EXPORTER_DATA_DIR /
-        # CLAUDE_DIR / ~/.claude-exporter/config.json), and finally the
-        # platform default. claude_dir matters for tests that need a
-        # synthetic ~/.claude/projects/ tree on disk.
+        # then the global Settings (which reads CLAUDE_EXPLORER_DATA_DIR
+        # — or legacy CLAUDE_EXPORTER_DATA_DIR — / CLAUDE_DIR /
+        # ~/.claude-explorer/config.json), and finally the platform
+        # default. claude_dir matters for tests that need a synthetic
+        # ~/.claude/projects/ tree on disk.
         self.data_dir = data_dir or get_settings().data_dir
         self.claude_dir = claude_dir or get_settings().claude_dir
 
@@ -268,7 +300,7 @@ class ConversationStore:
         Issue #0 — full-text search latency.
         ConversationStore.search() calls get_all_conversations_raw() which
         re-reads + re-parses every Desktop JSON file on every request. With
-        ~100+ conversations in ~/.claude-exporter/conversations, that adds
+        ~100+ conversations in ~/.claude-explorer/conversations, that adds
         up to noticeable latency per keystroke. The Claude Code path
         already used backend.cache.FileCache; reusing the same cache here
         gives Desktop the same hot-path speedup. Files are only re-read
@@ -325,7 +357,14 @@ class ConversationStore:
             is_temporary=data.get("is_temporary", False),
             message_count=message_count,
             human_message_count=human_count,
-            has_branches=data.get("has_branches", False) if not chat_messages else has_branches(chat_messages),
+            # See `get_conversation` for the CC branch-flag rationale —
+            # post-compact duplicate UUIDs poison the parent->children
+            # count, and CC has no edit-branch UI to switch to anyway.
+            has_branches=(
+                False
+                if data.get("source") == "CLAUDE_CODE"
+                else (data.get("has_branches", False) if not chat_messages else has_branches(chat_messages))
+            ),
             source=data.get("source", "CLAUDE_AI"),
             project_path=data.get("project_path"),
             git_branch=data.get("git_branch"),
@@ -469,17 +508,41 @@ class ConversationStore:
 
         chat_messages = data.get("chat_messages", [])
         stored_leaf = data.get("current_leaf_message_uuid", "")
-        leaf_uuid = leaf_override or stored_leaf
-        # Validate leaf_override actually exists in this conversation; fall back
-        # to the stored leaf if the caller passed something stale.
-        if leaf_override and not any(m.get("uuid") == leaf_override for m in chat_messages):
-            leaf_uuid = stored_leaf
+        source = data.get("source", "CLAUDE_AI")
+        is_cc = source == "CLAUDE_CODE"
 
-        # Resolve active branch
-        if leaf_uuid and chat_messages:
-            branch = resolve_active_branch(chat_messages, leaf_uuid)
-        else:
+        # Bug-fix (2026-05-12): Claude Code JSONLs are append-only
+        # chronological logs, NOT branched message trees. CC re-serializes
+        # parts of the prior conversation after every `/compact`, producing
+        # duplicate message UUIDs across the pre/post-compact boundary that
+        # the streaming-chunk dedupe in `claude_code_reader._get_message_key`
+        # collapses into a single message. Walking the parent_message_uuid
+        # chain from `current_leaf_message_uuid` then hits a synthetic
+        # cycle and silently drops every pre-compact message. CC also has
+        # no edit-branch UI, so `leaf_override` is meaningless. For CC we
+        # render the chronological message stream and skip leaf-walking
+        # entirely. Compact markers continue to render inline via the
+        # `compact_markers` array on the response.
+        if is_cc:
+            leaf_uuid = stored_leaf
             branch = chat_messages
+            # has_branches() is also unreliable for CC: post-compact
+            # duplicate UUIDs make a single parent look like it has
+            # multiple children. CC has no true edit-branches.
+            branches_flag = False
+        else:
+            leaf_uuid = leaf_override or stored_leaf
+            # Validate leaf_override actually exists in this conversation;
+            # fall back to the stored leaf if the caller passed something
+            # stale.
+            if leaf_override and not any(m.get("uuid") == leaf_override for m in chat_messages):
+                leaf_uuid = stored_leaf
+
+            if leaf_uuid and chat_messages:
+                branch = resolve_active_branch(chat_messages, leaf_uuid)
+            else:
+                branch = chat_messages
+            branches_flag = has_branches(chat_messages)
 
         messages = [_parse_message(m) for m in branch]
         human_count = sum(1 for m in chat_messages if m.get("sender") == "human")
@@ -495,14 +558,17 @@ class ConversationStore:
             is_temporary=data.get("is_temporary", False),
             message_count=len(chat_messages),
             human_message_count=human_count,
-            has_branches=has_branches(chat_messages),
-            source=data.get("source", "CLAUDE_AI"),
+            has_branches=branches_flag,
+            source=source,
             project_path=data.get("project_path"),
             git_branch=data.get("git_branch"),
             messages=messages,
             current_leaf_message_uuid=leaf_uuid,
             file_path=str(file_path) if file_path else None,
             compact_markers=data.get("compact_markers", []),
+            # V1 polish (2026-05-12): CC reader's `_flag_leading_prelude_markers`
+            # emits this; Desktop data dicts won't contain it, so default 0.
+            prelude_hidden_count=data.get("prelude_hidden_count", 0),
         )
 
     def get_conversation_tree(self, uuid: str) -> ConversationTree | None:
@@ -513,6 +579,26 @@ class ConversationStore:
 
         chat_messages = data.get("chat_messages", [])
         leaf_uuid = data.get("current_leaf_message_uuid", "")
+        source = data.get("source", "CLAUDE_AI")
+        is_cc = source == "CLAUDE_CODE"
+
+        # Bug-fix (2026-05-12, follow-up to get_conversation): Claude Code
+        # JSONLs are append-only chronological logs with no edit-branches;
+        # the same duplicate-UUID cycle that poisoned get_conversation's
+        # leaf-walk also poisons build_message_tree / resolve_active_branch
+        # here, and a synthesized linear-chain replacement would trip
+        # Pydantic's recursive serialization at sessions ≥ ~1000 messages
+        # (real CC sessions reach 1400+). The frontend's TreeViewModal is
+        # already hidden for CC (has_branches=False), so a tree endpoint
+        # response is semantically meaningless. Return the zero-state
+        # envelope — same shape the route returns for an empty Desktop
+        # conversation (see test_conversations_tree.py:476).
+        if is_cc:
+            return ConversationTree(
+                uuid=uuid,
+                root_messages=[],
+                active_path=[],
+            )
 
         # Build full tree
         root_messages = build_message_tree(chat_messages)

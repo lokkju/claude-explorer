@@ -1,0 +1,5 @@
+{"type":"permission-mode","permissionMode":"auto","sessionId":"sess-ct"}
+{"type":"custom-title","customTitle":"Medium post creation","sessionId":"sess-ct"}
+{"type":"agent-name","agentName":"Medium post creation","sessionId":"sess-ct"}
+{"type":"user","uuid":"u1","sessionId":"sess-ct","timestamp":"2026-04-19T01:30:00Z","cwd":"/tmp/p","message":{"role":"user","content":"I don't think we've pushed this repo yet. Check for me. I'd like to rename it (both the local dir and the GitHub repo)."}}
+{"type":"assistant","uuid":"a1","sessionId":"sess-ct","timestamp":"2026-04-19T01:30:30Z","message":{"id":"asst_1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"Let me check."}]}}

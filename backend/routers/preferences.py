@@ -1,7 +1,7 @@
 """Preferences router (P3a).
 
 Per-user preferences blob, persisted as a single JSON file under
-``~/.claude-exporter/preferences.json``. Versioned envelope so we can evolve
+``~/.claude-explorer/preferences.json``. Versioned envelope so we can evolve
 the schema without breaking existing installs:
 
     {"version": 1, "data": {"theme": "dark", "keyboardMode": "vim", ...}}
@@ -40,8 +40,8 @@ def _resolve_path() -> Path:
     """Resolve preferences file location.
 
     Lives in the parent of the configured data dir, i.e.
-    ``~/.claude-exporter/preferences.json`` for the default
-    ``~/.claude-exporter/conversations`` data dir.
+    ``~/.claude-explorer/preferences.json`` for the default
+    ``~/.claude-explorer/conversations`` data dir.
     """
     settings = get_settings()
     return settings.data_dir.parent / "preferences.json"

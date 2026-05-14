@@ -27,7 +27,7 @@ OTHER_PNG_BYTES = TINY_PNG_BYTES + b"\x00other"
 
 @pytest.fixture
 def watcher_env(tmp_path, monkeypatch):
-    """Stand up isolated CLAUDE_DIR + CLAUDE_EXPORTER_DATA_DIR and
+    """Stand up isolated CLAUDE_DIR + CLAUDE_EXPLORER_DATA_DIR and
     clear the watcher's per-process ``_seen`` cache between tests.
     """
     claude_dir = tmp_path / "claude"
@@ -36,7 +36,7 @@ def watcher_env(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
 
     from backend import config, cc_image_watcher
 

@@ -37,13 +37,14 @@ def cache_dir() -> Path:
     """Root of the permanent CC image cache.
 
     Production layout puts ``conversations/`` and ``cc-images/`` as
-    siblings under ``~/.claude-exporter/``. We derive ``cc-images/``
+    siblings under ``~/.claude-explorer/``. We derive ``cc-images/``
     from ``settings.data_dir`` (which points at the ``conversations/``
-    subdir in production and is overridden by ``CLAUDE_EXPORTER_DATA_DIR``
-    in tests). When the override points at a directory whose name is
-    NOT ``conversations``, we fall back to ``data_dir / "cc-images"``
-    so older test layouts still work. Mirrors the
-    ``backend.routers.files._attachments_root`` precedent.
+    subdir in production and is overridden by ``CLAUDE_EXPLORER_DATA_DIR``
+    — or the legacy ``CLAUDE_EXPORTER_DATA_DIR`` — in tests). When the
+    override points at a directory whose name is NOT ``conversations``,
+    we fall back to ``data_dir / "cc-images"`` so older test layouts
+    still work. Mirrors the ``backend.routers.files._attachments_root``
+    precedent.
     """
     data_dir = get_settings().data_dir
     if data_dir.name == "conversations":
@@ -62,11 +63,37 @@ def copy_marker_image_to_cache(abs_path: str, conv_uuid: str) -> Path | None:
     """Read bytes from ``abs_path``, hash, copy into permanent cache.
 
     Returns the destination path, or ``None`` if ``abs_path`` is missing
-    or unreadable. Missing paths are logged at WARNING (Claude Code may
-    have already rotated them out) and do NOT raise.
+    or unreadable. Missing paths fall into two buckets:
+
+    * **Recoverable** — the bytes are already in the permanent cache under
+      ``<cache_dir>/<conv_uuid>/<sess>--<N>.*.<ext>``. Claude Code rotated
+      the live file but the explorer's earlier eager/lazy/watcher pass
+      already copied it. This is the *normal* steady state and is logged
+      at DEBUG only.
+    * **Permanent data loss** — missing in both the live cache *and* the
+      permanent cache. This is the user-visible signal that pre-watcher
+      images are gone forever; logged at WARNING.
+
+    Never raises on missing live files.
     """
     p = Path(abs_path)
     if not p.exists() or not p.is_file():
+        # Check the permanent cache before warning. Glob is scoped to the
+        # exact <cache_dir>/<conv_uuid>/ directory — O(files-in-conv-dir),
+        # not O(all-cached-files). Junk paths (parent_dir or stem that
+        # don't look like a CC sess/slot) safely produce an empty glob.
+        sess = p.parent.name
+        n = p.stem
+        ext = p.suffix.lstrip(".") or "png"
+        target_dir = cache_dir() / conv_uuid
+        if target_dir.exists() and any(target_dir.glob(f"{sess}--{n}.*.{ext}")):
+            log.debug(
+                "CC image %s (conv %s) live-cache missing but permanent-cache "
+                "copy found; treating as recovered",
+                abs_path,
+                conv_uuid,
+            )
+            return None
         log.warning(
             "CC image referenced by conv %s not on disk: %s", conv_uuid, abs_path
         )

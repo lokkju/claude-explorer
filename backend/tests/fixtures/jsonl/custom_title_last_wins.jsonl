@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","sessionId":"sess-rename","timestamp":"2026-04-19T01:30:00Z","cwd":"/tmp/p","message":{"role":"user","content":"original first message"}}
+{"type":"custom-title","customTitle":"First name","sessionId":"sess-rename"}
+{"type":"assistant","uuid":"a1","sessionId":"sess-rename","timestamp":"2026-04-19T01:30:30Z","message":{"id":"asst_1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"ok"}]}}
+{"type":"custom-title","customTitle":"Renamed Later","sessionId":"sess-rename"}
+{"type":"summary","summary":"Auto generated summary that should NOT win","leafUuid":"a1"}
+{"type":"agent-name","agentName":"Renamed Later","sessionId":"sess-rename"}

@@ -58,7 +58,42 @@ logger = logging.getLogger(__name__)
 
 # Bump to force a full drop+rebuild on next open. Used when the schema
 # below changes in a way the existing data can't satisfy.
-SCHEMA_VERSION = 1
+#
+# IMPORTANT: bumping this triggers a drop+rebuild only when the
+# `SearchIndex` constructor next runs — i.e. on the NEXT PROCESS START.
+# A running uvicorn worker that hot-reloads only the Python source will
+# NOT pick up the version change until restart. In dev with
+# `--reload`, uvicorn restarts workers on .py edits, so this is
+# sufficient. In production, deploying new code restarts the workers.
+# A documented manual escape hatch (`claude-explorer reindex-search`)
+# also forces a fresh rebuild without bumping.
+#
+# Version history:
+#   * v1: initial FTS5 index over message text + content blocks.
+#   * v2 (2026-05-12, V1 polish round 3): also indexes the
+#     `slash_command` field on CC command markers so searches for
+#     `/coding` (literal) or `coding` (FTS5 token) hit the marker
+#     bubble even when the user's args body doesn't contain the word.
+#   * v3 (2026-05-13, V1 polish): `thinking` content blocks are no
+#     longer indexed (see backend/search.py:_extract_searchable_text).
+#     Bumping the version forces a one-time rebuild on next startup so
+#     stale entries with thinking-only token matches don't poison FTS5
+#     top-N ranking (e.g., a thinking-only hit displacing a real prose
+#     match from the top 5000). Index rebuild is non-blocking via the
+#     existing lifespan task.
+#   * v4 (2026-05-13, V1 polish cleanup): argless command markers
+#     (`is_command_marker=True` — `/exit`, `/clear`, `/compact`,
+#     plus leading-prelude rows) are no longer indexed. They're
+#     chrome that the viewer hides behind SessionPreludeAffordance /
+#     SlashCommandBadge and the export surfaces drop via
+#     export._is_excludable_marker; mirroring that exclusion in
+#     search closes the "one truth, three surfaces" invariant.
+#     Argful markers (`/coding <prose>`, `/plan <prose>`) carry
+#     is_command_marker=False and continue to be searchable on
+#     both the user's prose body and the slash_command token.
+#     Bumping the version forces a one-time rebuild on next startup
+#     so existing argless-marker body rows in the index get cleared.
+SCHEMA_VERSION = 4
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata
@@ -124,7 +159,7 @@ def default_index_path() -> Path:
     """Return the canonical on-disk index location.
 
     Lives at ``<data_dir>.parent / "search-index.sqlite"`` so it's a sibling
-    of the conversations dir (typically ``~/.claude-exporter/``). Same
+    of the conversations dir (typically ``~/.claude-explorer/``). Same
     pattern the preferences file uses.
     """
     return get_settings().data_dir.parent / "search-index.sqlite"

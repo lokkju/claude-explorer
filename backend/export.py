@@ -46,7 +46,7 @@ TOOL_PLACEHOLDER = "This block is not supported on your current device yet."
 
 
 def filter_tool_placeholders(text: str) -> str:
-    """Strip Claude Desktop's TOOL_PLACEHOLDER everywhere in ``text``.
+    r"""Strip Claude Desktop's TOOL_PLACEHOLDER everywhere in ``text``.
 
     Mirrors the frontend canonical algorithm in
     ``frontend/src/components/message/MarkdownRenderer.tsx::stripToolPlaceholderText``
@@ -154,6 +154,30 @@ def render_content_block(
         return "\n".join(lines)
 
     return ""
+
+
+def _is_excludable_marker(message: Message) -> bool:
+    """V1 polish (2026-05-13): True iff this message is pure conversational
+    chrome that should be hidden from all export surfaces.
+
+    Two cases both reduce to ``is_command_marker=True``:
+      * Argless slash markers (``/exit``, ``/clear``, …). Post-Fix-2
+        (claude_code_reader 2026-05-13), ``is_command_marker=True`` IMPLIES
+        the marker is argless — argful markers (`/coding <prompt>`,
+        `/plan <prose>`) carry the user's real prose and have
+        ``is_command_marker=False``, so they pass through this filter and
+        export normally.
+      * Leading prelude markers. ``is_prelude=True`` is set ONLY on
+        argless markers (enforced at claude_code_reader._flag_leading_prelude_markers),
+        so they're already covered by the ``is_command_marker`` check.
+        We don't need a separate ``is_prelude`` branch.
+
+    Spec invariant X8 ("one truth, three surfaces"): the viewer hides
+    these markers behind the SessionPreludeAffordance / SlashCommandBadge
+    chrome; markdown/PDF exports must do the same so the recipient sees
+    the same content the user saw.
+    """
+    return message.is_command_marker
 
 
 def message_has_visible_content(message: Message, include_tools: bool = True) -> bool:
@@ -300,6 +324,8 @@ def conversation_to_markdown(
     ]
 
     for message in conversation.messages:
+        if _is_excludable_marker(message):
+            continue
         if message_has_visible_content(message, include_tools):
             lines.append(message_to_markdown(message, include_tools))
 
@@ -400,6 +426,8 @@ def conversation_to_html(
 """
 
     for message in conversation.messages:
+        if _is_excludable_marker(message):
+            continue
         if not message_has_visible_content(message, include_tools):
             continue
 
@@ -610,7 +638,7 @@ def _resolve_cc_image_path(abs_path: str) -> Path | None:
     Order:
       1. The original absolute path (Claude Code's live cache).
       2. The permanent cache populated at fetch time
-         (``~/.claude-exporter/cc-images/*/<sess>--<N>.*.<ext>`` —
+         (``~/.claude-explorer/cc-images/*/<sess>--<N>.*.<ext>`` —
          pick newest mtime).
 
     Returns None if neither exists.
@@ -1146,6 +1174,8 @@ def create_markdown_bundle(
         "",
     ]
     for message in conversation.messages:
+        if _is_excludable_marker(message):
+            continue
         has_attachments = (
             message.uuid in attachment_refs_per_message
             or message.uuid in missing_attachments_per_message

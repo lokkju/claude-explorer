@@ -19,7 +19,6 @@ Spec-driven discipline (CLAUDE-TESTING.md §1):
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -75,7 +74,7 @@ def test__warm_all_sessions__populates_cache_for_referenced_image(
     fixture_png.write_bytes(b"\x89PNG\r\n\x1a\nWARM_PASS_FIXTURE_BYTES_AAA")
 
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     from backend import config
 
     config.get_settings.cache_clear()  # type: ignore[attr-defined]
@@ -123,7 +122,7 @@ def test__warm_all_sessions__idempotent_re_run_no_dupes(
     fixture_png.write_bytes(b"\x89PNG\r\n\x1a\nIDEM_FIXTURE_BBB")
 
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     from backend import config
 
     config.get_settings.cache_clear()  # type: ignore[attr-defined]
@@ -163,7 +162,7 @@ async def test__warm_all_sessions_async__returns_state(
     fixture_png.write_bytes(b"\x89PNG\r\n\x1a\nASYNC_FIXTURE_CCC")
 
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     from backend import config
 
     config.get_settings.cache_clear()  # type: ignore[attr-defined]

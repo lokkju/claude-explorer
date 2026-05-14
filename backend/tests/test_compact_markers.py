@@ -117,3 +117,50 @@ def test_compact_markers_in_conversation_summary_lookup() -> None:
     conv = read_claude_code_conversation(FIXTURES / "compact_mixed.jsonl")
     assert conv is not None
     assert "compact_markers" in conv
+
+
+def test_compact_marker_count_in_field_matches_render_invariant() -> None:
+    """V1 polish (2026-05-13) — Audit invariant #7:
+
+    The `compact_markers` field on the API response carries one entry
+    per `isCompactSummary: True` row in the source JSONL. The rendered
+    message stream (`chat_messages`) does NOT drop the pre-/post-compact
+    messages (spec invariant X6: compact is a dumb pipe).
+
+    Bidirectional contract:
+      (a) `len(compact_markers)` == count of isCompactSummary entries
+          in source.
+      (b) Total visible messages around the compact marker are
+          preserved — no drop.
+
+    Historic regression: pre-compact messages were silently swallowed
+    after a compact marker was encountered. This test pins the count
+    so the regression cannot return.
+    """
+    conv = read_claude_code_conversation(FIXTURES / "compact_mixed.jsonl")
+    assert conv is not None
+    markers = conv.get("compact_markers", [])
+    assert len(markers) == 2, (
+        f"compact_mixed fixture has 2 compact summary rows; got "
+        f"{len(markers)} markers"
+    )
+
+    # Spec invariant X6: messages around the compact marker are not
+    # dropped. The fixture has real user/assistant turns both before
+    # and after each compact summary; chat_messages must reflect that.
+    chat_messages = conv.get("chat_messages", [])
+    assert len(chat_messages) >= 2, (
+        f"compact_mixed must surface at least the pre- and post-compact "
+        f"messages; got chat_messages={len(chat_messages)}"
+    )
+
+    # The number of compact_markers equals the number of summary entries;
+    # they are NOT also in chat_messages (compact is a sidecar pipe, not
+    # interleaved). If the implementation ever moves them inline, this
+    # test must update — but for V1 the dumb-pipe contract holds.
+    for m in markers:
+        # Every marker has the required fields per the spec.
+        assert m["message_uuid"]
+        assert m["summary_text"]
+        assert m["timestamp"]
+        assert m["kind"] in ("auto", "manual")

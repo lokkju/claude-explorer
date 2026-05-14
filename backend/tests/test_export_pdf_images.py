@@ -45,6 +45,22 @@ _FIXTURE_PNG = bytes.fromhex(
 )
 _FIXTURE_PIXELS = bytes([0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56])
 
+# G4 audit — second fixture with byte-distinct pixels. Used by the
+# multi-image test to prove that the PDF embeds BOTH images (not one
+# image twice and not one image overwriting the other). Pixels chosen
+# to be visually distinct from _FIXTURE_PIXELS AND have a different
+# sha256 so a `for img in images: assert pixels in img` collision is
+# impossible.
+#   pixel 0 = (0x77, 0x88, 0x99)
+#   pixel 1 = (0xAA, 0xBB, 0xCC)
+_FIXTURE_PNG_2 = bytes.fromhex(
+    "89504e470d0a1a0a"
+    "0000000d49484452000000020000000108020000007b40e8dd"
+    "0000000f49444154789c6328ef98b96af719000c1d03cadde28f8d"
+    "0000000049454e44ae426082"
+)
+_FIXTURE_PIXELS_2 = bytes([0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC])
+
 
 def _has_pypdf() -> bool:
     try:
@@ -55,9 +71,56 @@ def _has_pypdf() -> bool:
         return False
 
 
+def _png_unfilter_row(filtered: bytes, bpp: int) -> bytes:
+    """Reverse PNG row filtering for a single row.
+
+    PNG IDAT data prefixes each row with a 1-byte filter type:
+       0 = None (raw), 1 = Sub, 2 = Up, 3 = Average, 4 = Paeth.
+
+    For a single-row image (height=1), Up/Average/Paeth all degenerate
+    to using zero for the "previous row" terms, so the recovery is:
+       None    → raw[i]
+       Sub     → raw[i] + recon[i-bpp]
+       Up      → raw[i]                              (prev row is zero)
+       Average → raw[i] + recon[i-bpp] // 2          (prev row is zero)
+       Paeth   → raw[i] + paeth(recon[i-bpp], 0, 0)  (prev row is zero)
+                 which collapses to raw[i] + recon[i-bpp]
+
+    WeasyPrint can pick any filter when it re-encodes the PNG into the
+    PDF FlateDecode stream, so the test MUST be filter-agnostic.
+    """
+    if not filtered:
+        return b""
+    filt = filtered[0]
+    data = filtered[1:]
+    recon = bytearray(len(data))
+    if filt == 0:
+        return bytes(data)
+    if filt == 1 or filt == 4:
+        for i in range(len(data)):
+            left = recon[i - bpp] if i >= bpp else 0
+            recon[i] = (data[i] + left) & 0xFF
+        return bytes(recon)
+    if filt == 2:
+        return bytes(data)  # prev-row is zero in a 1-row image
+    if filt == 3:
+        for i in range(len(data)):
+            left = recon[i - bpp] if i >= bpp else 0
+            recon[i] = (data[i] + (left // 2)) & 0xFF
+        return bytes(recon)
+    raise ValueError(f"unknown PNG filter byte {filt}")
+
+
 def _extract_image_xobjects(pdf_bytes: bytes) -> list[dict]:
     """Walk a PDF and return per-image dicts with width/height + the
     flate-decompressed raw pixel bytes.
+
+    For FlateDecode streams that include a leading PNG filter byte
+    (which WeasyPrint emits per row), we also return ``pixels`` — the
+    reconstructed un-filtered RGB byte sequence. Tests that want to
+    check pixel content should use ``pixels``, not ``decompressed``,
+    since WeasyPrint's choice of PNG filter is implementation-defined
+    and can vary between adjacent images.
     """
     import pypdf
 
@@ -84,11 +147,28 @@ def _extract_image_xobjects(pdf_bytes: bytes) -> list[dict]:
                 continue
             raw = getattr(obj, "_data", b"") or b""
             decompressed = b""
+            pixels = b""
             if obj.get("/Filter") == "/FlateDecode":
                 try:
                     decompressed = zlib.decompress(raw)
                 except zlib.error:
                     decompressed = b""
+                # Best-effort PNG-unfilter when the dimensions + sample
+                # depth are known.
+                width = obj.get("/Width") or 0
+                bps = obj.get("/BitsPerComponent") or 8
+                # Map ColorSpace to bytes-per-pixel.
+                cs = obj.get("/ColorSpace")
+                bpp_map = {"/DeviceRGB": 3, "/DeviceGray": 1, "/DeviceCMYK": 4}
+                bpp = bpp_map.get(str(cs), 0)
+                if bpp and bps == 8 and width:
+                    stride = 1 + width * bpp  # +1 for the filter byte
+                    rows = []
+                    for r_start in range(0, len(decompressed), stride):
+                        row = decompressed[r_start : r_start + stride]
+                        if len(row) == stride:
+                            rows.append(_png_unfilter_row(row, bpp))
+                    pixels = b"".join(rows)
             out.append(
                 {
                     "width": obj.get("/Width"),
@@ -96,6 +176,7 @@ def _extract_image_xobjects(pdf_bytes: bytes) -> list[dict]:
                     "filter": obj.get("/Filter"),
                     "raw": raw,
                     "decompressed": decompressed,
+                    "pixels": pixels,
                 }
             )
     return out
@@ -172,6 +253,85 @@ def test_pdf_embeds_marker_image_bytes(tmp_path: Path, monkeypatch: pytest.Monke
         "WeasyPrint likely rendered a broken-image placeholder. "
         f"Saw images: {[(i['width'], i['height'], i['filter']) for i in images]}"
     )
+
+
+@pytest.mark.skipif(not _has_pypdf(), reason="pypdf required to inspect PDF streams")
+def test_pdf_embeds_multiple_distinct_image_markers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G4 audit — when a conversation references two distinct images via
+    ``[Image: source: ...]`` markers, the PDF must embed BOTH bytes
+    streams. Catches a regression where one image overwrites another
+    (single-image cache key, shared filename, etc.) or where only the
+    first marker is processed.
+
+    Council's call (G4 disagreement resolution): assert count + content
+    only. Visual layout ordering is heavily WeasyPrint-implementation
+    dependent (xobject definition order != content-stream draw order),
+    so a byte-position ordering check would be brittle. Two byte-
+    distinct fixtures with two distinct sha256s + assertion that BOTH
+    pixel signatures appear in the PDF's image streams catches the
+    "one image overwrote the other" regression that the contract
+    actually cares about.
+    """
+    import hashlib
+
+    claude_dir = tmp_path / "claude"
+    image_cache = claude_dir / "image-cache" / "sess-multi"
+    image_cache.mkdir(parents=True)
+    fixture_a = image_cache / "1.png"
+    fixture_b = image_cache / "2.png"
+    fixture_a.write_bytes(_FIXTURE_PNG)
+    fixture_b.write_bytes(_FIXTURE_PNG_2)
+
+    monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
+    from backend.config import get_settings
+
+    get_settings.cache_clear()  # type: ignore[attr-defined]
+
+    # Two markers in one message body, both pointing at different
+    # files. The marker regex finds them independently; each should
+    # produce an <img> tag and a distinct embed in the PDF.
+    conv = _make_conversation(
+        f"Look:\n[Image: source: {fixture_a}]\n[Image: source: {fixture_b}]"
+    )
+    pdf_bytes = create_pdf(conv)
+    assert isinstance(pdf_bytes, bytes)
+    assert pdf_bytes.startswith(b"%PDF")
+
+    images = _extract_image_xobjects(pdf_bytes)
+    # Two distinct image XObject streams in the PDF — regression would
+    # collapse to 1 if a shared-filename cache key overwrote one with
+    # the other, or if marker parsing only handled the first match.
+    assert len(images) >= 2, (
+        f"Expected ≥2 image streams in PDF, got {len(images)}. "
+        f"Saw images: {[(i['width'], i['height'], i['filter']) for i in images]}"
+    )
+
+    # Both pixel signatures must appear, post-PNG-unfilter, somewhere
+    # among the PDF's image streams. We use `pixels` (the unfiltered
+    # RGB byte sequence) rather than `decompressed` because WeasyPrint
+    # picks PNG row filters at re-encoding time and a Sub-filtered row
+    # masks the raw pixel bytes from a naïve substring search.
+    # (See _png_unfilter_row docstring for the filter-agnostic decode.)
+    saw_a = any(
+        img["width"] == 2 and img["height"] == 1 and _FIXTURE_PIXELS == img["pixels"]
+        for img in images
+    )
+    saw_b = any(
+        img["width"] == 2 and img["height"] == 1 and _FIXTURE_PIXELS_2 == img["pixels"]
+        for img in images
+    )
+    assert saw_a, f"First image's pixel bytes missing from PDF. Saw pixels: {[i['pixels'].hex() for i in images]}"
+    assert saw_b, f"Second image's pixel bytes missing from PDF. Saw pixels: {[i['pixels'].hex() for i in images]}"
+
+    # Bidirectional check: prove the two fixture digests are actually
+    # different (so the "both bytes appear" claim isn't vacuous). If
+    # someone edits a fixture and accidentally makes them identical
+    # this assertion fails first.
+    digest_a = hashlib.sha256(_FIXTURE_PIXELS).hexdigest()
+    digest_b = hashlib.sha256(_FIXTURE_PIXELS_2).hexdigest()
+    assert digest_a != digest_b
 
 
 def test_pdf_missing_marker_renders_cleanly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

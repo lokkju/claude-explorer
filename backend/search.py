@@ -31,18 +31,116 @@ from .store import ConversationStore, _parse_datetime
 logger = logging.getLogger(__name__)
 
 
-def _extract_searchable_text(message: dict[str, Any]) -> str:
+# Placeholder pattern used by Claude Desktop when a content block (tool call,
+# canvas widget, etc.) can't be rendered in the current client. Mirrors the
+# frontend's filter in frontend/src/lib/utils.ts (filterToolPlaceholders): when
+# we render a message with showToolCalls=false, this exact pattern is stripped
+# from the displayed text. We strip the same pattern from the searchable text
+# projection when include_tool_calls=False so that a message whose `text`
+# field consists ONLY of this placeholder is treated as "no visible text"
+# (mirrors messageHasVisibleContent semantics).
+_TOOL_PLACEHOLDER_RE = re.compile(
+    r"```\s*\n?\s*This block is not supported on your current device yet\.\s*\n?\s*```"
+)
+
+
+def _extract_searchable_text(
+    message: dict[str, Any],
+    *,
+    include_tool_calls: bool = True,
+) -> str:
     """Flatten every searchable surface of a message into one string.
 
     Covers: message['text'] (Desktop API plain text), and all content blocks —
     text, tool_use input dicts (Bash command, file paths, prompt args), and
     tool_result content (which can be a string OR a list of text blocks).
+
+    When ``include_tool_calls=False``:
+      * Skips ``tool_use`` and ``tool_result`` content blocks.
+      * Strips the Desktop "This block is not supported…" placeholder from
+        ``message['text']`` (mirrors frontend ``messageHasVisibleContent``
+        and ``filterToolPlaceholders``). A message whose ``text`` field is
+        only that placeholder yields the empty string here.
+      * ``text``-type blocks are unchanged — they ARE the user-visible body.
+
+    ``thinking`` blocks are NEVER indexed regardless of the toggle
+    (V1 polish 2026-05-13): the frontend has no `case 'thinking':`
+    renderer in V1, so indexing thinking content produces search
+    "ghosts" — a query that hits inside a thinking block returns a
+    result whose bubble shows nothing matching. Until a `Show thinking`
+    UI affordance ships, hide it from search too. Spec invariant: search
+    only returns hits the user can navigate to. The accompanying
+    `backend/search_index.SCHEMA_VERSION` bump (2 → 3) forces a one-time
+    rebuild so stale thinking-only matches don't pollute the FTS5
+    top-N ranking.
+
+    Default ``include_tool_calls=True`` preserves prior indexing behavior
+    for tool blocks; the FTS5 index ALWAYS uses the full projection so
+    the index stays correct regardless of the per-query filter (the
+    filter is applied at snippet/scatter time, not at index time — see
+    search.py module docstring on the "include_tool_calls" architecture).
+
+    Argless command-marker exclusion (V1 polish 2026-05-13):
+    Argless slash markers (``is_command_marker=True``: ``/exit``, ``/clear``,
+    ``/compact`` and the leading-prelude rows that ``_flag_leading_prelude_markers``
+    flags on top of them) are CHROME, not user content. The viewer hides them
+    behind ``SessionPreludeAffordance`` / ``SlashCommandBadge`` and the export
+    surfaces drop them via ``export._is_excludable_marker``. The search
+    projection mirrors that exclusion here — typing ``exit`` in the search
+    box should NOT produce hits on ``Session: /exit`` chrome rows.
+
+    Predicate equivalence with ``export._is_excludable_marker`` (export.py:159)
+    is INTENTIONAL: both surfaces apply the same definition of "chrome" so the
+    spec invariant "one truth, three surfaces" (viewer + search + export) holds.
+    Argful markers (``/coding <prose>``, ``/plan <prose>``) carry
+    ``is_command_marker=False`` post-Fix-2 (claude_code_reader 2026-05-13), so
+    they pass through this guard and remain searchable on the user's real
+    prose body AND on the ``slash_command`` token.
+
+    Strict ``is True`` check (not truthy): defends against non-bool injections
+    (e.g. ``"false"`` string, ``1`` int) from fixtures or future code paths that
+    might silently exclude legitimate messages. Production data is always bool
+    per the Pydantic ``Message`` model (models.py) and the CC ingester
+    (claude_code_reader.py:342 sets it as a real boolean), but the function
+    signature is ``dict[str, Any]`` so we don't trust truthiness.
+
+    Index-time side effect (paired with SCHEMA_VERSION bump 3 → 4 in
+    search_index.py): ``upsert_conversation`` writes ``body=""`` for these
+    rows, so they contribute no tokens to the FTS5 inverted index. Title is
+    still populated, so unqualified MATCH on a conversation title is still
+    correct — the title pseudo-message comes from the `_search_via_index`
+    title-sweep, not from marker-row body matches.
     """
+    if message.get("is_command_marker") is True:
+        return ""
+
     parts: list[str] = []
 
     text = message.get("text") or ""
     if text:
-        parts.append(text)
+        if not include_tool_calls:
+            # Mirror frontend filterToolPlaceholders so a message whose
+            # `text` is ONLY a tool placeholder is correctly treated as
+            # empty when the user has hidden tool calls.
+            text = _TOOL_PLACEHOLDER_RE.sub("", text).strip()
+        if text:
+            parts.append(text)
+
+    # CC slash-command name (V1 polish round 3, 2026-05-12). Set by the
+    # triplet collapser on synthetic "Session: /foo" markers AND on
+    # argful markers where `message["text"]` is the user's prompt body.
+    # We append the "/foo" string so both surface forms are searchable:
+    #   * Literal substring `/coding` hits via linear-scan regex.
+    #   * FTS5's `unicode61` tokenizer splits on `/` so the token
+    #     `coding` ALSO appears in the indexed projection — a user
+    #     searching for either form gets the marker.
+    # MUST guard against None: an unguarded `parts.append(None)` would
+    # raise TypeError in the trailing `"\n".join(parts)`. The truthy
+    # guard also drops empty-string values without poisoning the index
+    # with a stray "None" literal.
+    slash_command = message.get("slash_command")
+    if slash_command:
+        parts.append(slash_command)
 
     for block in message.get("content") or []:
         if not isinstance(block, dict):
@@ -55,6 +153,8 @@ def _extract_searchable_text(message: dict[str, Any]) -> str:
                 parts.append(t)
 
         elif btype == "tool_use":
+            if not include_tool_calls:
+                continue
             name = block.get("name") or ""
             if name:
                 parts.append(name)
@@ -65,6 +165,8 @@ def _extract_searchable_text(message: dict[str, Any]) -> str:
                 parts.append(tool_input)
 
         elif btype == "tool_result":
+            if not include_tool_calls:
+                continue
             tr_content = block.get("content")
             if isinstance(tr_content, str):
                 parts.append(tr_content)
@@ -75,10 +177,16 @@ def _extract_searchable_text(message: dict[str, Any]) -> str:
                         if t:
                             parts.append(t)
 
-        elif btype == "thinking":
-            t = block.get("thinking") or block.get("text") or ""
-            if t:
-                parts.append(t)
+        # `thinking` blocks: deliberately NOT indexed (V1 polish 2026-05-13).
+        # The frontend has no renderer for `thinking` content blocks
+        # (see frontend/src/components/message/MessageBubble.tsx
+        # ContentBlockRenderer — only 'text', 'tool_use', 'tool_result',
+        # 'image' branches). Indexing thinking would produce search hits
+        # that map to bubbles where the matching text is invisible —
+        # a confusing UX failure mode. Re-add this branch (gated by a
+        # new `include_thinking` setting wired through SettingsContext +
+        # preferences + a header toggle + the search query) when a
+        # "Show thinking" affordance ships.
 
     return "\n".join(parts)
 
@@ -164,6 +272,7 @@ def search_conversations(
     conversation_uuid: str | None = None,
     project_path: str | None = None,
     bookmarks: set[str] | None = None,
+    include_tool_calls: bool = True,
 ) -> list[SearchResult]:
     """Search across all conversations for matching messages.
 
@@ -187,6 +296,23 @@ def search_conversations(
     other (when more than one is set). Backend-side because tool_use /
     tool_result payloads are large; client-side post-filtering would
     waste bandwidth and break ranking.
+
+    ``include_tool_calls`` (2026-05-11): when False, search ignores
+    tool_use / tool_result / thinking content. Hit messages whose only
+    matching text lives in those blocks are silently dropped — the
+    sidebar should only show results the user can navigate to. The FTS5
+    index itself is still built over the full text; the filter is applied
+    at scatter/snippet time so toggling the setting doesn't require a
+    rebuild.
+
+    Note on FTS5 ``LIMIT 5000`` and ``include_tool_calls=False``: if a
+    user's corpus has more than 5000 messages whose only token-match is
+    in tool content, FTS5 may return them as the top 5000 ranked hits
+    (we then drop all of them) while a plain-text match further down the
+    ranking gets missed. The linear-scan fallback would still find it.
+    This is an accepted theoretical drift; on Ray's 1,222-file corpus
+    it's unrealizable. If a bug report ever shows count mismatch on a
+    real query, pagination is the fix.
     """
     if not query or len(query.strip()) < 1:
         return []
@@ -206,6 +332,7 @@ def search_conversations(
                     conversation_uuid=conversation_uuid,
                     project_path=project_path,
                     bookmarks=bookmarks,
+                    include_tool_calls=include_tool_calls,
                 )
             except sqlite3.Error:
                 logger.exception(
@@ -223,6 +350,7 @@ def search_conversations(
         conversation_uuid=conversation_uuid,
         project_path=project_path,
         bookmarks=bookmarks,
+        include_tool_calls=include_tool_calls,
     )
 
 
@@ -236,6 +364,7 @@ def _search_via_linear_scan(
     conversation_uuid: str | None = None,
     project_path: str | None = None,
     bookmarks: set[str] | None = None,
+    include_tool_calls: bool = True,
 ) -> list[SearchResult]:
     """Original linear-scan implementation; now the fallback path.
 
@@ -288,10 +417,21 @@ def _search_via_linear_scan(
             # entry and rebuilds the dict). Profile showed
             # _stringify_tool_input -> json.dumps was the dominant warm
             # cost (~0.3s of the ~0.9s search loop).
-            text = msg.get("__search_text__")
+            #
+            # 2026-05-11: dynamic cache key so the include_tool_calls=True
+            # and False projections coexist without poisoning each other.
+            # A query that toggles the setting between calls re-uses the
+            # other projection on the cached dict.
+            cache_key = (
+                "__search_text_full__" if include_tool_calls
+                else "__search_text_textonly__"
+            )
+            text = msg.get(cache_key)
             if text is None:
-                text = _extract_searchable_text(msg)
-                msg["__search_text__"] = text
+                text = _extract_searchable_text(
+                    msg, include_tool_calls=include_tool_calls,
+                )
+                msg[cache_key] = text
 
             if not text:
                 continue
@@ -348,6 +488,7 @@ def _search_via_index(
     conversation_uuid: str | None,
     project_path: str | None,
     bookmarks: set[str] | None,
+    include_tool_calls: bool = True,
 ) -> list[SearchResult]:
     """FTS5 fast path: scatter-gather over the inverted index.
 
@@ -483,13 +624,24 @@ def _search_via_index(
         # Body matches: walk only the FTS5-matched messages (the rest
         # are guaranteed not to match the query).
         wanted_msg_uuids = msgs_per_conv.get(cu, set())
+        # 2026-05-11: dynamic cache key keyed to include_tool_calls so the
+        # two projections coexist on the same cached message dict (FTS5
+        # index always stores the FULL text; the filter is applied at
+        # snippet-build time here). A query that toggles the setting
+        # between calls re-uses the other projection without thrashing.
+        cache_key = (
+            "__search_text_full__" if include_tool_calls
+            else "__search_text_textonly__"
+        )
         for msg in conv.get("chat_messages", []):
             if msg.get("uuid") not in wanted_msg_uuids:
                 continue
-            text = msg.get("__search_text__")
+            text = msg.get(cache_key)
             if text is None:
-                text = _extract_searchable_text(msg)
-                msg["__search_text__"] = text
+                text = _extract_searchable_text(
+                    msg, include_tool_calls=include_tool_calls,
+                )
+                msg[cache_key] = text
             if not text:
                 continue
             msg_created_at = _parse_datetime(msg.get("created_at"))

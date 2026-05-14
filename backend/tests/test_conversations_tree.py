@@ -46,6 +46,7 @@ import uuid as uuid_lib
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
@@ -511,3 +512,85 @@ def test__get_conversations_tree__empty_messages__returns_empty_arrays(
         "root_messages": [],
         "active_path": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# CC tree-endpoint contract (follow-up to the get_conversation CC fix shipped
+# 2026-05-12). The same duplicate-UUID cycle that poisoned the leaf-walk in
+# ``get_conversation`` also poisoned ``build_message_tree`` /
+# ``resolve_active_branch`` here — but the frontend's TreeViewModal is now
+# hidden for CC (``has_branches=False``), so callers that still hit the API
+# directly should see a degenerate empty-tree envelope, not a 422 / not a
+# half-walked poisoned tree.
+#
+# A synthesized linear-chain MessageNode tree would trip Pydantic's
+# recursive serialization at sessions ≥ ~1000 messages (real CC sessions
+# reach 1400+ — see test_cc_title_and_compact_render.py line 256). The
+# zero-state envelope is the only correct-at-scale answer.
+# ---------------------------------------------------------------------------
+
+
+def test__get_conversations_tree__cc_session_returns_empty_tree_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Claude Code session — even one with the well-known
+    duplicate-UUID compact-cycle problem — must surface the zero-state
+    tree envelope, not a poisoned half-walked tree and not a 422.
+
+    Uses the same ``cc_compact_with_dup_uuids.jsonl`` fixture as
+    ``test_cc_compact_preserves_pre_compact_messages``: 7 chronological
+    messages (4 pre-compact + 1 compact-summary + 2 post-compact). Under
+    the OLD code, ``resolve_active_branch`` from the post-compact leaf
+    walked into the duplicate-UUID cycle and dropped pre-compact
+    messages from ``active_path``; ``build_message_tree`` produced a
+    tree whose shape changed with the dedupe order. Under the NEW code,
+    CC sessions short-circuit to a zero-state envelope.
+    """
+    # Wire env vars BEFORE importing config so cache_clear picks them up.
+    fixtures = Path(__file__).parent / "fixtures" / "jsonl"
+    src = fixtures / "cc_compact_with_dup_uuids.jsonl"
+    claude_dir = tmp_path / ".claude"
+    proj_dir = claude_dir / "projects" / "-tmp-fake"
+    proj_dir.mkdir(parents=True)
+    (proj_dir / "sess-compact.jsonl").write_bytes(src.read_bytes())
+
+    data_dir = tmp_path / "empty-data"
+    data_dir.mkdir()
+
+    monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
+    from backend import config
+
+    config.get_settings.cache_clear()  # type: ignore[attr-defined]
+
+    try:
+        client = TestClient(app)
+        response = client.get("/api/conversations/sess-compact/tree")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # NEW behavior: zero-state envelope, no recursion risk, no
+        # poisoned partial tree.
+        assert body == {
+            "uuid": "sess-compact",
+            "root_messages": [],
+            "active_path": [],
+        }
+
+        # Bidirectional sanity (CLAUDE-TESTING.md §5.4):
+        # The same session, hit via the *non*-tree endpoint, MUST still
+        # return all 7 chronological messages — proves we only neutered
+        # the tree endpoint, not the underlying data.
+        detail_resp = client.get("/api/conversations/sess-compact")
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail = detail_resp.json()
+        assert detail["source"] == "CLAUDE_CODE"
+        assert detail["has_branches"] is False
+        assert len(detail["messages"]) == 7, (
+            "tree endpoint must short-circuit but detail endpoint must "
+            f"still surface all 7 chronological messages; got "
+            f"{len(detail['messages'])}"
+        )
+    finally:
+        config.get_settings.cache_clear()  # type: ignore[attr-defined]

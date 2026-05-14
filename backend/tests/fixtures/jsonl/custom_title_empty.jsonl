@@ -1,0 +1,4 @@
+{"type":"user","uuid":"u1","sessionId":"sess-empty","timestamp":"2026-04-19T01:30:00Z","cwd":"/tmp/p","message":{"role":"user","content":"real first message that should become title"}}
+{"type":"custom-title","customTitle":"","sessionId":"sess-empty"}
+{"type":"agent-name","agentName":"   ","sessionId":"sess-empty"}
+{"type":"assistant","uuid":"a1","sessionId":"sess-empty","timestamp":"2026-04-19T01:30:30Z","message":{"id":"asst_1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"text","text":"ok"}]}}

@@ -36,6 +36,31 @@ class Message(BaseModel):
     # claude.ai sometimes ships a v2 array alongside the legacy `files`
     # with overlapping entries. Renderers dedupe by file_uuid.
     files_v2: list[Any] = Field(default_factory=list)
+    # CC-only flags (V1 polish, 2026-05-12). Pydantic v2 default is
+    # `extra='ignore'`, so these MUST be declared on the model or the
+    # backend's `_collapse_local_command_triplets` / fold / prelude-flag
+    # passes silently lose their output before it reaches the frontend.
+    #   * `is_command_marker`: set by the triplet collapser on the synthetic
+    #     `"Session: /foo"` user message that replaces a CC slash-command
+    #     triplet. Frontend can style muted.
+    #   * `is_prelude`: set by `_flag_leading_prelude_markers` on each
+    #     leading `is_command_marker` row. Frontend hides by default.
+    #   * `assistant_canned_response_consumed`: set by
+    #     `_fold_canned_assistant_responses_into_marker` when CC's literal
+    #     `"No response requested."` reply was absorbed into the marker.
+    #     Carried for debugging / future UI surfacing; renderers currently
+    #     ignore it.
+    is_command_marker: bool = False
+    is_prelude: bool = False
+    assistant_canned_response_consumed: bool = False
+    # The slash-command name (e.g. "/coding", "/plan") for command-marker
+    # rows, or None for any other message. Surfaced by the
+    # `_collapse_local_command_triplets` pass; the frontend renders a
+    # muted `<SlashCommandBadge command="/coding" />` above the body when
+    # this is set. V1 polish round 3, 2026-05-12: paired with the args-
+    # preservation change that puts the user's real prompt text into
+    # `Message.text` when the command carried `<command-args>`.
+    slash_command: str | None = None
 
 
 class SubagentSummary(BaseModel):
@@ -101,6 +126,11 @@ class ConversationDetail(ConversationSummary):
     current_leaf_message_uuid: str = ""
     file_path: str | None = None  # Path to the source file (JSON or JSONL)
     compact_markers: list[CompactMarker] = Field(default_factory=list)
+    # CC-only count of leading `is_prelude` messages. Frontend uses this to
+    # decide whether to render the "Session prelude: N earlier /exit runs"
+    # affordance above the message stream. 0 for Desktop conversations and
+    # any CC conversation whose first message is not a slash-command marker.
+    prelude_hidden_count: int = 0
 
 
 class MessageNode(BaseModel):
