@@ -20,7 +20,7 @@ then reads from the saved JSON directory.
 - Watch all intercepted requests to claude.ai
 - Extract `sessionKey` from Cookie headers
 - Extract `org_id` from URL paths (`/api/organizations/{org_id}/...`)
-- Write credentials to `~/.claude-exporter/credentials.json` (or a path the user configures)
+- Write credentials to `~/.claude-explorer/credentials.json` (or a path the user configures)
 - Log captured API responses to a raw directory (optional, for debugging)
 - Print clear status messages so the user knows when credentials are captured
 
@@ -55,7 +55,7 @@ Once credentials are captured, print a clear message:
 ## Step 2: bulk-fetch.py
 
 ### Responsibilities
-- Read credentials from `~/.claude-exporter/credentials.json`
+- Read credentials from `~/.claude-explorer/credentials.json`
 - Allow credential override via CLI args or environment variables
 - Fetch paginated list of all conversations (starred + unstarred)
 - Fetch full content of each conversation
@@ -67,7 +67,7 @@ Once credentials are captured, print a clear message:
 - Respect rate limits (configurable sleep, default 0.3s)
 
 ### Output directory
-Default: `~/.claude-exporter/conversations/`
+Default: `~/.claude-explorer/conversations/`
 Override: `--output-dir /path/to/dir`
 
 ### Index file format
@@ -95,8 +95,8 @@ Override: `--output-dir /path/to/dir`
 python fetcher/bulk-fetch.py [OPTIONS]
 
 Options:
-  --output-dir PATH       Where to save JSON files (default: ~/.claude-exporter/conversations)
-  --credentials PATH      Path to credentials file (default: ~/.claude-exporter/credentials.json)
+  --output-dir PATH       Where to save JSON files (default: ~/.claude-explorer/conversations)
+  --credentials PATH      Path to credentials file (default: ~/.claude-explorer/credentials.json)
   --session-key KEY       Session key (overrides credentials file)
   --org-id ID             Org ID (overrides credentials file)
   --incremental           Skip conversations already saved (default: true)

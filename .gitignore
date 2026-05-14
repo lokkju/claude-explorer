@@ -39,3 +39,29 @@ frontend/dist/
 
 # Project specific
 .claude-exporter/
+.claude-explorer/
+
+# Claude Code per-project / per-agent state
+.claude/
+
+# Obsidian vault config (personal editor state)
+.obsidian/
+
+# Playwright MCP console/page snapshots (per-session)
+.playwright-mcp/
+
+# Playwright test output
+test-results/
+playwright-report/
+frontend/test-results/
+frontend/playwright-report/
+
+# Profiler output
+profile_*
+
+# Stray pasted images (Obsidian leaves these at repo root sometimes)
+/Pasted image *.png
+/manage-filters*.png
+
+# Personal / promotional drafts not part of the project
+LinkedIn/

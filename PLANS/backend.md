@@ -130,18 +130,18 @@ class MessageSnippet(BaseModel):
 
 ## Configuration
 
-Config via environment variable or `~/.claude-exporter/config.json`:
+Config via environment variable or `~/.claude-explorer/config.json`:
 
 ```json
 {
-  "data_dir": "/Users/rpeck/.claude-exporter/conversations"
+  "data_dir": "/Users/rpeck/.claude-explorer/conversations"
 }
 ```
 
-Environment: `CLAUDE_EXPORTER_DATA_DIR`
+Environment: `CLAUDE_EXPLORER_DATA_DIR`
 
 The backend auto-discovers this at startup. If not set, defaults to
-`~/.claude-exporter/conversations`.
+`~/.claude-explorer/conversations`.
 
 ---
 
