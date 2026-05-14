@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import gzip
 import json
-import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from fetcher.credentials import load_credentials, save_credentials, OrgRef, CredentialsV2
+from fetcher.credentials import load_credentials
 from fetcher.mitmproxy_addon import (
     ClaudeCredentialCapture,
     _is_organizations_endpoint,

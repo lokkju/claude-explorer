@@ -33,23 +33,21 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import logging
 
 from mitmproxy import http
-
-log = logging.getLogger(__name__)
 
 from fetcher.credentials import (
     DEFAULT_CREDENTIALS_PATH,
     OrgRef,
     CredentialsCorruptError,
     LockContentionError,
-    load_credentials,
     merge_orgs_and_save,
     save_credentials,
 )
+
+log = logging.getLogger(__name__)
 
 
 # Cookie patterns. Cookies can be separated by "; " or ", " depending on the

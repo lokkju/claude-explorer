@@ -4,7 +4,7 @@ Claude Desktop conversations carry image attachments as `Message.files[]`
 entries with claude.ai-relative URLs like
 ``/api/<org_uuid>/files/<file_uuid>/{thumbnail,preview}``. The browser
 can't reach those directly — they require the captured ``sessionKey``
-cookie that lives in ``~/.claude-exporter/credentials.json``.
+cookie that lives in ``~/.claude-explorer/credentials.json``.
 
 This router proxies those URLs back through claude.ai using the same
 ``curl_cffi`` + cookie pattern as ``fetcher/bulk_fetch.py``. The local
@@ -24,9 +24,13 @@ hint to run ``claude-explorer capture`` rather than failing silently.
 from __future__ import annotations
 
 import logging
+import mimetypes
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Response
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi.responses import FileResponse, StreamingResponse
+
+from ..config import get_settings
 
 from fetcher.credentials import (
     DEFAULT_CREDENTIALS_PATH,
@@ -176,14 +180,6 @@ def get_preview(org_id: str, file_uuid: str) -> Response:
 # already local.
 # ----------------------------------------------------------------------
 
-import mimetypes
-from pathlib import Path
-
-from fastapi import Query
-from fastapi.responses import FileResponse
-
-from ..config import get_settings
-
 
 def _image_cache_root() -> Path:
     """Where Claude Code stores image-cache files. Honors the same
@@ -273,7 +269,7 @@ def get_cc_image(path: str = Query(..., description="Absolute path under ~/.clau
 #
 # fetcher.bulk_fetch.download_conversation_files writes every Message.files[]
 # attachment (image variants + non-image documents) under
-#   ~/.claude-exporter/files/<conv-uuid>/<file-uuid>/<variant><ext>
+#   ~/.claude-explorer/files/<conv-uuid>/<file-uuid>/<variant><ext>
 # where variant ∈ {thumbnail, preview, original, document}.
 #
 # The frontend / exporter wants a stable URL it can drop into <img src=> or
@@ -291,12 +287,13 @@ def _attachments_root() -> Path:
     """Directory that holds per-conversation/per-file cached bytes.
 
     Production layout puts ``conversations/`` and ``files/`` as siblings
-    under ``~/.claude-exporter/``. We derive ``files/`` from
+    under ``~/.claude-explorer/``. We derive ``files/`` from
     ``settings.data_dir`` (which points at the ``conversations/`` subdir
-    in production and is overridden by ``CLAUDE_EXPORTER_DATA_DIR`` in
-    tests). When the override points at a directory whose name is NOT
-    ``conversations``, we fall back to ``data_dir / "files"`` so older
-    test layouts still work.
+    in production and is overridden by ``CLAUDE_EXPLORER_DATA_DIR`` — or
+    the legacy ``CLAUDE_EXPORTER_DATA_DIR`` — in tests). When the
+    override points at a directory whose name is NOT ``conversations``,
+    we fall back to ``data_dir / "files"`` so older test layouts still
+    work.
     """
     data_dir = get_settings().data_dir
     if data_dir.name == "conversations":

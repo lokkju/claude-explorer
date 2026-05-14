@@ -321,7 +321,6 @@ def test_migration_log_records_moves(tmp_path: Path) -> None:
 
 def test_lock_metadata_written(tmp_path: Path) -> None:
     """The .fetch.lock written during migration carries JSON metadata."""
-    import portalocker
 
     data_dir = tmp_path / "data"
     creds_path = _setup_creds(tmp_path)
@@ -391,7 +390,7 @@ def test_sentinel_only_after_full_completion(tmp_path: Path) -> None:
     """
     data_dir = tmp_path / "data"
     creds_path = _setup_creds(tmp_path)
-    p1 = _write_legacy_conv(data_dir, "11111111-2222-3333-4444-555555555555", source="CLAUDE_AI")
+    _write_legacy_conv(data_dir, "11111111-2222-3333-4444-555555555555", source="CLAUDE_AI")
     p2 = _write_legacy_conv(data_dir, "22222222-2222-3333-4444-555555555555", source="CLAUDE_AI")
 
     # Make p2 unreadable

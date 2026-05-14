@@ -2,7 +2,7 @@
 Bulk fetch all conversations from Claude Desktop.
 
 Reads credentials captured by mitmproxy_addon.py and downloads
-all conversations to ~/.claude-exporter/conversations/
+all conversations to ~/.claude-explorer/conversations/
 
 Usage:
     uv run python -m fetcher.bulk_fetch [OPTIONS]
@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 
 
 # Default paths
-DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-exporter" / "credentials.json"
-DEFAULT_OUTPUT_DIR = Path.home() / ".claude-exporter" / "conversations"
-DEFAULT_FILES_DIR = Path.home() / ".claude-exporter" / "files"
+DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-explorer" / "credentials.json"
+DEFAULT_OUTPUT_DIR = Path.home() / ".claude-explorer" / "conversations"
+DEFAULT_FILES_DIR = Path.home() / ".claude-explorer" / "files"
 
 # Claude API base URL
 API_BASE = "https://claude.ai/api"

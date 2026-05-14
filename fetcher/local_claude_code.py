@@ -9,7 +9,6 @@ used by the Claude Desktop API fetcher.
 """
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
@@ -19,7 +18,7 @@ import click
 
 # Default paths
 DEFAULT_CLAUDE_DIR = Path.home() / ".claude"
-DEFAULT_OUTPUT_DIR = Path.home() / ".claude-exporter" / "conversations"
+DEFAULT_OUTPUT_DIR = Path.home() / ".claude-explorer" / "conversations"
 
 
 def decode_project_path(encoded_name: str) -> str:
@@ -253,7 +252,7 @@ def import_claude_code_sessions(
             entries = parse_jsonl_file(jsonl_path)
             if not entries:
                 if verbose:
-                    click.echo(f"  Skipping empty file")
+                    click.echo("  Skipping empty file")
                 continue
 
             # Get session ID early to check for duplicates
@@ -275,7 +274,7 @@ def import_claude_code_sessions(
 
             # P4a: copy any [Image: source: <abs-path>] referenced files
             # from ~/.claude/image-cache/ into the permanent
-            # ~/.claude-exporter/cc-images/<conv-uuid>/ cache so the
+            # ~/.claude-explorer/cc-images/<conv-uuid>/ cache so the
             # viewer keeps working after Claude Code rotates the
             # originals. Best-effort — failures are logged, never raised.
             try:

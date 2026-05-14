@@ -11,7 +11,6 @@ grep audit (in C5) enforces this.
 from __future__ import annotations
 
 import json
-import os
 import stat
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -21,7 +20,6 @@ import pytest
 
 from fetcher.credentials import (
     CredentialsCorruptError,
-    LockContentionError,
     OrgRef,
     CredentialsV2,
     load_credentials,

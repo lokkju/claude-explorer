@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from fetcher.bulk_fetch import ClaudeFetcher, FetchAuthError
-from fetcher.credentials import save_credentials, load_credentials
 
 
 PERSONAL = "ae24ae66-4622-48e7-b4b3-1ab2c49f933d"
