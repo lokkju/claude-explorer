@@ -1,7 +1,5 @@
 """Tests for the per-conversation force-refetch route (Build-1 follow-up)."""
 
-import pytest
-from fastapi.testclient import TestClient
 
 
 def test_force_refetch_route_invokes_fetcher(client, monkeypatch):

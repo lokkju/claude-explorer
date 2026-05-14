@@ -179,7 +179,7 @@ def isolated_fetch_dirs(
     """Pin the fetch router's output / files dirs to tmp paths.
 
     Without this, a route under test would write into the developer's real
-    ``~/.claude-exporter/conversations/``. The two constants are imported
+    ``~/.claude-explorer/conversations/``. The two constants are imported
     by value into ``backend.routers.fetch`` (line 18-22), so we patch the
     importer's bindings.
     """

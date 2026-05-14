@@ -70,10 +70,10 @@ def _conv_with_placeholder(uuid: str, text: str) -> dict:
 
 @pytest.fixture
 def isolated_data_dir(monkeypatch, tmp_path):
-    """Stand up an isolated CLAUDE_EXPORTER_DATA_DIR + clear caches."""
+    """Stand up an isolated CLAUDE_EXPLORER_DATA_DIR + clear caches."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     # Also point CLAUDE_DIR somewhere harmless so CC reader doesn't
     # pick up the developer's real ~/.claude during the test.
     claude_dir = tmp_path / "claude"

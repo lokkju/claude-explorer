@@ -1,7 +1,7 @@
 """Tests for /api/preferences endpoint (P3a).
 
 The preferences blob lives at <data_dir parent>/preferences.json — i.e.
-``~/.claude-exporter/preferences.json`` in production. Versioned envelope:
+``~/.claude-explorer/preferences.json`` in production. Versioned envelope:
 
     {"version": 1, "data": {"theme": "dark", ...}}
 
@@ -24,11 +24,11 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client_with_prefs(tmp_path, monkeypatch):
     """TestClient where preferences persist under tmp_path."""
-    # CLAUDE_EXPORTER_DATA_DIR points at the conversations dir; the
-    # preferences file lives in its parent (mirroring ~/.claude-exporter/).
+    # CLAUDE_EXPLORER_DATA_DIR points at the conversations dir; the
+    # preferences file lives in its parent (mirroring ~/.claude-explorer/).
     data_dir = tmp_path / "conversations"
     data_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
 
     # Drop the cached settings so the new env var is honored.
     from backend import config as cfg

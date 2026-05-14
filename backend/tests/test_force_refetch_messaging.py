@@ -19,9 +19,7 @@ These tests pin the contract that the route returns. The frontend will read
 `detail` and surface it verbatim, so the message IS the user copy.
 """
 
-import json
 
-import pytest
 
 
 # ---------------------------------------------------------------------------

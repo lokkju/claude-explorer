@@ -36,14 +36,24 @@ router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
 def _resolve_path() -> Path:
     """Resolve the bookmark file location.
 
-    Honors CLAUDE_EXPLORER_BOOKMARKS_FILE for tests; otherwise stores under
-    ~/.claude-exporter/ alongside the existing data dir (the legacy path the
-    code already uses; see Inv-1 finding).
+    Honors CLAUDE_EXPLORER_BOOKMARKS_FILE for tests; otherwise stores
+    under ~/.claude-explorer/ alongside the existing data dir. Legacy
+    ``~/.claude-exporter/bookmarks.json`` is read as a fallback if the
+    canonical path is missing (one-release deprecation window — the
+    backend's lifespan migration will move the file to the canonical
+    location on its next startup).
     """
     env = os.environ.get("CLAUDE_EXPLORER_BOOKMARKS_FILE")
     if env:
         return Path(env)
-    return Path.home() / ".claude-exporter" / "bookmarks.json"
+    canonical = Path.home() / ".claude-explorer" / "bookmarks.json"
+    if canonical.exists():
+        return canonical
+    legacy = Path.home() / ".claude-exporter" / "bookmarks.json"
+    if legacy.exists():
+        return legacy
+    # Neither exists yet — default to canonical for writes.
+    return canonical
 
 
 class Bookmark(BaseModel):

@@ -2,17 +2,47 @@
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-from .config import get_settings
+from .config import get_settings, migrate_legacy_data_dir, read_env
 from .routers import conversations, search, export, config, fetch, bookmarks, orgs, files, preferences
 
 
 log = logging.getLogger(__name__)
+
+
+def _resolve_static_dir() -> Path | None:
+    """Locate the bundled frontend assets, or return None if absent.
+
+    Resolution order:
+      1. **Installed mode**: ``<backend package>/_static/`` — written by the
+         hatch build hook during ``uv build``. This is what end users get
+         from PyPI wheels.
+      2. **Dev mode**: ``<repo_root>/frontend/dist/`` — written by
+         ``npm run build`` in the frontend dir. Lets contributors run
+         ``uv run uvicorn backend.main:app`` against a locally-built bundle
+         without re-running ``uv build``.
+
+    Returns the first directory containing ``index.html``, or None if
+    neither exists (API-only mode).
+    """
+    # 1. Installed-wheel location (bundled by hatch_build.py).
+    installed = Path(__file__).resolve().parent / "_static"
+    if (installed / "index.html").is_file():
+        return installed
+
+    # 2. Repo dev location.
+    repo_dev = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    if (repo_dev / "index.html").is_file():
+        return repo_dev
+
+    return None
 
 
 # Telemetry surfaced by /api/health when the lifespan migration repeatedly
@@ -94,6 +124,12 @@ def get_migration_state() -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
+    # V1 data-dir rename migration: ~/.claude-exporter/ -> ~/.claude-explorer/.
+    # MUST run BEFORE the first get_settings() call so the cached Settings
+    # picks up the new path. Idempotent and best-effort — see
+    # backend.config.migrate_legacy_data_dir for full semantics.
+    migrate_legacy_data_dir()
+
     # Startup: verify data directory exists
     settings = get_settings()
     if not settings.data_dir.exists():
@@ -106,10 +142,13 @@ async def lifespan(app: FastAPI):
     # cowork-multi-org C4 (NEW2-P0-α + NEW3-P0-B + NEW4-P1-C):
     # Run migrate_to_v2 at startup. If the lock can't be acquired (a CLI
     # fetch is in progress), don't block startup — start the server and let
-    # a background task retry. Skip entirely with CLAUDE_EXPORTER_SKIP_MIGRATION=1.
+    # a background task retry. Skip entirely with
+    # CLAUDE_EXPLORER_SKIP_MIGRATION=1 (or legacy CLAUDE_EXPORTER_SKIP_MIGRATION).
     migration_task: asyncio.Task | None = None
-    if os.environ.get("CLAUDE_EXPORTER_SKIP_MIGRATION") == "1":
-        log.info("Skipping lifespan migration (CLAUDE_EXPORTER_SKIP_MIGRATION=1).")
+    if read_env(
+        "CLAUDE_EXPLORER_SKIP_MIGRATION", "CLAUDE_EXPORTER_SKIP_MIGRATION"
+    ) == "1":
+        log.info("Skipping lifespan migration (CLAUDE_EXPLORER_SKIP_MIGRATION=1).")
         _migration_state["status"] = "skipped"
     else:
         from fetcher.migrate_to_v2 import (
@@ -161,7 +200,9 @@ async def lifespan(app: FastAPI):
     # is logged and swallowed.
     watcher_stop = asyncio.Event()
     watcher_task: asyncio.Task | None = None
-    if os.environ.get("CLAUDE_EXPORTER_DISABLE_CC_WATCHER") != "1":
+    if read_env(
+        "CLAUDE_EXPLORER_DISABLE_CC_WATCHER", "CLAUDE_EXPORTER_DISABLE_CC_WATCHER"
+    ) != "1":
         from backend.cc_image_watcher import run_watcher
 
         watcher_task = asyncio.create_task(run_watcher(watcher_stop))
@@ -174,15 +215,18 @@ async def lifespan(app: FastAPI):
     # background — non-blocking, so the server is up immediately.
     # User can never lose images to "I forgot to run warm-cc-cache".
     warm_task: asyncio.Task | None = None
-    if os.environ.get("CLAUDE_EXPORTER_DISABLE_CC_WARM") != "1":
+    if read_env(
+        "CLAUDE_EXPLORER_DISABLE_CC_WARM", "CLAUDE_EXPORTER_DISABLE_CC_WARM"
+    ) != "1":
         from backend.cc_image_cache import warm_all_sessions_async
 
         warm_task = asyncio.create_task(warm_all_sessions_async())
 
     # Build the FTS5 search index in the background. Search falls back
     # to the linear-scan path until this completes, so the server is
-    # immediately responsive. Set CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX=1
-    # to skip (useful when debugging linear-scan equivalence).
+    # immediately responsive. Set CLAUDE_EXPLORER_DISABLE_SEARCH_INDEX=1
+    # (or legacy CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX) to skip
+    # (useful when debugging linear-scan equivalence).
     #
     # We use print() not log.info() because uvicorn's default log
     # config doesn't propagate to ``backend`` package loggers (the
@@ -190,7 +234,10 @@ async def lifespan(app: FastAPI):
     # pattern). The user wants to see "search index build complete"
     # on stdout without configuring a logging.dictConfig.
     search_index_task: asyncio.Task | None = None
-    if os.environ.get("CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX") != "1":
+    if read_env(
+        "CLAUDE_EXPLORER_DISABLE_SEARCH_INDEX",
+        "CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX",
+    ) != "1":
         async def _build_search_index() -> None:
             try:
                 from backend.search_index import build_full_index, get_search_index
@@ -284,9 +331,14 @@ app.include_router(orgs.router, prefix="/api")
 app.include_router(files.router, prefix="/api")
 
 
-@app.get("/")
-async def root():
-    """Root endpoint."""
+@app.get("/api/info")
+async def api_info():
+    """API metadata endpoint.
+
+    Lives at /api/info (not /) so that / can serve the SPA when bundled
+    assets are present. The previous JSON-at-root behavior moved here in
+    the v0.1.0 PyPI packaging migration.
+    """
     return {
         "name": "Claude Explorer",
         "version": "0.1.0",
@@ -309,3 +361,71 @@ async def api_health():
         "migration": state,
         "migration_stuck": state.get("status") == "stuck",
     }
+
+
+# -----------------------------------------------------------------------------
+# Static SPA mount + catch-all
+# -----------------------------------------------------------------------------
+# IMPORTANT: these routes are registered AFTER all /api/* routers + /docs +
+# /openapi.json so that FastAPI's first-match-wins ordering routes API
+# traffic correctly. The catch-all also explicitly rejects /api/* and the
+# OpenAPI surface to belt-and-suspenders the ordering guarantee.
+
+_STATIC_DIR = _resolve_static_dir()
+
+if _STATIC_DIR is not None:
+    # Serve hashed Vite bundle assets verbatim.
+    _assets_dir = _STATIC_DIR / "assets"
+    if _assets_dir.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=_assets_dir),
+            name="assets",
+        )
+
+    # Anything Vite drops in dist/ that isn't /assets (favicon, vite.svg,
+    # robots.txt, etc.) — serve from a single fall-through handler below.
+
+    _RESERVED_PREFIXES = ("api/", "docs", "redoc", "openapi.json", "health")
+
+    @app.get("/")
+    async def _spa_root() -> FileResponse:
+        return FileResponse(_STATIC_DIR / "index.html")
+
+    @app.get("/{full_path:path}")
+    async def _spa_catchall(full_path: str) -> FileResponse:
+        """Serve static files for known paths, else fall through to index.html
+        so client-side React routing works for deep links.
+
+        Explicit /api/, /docs, /openapi.json rejection is defense-in-depth:
+        FastAPI's route order already routes those before this catch-all,
+        but if a developer reorders router registration in the future this
+        guards against returning the SPA HTML for a missing API endpoint.
+        """
+        if any(full_path == p or full_path.startswith(p) for p in _RESERVED_PREFIXES):
+            raise HTTPException(status_code=404)
+        # If a real file exists (e.g. vite.svg at the repo dist root),
+        # serve it. Otherwise serve index.html for the SPA's client router.
+        candidate = _STATIC_DIR / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_STATIC_DIR / "index.html")
+else:
+    log.warning(
+        "UI assets not found at %s or %s; backend will run as API-only. "
+        "Run `npm run build` in frontend/ for dev mode, or install a "
+        "pre-built wheel for end-user usage.",
+        Path(__file__).resolve().parent / "_static",
+        Path(__file__).resolve().parent.parent / "frontend" / "dist",
+    )
+
+    # Preserve the legacy JSON-at-root behavior so anyone scripting against
+    # `/` still gets something useful in API-only mode.
+    @app.get("/")
+    async def _root_json() -> dict:
+        return {
+            "name": "Claude Explorer",
+            "version": "0.1.0",
+            "docs": "/docs",
+            "ui": "not bundled — install from PyPI or run `npm run build` in frontend/",
+        }

@@ -220,9 +220,13 @@ def test_cc_image_404_for_missing_path(tmp_path, monkeypatch):
 #     * backend/tests/_security_helpers.py (attachments_root_for)
 # ----------------------------------------------------------------------
 
-import logging
+# E402 silenced for the two imports below: this file is organized into
+# section-banner blocks, and the imports here are scoped to the proxy
+# 404-fallback section that follows. Moving them to the top would split
+# their definition from the tests that consume them.
+import logging  # noqa: E402
 
-from backend.tests._security_helpers import attachments_root_for
+from backend.tests._security_helpers import attachments_root_for  # noqa: E402
 
 _FALLBACK_PNG = b"\x89PNG\r\n\x1a\nLOCAL-CACHE-FIXTURE-BYTES-XYZ"
 _TEST_ORG = "ae24ae66-4622-48e7-b4b3-1ab2c49f933d"
@@ -237,7 +241,7 @@ def proxy_404_fallback_env(isolated_data_dir: Path, fresh_creds: Path):
 
     Reuses ``fresh_creds`` so the proxy gets past ``_load_session_cookies``
     and ``isolated_data_dir`` so the attachments root is under tmp_path
-    (no pollution of the dev's real ``~/.claude-exporter/files/``).
+    (no pollution of the dev's real ``~/.claude-explorer/files/``).
     """
     root = attachments_root_for(isolated_data_dir)
     root.mkdir(parents=True, exist_ok=True)

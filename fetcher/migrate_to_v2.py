@@ -2,7 +2,7 @@
 
 Pre-cowork-multi-org users have a data_dir like::
 
-    ~/.claude-exporter/conversations/
+    ~/.claude-explorer/conversations/
     ├── _index.json
     ├── 02971706-ff28-...json
     ├── 0a5e919f-6d03-...json
@@ -10,7 +10,7 @@ Pre-cowork-multi-org users have a data_dir like::
 
 After migration::
 
-    ~/.claude-exporter/conversations/
+    ~/.claude-explorer/conversations/
     ├── _index.json                     (untouched)
     ├── by-org/
     │   ├── .migrated_v2                (sentinel — migration is done)
@@ -74,7 +74,7 @@ from fetcher.credentials import (
 log = logging.getLogger(__name__)
 
 
-DEFAULT_DATA_DIR = Path.home() / ".claude-exporter" / "conversations"
+DEFAULT_DATA_DIR = Path.home() / ".claude-explorer" / "conversations"
 
 MIGRATION_SENTINEL = "by-org/.migrated_v2"
 MIGRATION_LOG = "by-org/.migration_log.json"

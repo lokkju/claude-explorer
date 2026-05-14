@@ -172,7 +172,7 @@ def test_conversation_list_filter_by_organization_id(
     """?organization_id=<uuid> returns only that org's conversations."""
     data_dir = tmp_path / "conversations"
     data_dir.mkdir()
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     # Bust the lru_cache.
     from backend.config import get_settings
     get_settings.cache_clear()

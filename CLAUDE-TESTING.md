@@ -335,7 +335,7 @@ Backend false-pass class #1: a test passes because it's actually
 running against state from a *previous* test.
 
 **`get_settings()` is `@lru_cache`d.** If your test does
-`monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(tmp_path))` but
+`monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(tmp_path))` but
 doesn't clear the cache, every subsequent `get_settings()` call
 returns the FIRST test's settings. `tmp_path` from this test is never
 read. Fixture template:
@@ -344,7 +344,7 @@ read. Fixture template:
 @pytest.fixture
 def isolated_data_dir(tmp_path, monkeypatch):
     from backend import config
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(tmp_path))
     config.get_settings.cache_clear()
     yield tmp_path
     config.get_settings.cache_clear()  # don't leak this test's settings into the next
@@ -371,7 +371,7 @@ unless you reset it.
 `fetcher/bulk_fetch.py`, `backend/routers/fetch.py`, and re-imports in
 tests. `monkeypatch.setattr("fetcher.credentials.DEFAULT_CREDENTIALS_PATH",
 new)` ONLY rebinds the canonical name — the three by-value copies still
-point at `~/.claude-exporter/credentials.json`. The fixture must patch
+point at `~/.claude-explorer/credentials.json`. The fixture must patch
 all four:
 
 ```python
@@ -392,12 +392,12 @@ Same pattern applies to any module that does
 Grep for the constant name globally; if it appears as a bare-name import
 anywhere, patch each binding.
 
-**`CLAUDE_DIR` and `CLAUDE_EXPORTER_DATA_DIR` are different knobs.**
-`CLAUDE_DIR` controls where `~/.claude-exporter/` itself resolves
+**`CLAUDE_DIR` and `CLAUDE_EXPLORER_DATA_DIR` are different knobs.**
+`CLAUDE_DIR` controls where `~/.claude-explorer/` itself resolves
 (used by capture, credentials, and the orgs router);
-`CLAUDE_EXPORTER_DATA_DIR` controls where `conversations/` lives.
-A test that only pins `CLAUDE_EXPORTER_DATA_DIR` can still scribble
-into the user's real `~/.claude-exporter/credentials.json` if the
+`CLAUDE_EXPLORER_DATA_DIR` controls where `conversations/` lives.
+A test that only pins `CLAUDE_EXPLORER_DATA_DIR` can still scribble
+into the user's real `~/.claude-explorer/credentials.json` if the
 code under test goes through the credentials path. Pin both unless
 you've verified the call graph never touches credentials.
 
@@ -765,7 +765,7 @@ must `Path(...).resolve(strict=True).relative_to(allowed_root)` and
 **Symlink resolution.** Place a symlink in `tmp_path` pointing
 outside the data dir. Assert the route doesn't follow it.
 
-**Permission bits.** After writing `~/.claude-exporter/credentials.json`
+**Permission bits.** After writing `~/.claude-explorer/credentials.json`
 or `preferences.json`, assert `os.stat(p).st_mode & 0o777 == 0o600`.
 The atomic-write path is what writes mode bits; if it
 `os.replace()`s a `tmp` file with `0o644`, the permission slips. We
@@ -956,7 +956,7 @@ commits before adding a new section.
 | 2026-05-07 | weak existence assertion on `conversation_count` | `assert "conversation_count" in data` passed for weeks while the field was hardcoded to `0`; only tested presence, not semantic value | `74de39d` (refactor: dropped misleading hardcoded field; tests now assert exact value via `/config/stats`) |
 | 2026-05-07 | migration tombstone-keys must be explicit `null` in PATCH | omitting `savedFilters` and `activeFilterIds` from the PATCH leaves them on disk because backend uses per-key overwrite, not deep-delete | `2c94860` migration test asserts the PATCH body explicitly contains `savedFilters: null, activeFilterIds: null` |
 | 2026-05-08 | `/api/attachments` path traversal — read-leak | `file_dir = _attachments_root() / conv_uuid / file_uuid` had no validation before `is_dir()`; the downstream `chosen.resolve().relative_to(file_dir.resolve())` only validates the FINAL chosen file. `conv_uuid="../../etc"` and absolute-path injection (`Path("a") / "/abs" == Path("/abs")`) both fell through to a 200 with arbitrary on-disk file bytes when a `<variant>.*` glob matched | `e121e39` (RED: 3 traversal tests) + `1135f61` (GREEN: `file_dir.resolve().relative_to(_attachments_root().resolve())` 400-on-escape) — RED→GREEN two-commit pattern |
-| 2026-05-08 | atomic-write `.tmp` leak on `os.replace` failure | `_write_atomic` (preferences.py) and `_write_all` (bookmarks.py) didn't wrap the rename in try/finally; if `os.replace` raised, the `.tmp` was orphaned in the user's `~/.claude-exporter/` dir. No data corruption (the original file is preserved by `os.replace` atomicity) but disk leaked across failed writes | `0955f29` — try/except BaseException + `tmp.unlink()` cleanup (FileNotFoundError-tolerant) + re-raise. Test pattern: monkeypatch `os.replace` to raise OSError, assert `pytest.raises` + filesystem invariants (original byte-identical + no `*.tmp` glob) |
-| 2026-05-08 | `DEFAULT_CREDENTIALS_PATH` value-imported in 4 modules, not 2 or 3 | `fetcher/credentials.py` defines it; `fetcher/bulk_fetch.py`, `backend/routers/fetch.py`, AND `backend/routers/orgs.py` each `from … import` it by value at module load. A test that only patches the canonical name leaves three handlers reading the user's real `~/.claude-exporter/credentials.json`. Discovered while implementing P4.2 (orgs corrupt-creds test) | `ea6781b` — conftest `_isolated_credentials_path` patches all 4 bindings; pattern documented in §5.1 ("constants imported by value need patching at every call site") |
+| 2026-05-08 | atomic-write `.tmp` leak on `os.replace` failure | `_write_atomic` (preferences.py) and `_write_all` (bookmarks.py) didn't wrap the rename in try/finally; if `os.replace` raised, the `.tmp` was orphaned in the user's `~/.claude-explorer/` dir. No data corruption (the original file is preserved by `os.replace` atomicity) but disk leaked across failed writes | `0955f29` — try/except BaseException + `tmp.unlink()` cleanup (FileNotFoundError-tolerant) + re-raise. Test pattern: monkeypatch `os.replace` to raise OSError, assert `pytest.raises` + filesystem invariants (original byte-identical + no `*.tmp` glob) |
+| 2026-05-08 | `DEFAULT_CREDENTIALS_PATH` value-imported in 4 modules, not 2 or 3 | `fetcher/credentials.py` defines it; `fetcher/bulk_fetch.py`, `backend/routers/fetch.py`, AND `backend/routers/orgs.py` each `from … import` it by value at module load. A test that only patches the canonical name leaves three handlers reading the user's real `~/.claude-explorer/credentials.json`. Discovered while implementing P4.2 (orgs corrupt-creds test) | `ea6781b` — conftest `_isolated_credentials_path` patches all 4 bindings; pattern documented in §5.1 ("constants imported by value need patching at every call site") |
 
 Add to the appropriate sub-table when you ship a fix that surfaced a testing-discipline gap. The "class" column should name the FAILURE MODE, not the feature; the goal is to make the next agent recognize the same shape if it appears in a different feature.

@@ -129,13 +129,13 @@ def test_markdown_bundle_zips_inline_image_and_marker_image(monkeypatch, tmp_pat
     """Bundle contains conversation.md + images/, with both CC image
     sources rewritten to relative paths and bytes present.
     """
-    # Stand up isolated CLAUDE_DIR + CLAUDE_EXPORTER_DATA_DIR.
+    # Stand up isolated CLAUDE_DIR + CLAUDE_EXPLORER_DATA_DIR.
     claude_dir = tmp_path / "claude"
     claude_dir.mkdir()
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
 
     # Reset settings + cache between tests so monkeypatch envs apply.
     from backend import config as cfg, cache
@@ -191,7 +191,7 @@ def test_markdown_bundle_obsidian_dialect_uses_wikilinks(monkeypatch, tmp_path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     from backend import config as cfg, cache
 
     cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
@@ -230,7 +230,7 @@ def test_markdown_bundle_unknown_dialect_rejects_with_422(monkeypatch, tmp_path)
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     from backend import config as cfg, cache
 
     cfg.get_settings.cache_clear()  # type: ignore[attr-defined]

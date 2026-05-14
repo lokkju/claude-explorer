@@ -349,7 +349,7 @@ are consistent across browsers / devices that point at the same backend.
 
 ### Storage location
 
-`~/.claude-exporter/preferences.json`. Atomic writes (write to temp file
+`~/.claude-explorer/preferences.json`. Atomic writes (write to temp file
 then `rename`).
 
 ### Access pattern
@@ -431,11 +431,11 @@ limitation of CC's image-cache rotation.
 - **Claude Code marker images** (`[Image: source: /...]` markers in chat
   text) cache to:
   ```
-  ~/.claude-exporter/cc-images/<conv-uuid>/<sess>--<N>.<sha8>.png
+  ~/.claude-explorer/cc-images/<conv-uuid>/<sess>--<N>.<sha8>.png
   ```
 - **Claude Desktop attachments** (uploaded files) cache to:
   ```
-  ~/.claude-exporter/files/<conv-uuid>/<file-uuid>/<file_name>
+  ~/.claude-explorer/files/<conv-uuid>/<file-uuid>/<file_name>
   ```
 
 Both locations are managed by the backend. The frontend never writes to
@@ -520,7 +520,7 @@ native viewer takes over.
 
 ## 15. Bookmarks
 
-Bookmarks are persisted **server-side** at `~/.claude-exporter/bookmarks.json`.
+Bookmarks are persisted **server-side** at `~/.claude-explorer/bookmarks.json`.
 
 ### Endpoint
 

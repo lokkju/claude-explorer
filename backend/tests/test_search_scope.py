@@ -11,7 +11,6 @@ ranking.
 """
 
 import json
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,7 +63,7 @@ def scope_data_dir(tmp_path, monkeypatch):
     # ~/.claude/projects sessions.
     empty_claude = tmp_path / "claude-empty"
     empty_claude.mkdir()
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("CLAUDE_DIR", str(empty_claude))
     cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
     _conversation_cache.clear()

@@ -46,11 +46,11 @@ def test_isolated_data_dir_yields_data_subdirectory(
 def test_isolated_data_dir_sets_env_var(
     isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``CLAUDE_EXPORTER_DATA_DIR`` env var must point at the data dir."""
+    """``CLAUDE_EXPLORER_DATA_DIR`` env var must point at the data dir."""
 
     import os
 
-    assert os.environ["CLAUDE_EXPORTER_DATA_DIR"] == str(isolated_data_dir)
+    assert os.environ["CLAUDE_EXPLORER_DATA_DIR"] == str(isolated_data_dir)
     # CLAUDE_DIR also pinned to a tmp subdir.
     assert os.environ["CLAUDE_DIR"].startswith(str(isolated_data_dir.parent))
 

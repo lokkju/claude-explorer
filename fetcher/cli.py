@@ -27,19 +27,19 @@ def main():
 @click.option(
     "--output-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".claude-exporter" / "conversations",
+    default=Path.home() / ".claude-explorer" / "conversations",
     help="Where to save JSON files",
 )
 @click.option(
     "--files-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".claude-exporter" / "files",
+    default=Path.home() / ".claude-explorer" / "files",
     help="Where to save downloaded files (images, PDFs)",
 )
 @click.option(
     "--credentials",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".claude-exporter" / "credentials.json",
+    default=Path.home() / ".claude-explorer" / "credentials.json",
     help="Path to credentials file",
 )
 @click.option("--session-key", help="Session key (overrides credentials file)")
@@ -114,7 +114,7 @@ def fetch(
     "--output",
     "-o",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".claude-exporter" / "credentials.json",
+    default=Path.home() / ".claude-explorer" / "credentials.json",
     help="Where to save credentials",
 )
 @click.option(
@@ -154,9 +154,12 @@ def _capture_via_browser(output: Path, timeout: int):
     """Capture credentials by logging in via browser."""
     import asyncio
 
-    # Check if playwright browsers are installed
+    # Check if playwright is importable (the actual browser binary check
+    # happens later in `capture_credentials`). We import the symbol just
+    # to exercise the import path; `find_spec` would miss installation
+    # corruption that only surfaces at import time.
     try:
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright  # noqa: F401
     except ImportError:
         raise click.ClickException(
             "Playwright not installed. Run: uv sync && uv run playwright install chromium"
@@ -240,13 +243,13 @@ def _capture_via_proxy(port: int):
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".claude-exporter" / "conversations",
+    default=Path.home() / ".claude-explorer" / "conversations",
     help="Conversations directory to migrate",
 )
 @click.option(
     "--credentials",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".claude-exporter" / "credentials.json",
+    default=Path.home() / ".claude-explorer" / "credentials.json",
     help="Path to credentials file (provides legacy_migration_target)",
 )
 def migrate(data_dir: Path, credentials: Path):
@@ -386,13 +389,13 @@ _PLACEHOLDER_TEXT = "This block is not supported on your current device yet."
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path, file_okay=False),
-    default=Path.home() / ".claude-exporter" / "conversations",
+    default=Path.home() / ".claude-explorer" / "conversations",
     help="Where conversations live.",
 )
 @click.option(
     "--credentials",
     type=click.Path(path_type=Path, dir_okay=False),
-    default=Path.home() / ".claude-exporter" / "credentials.json",
+    default=Path.home() / ".claude-explorer" / "credentials.json",
     help="Path to credentials.json.",
 )
 @click.option(
@@ -575,7 +578,7 @@ def rehydrate(
 )
 def warm_cc_cache(limit: int | None) -> None:
     """Walk every Claude Code session and copy referenced image-cache
-    files into ~/.claude-exporter/cc-images/.
+    files into ~/.claude-explorer/cc-images/.
 
     NOTE: this runs automatically in the background every time
     ``claude-explorer serve`` starts. You should rarely need to invoke
@@ -760,8 +763,8 @@ def install_watcher(python_bin: str | None, interval: float, uninstall: bool) ->
     click.echo(f"  interval:  {interval}s")
     click.echo(f"  python:    {python_bin}")
     click.echo(f"  cwd:       {Path.cwd()}")
-    click.echo(f"  stdout:    ~/Library/Logs/claude-explorer-cc-watcher.out")
-    click.echo(f"  stderr:    ~/Library/Logs/claude-explorer-cc-watcher.err")
+    click.echo("  stdout:    ~/Library/Logs/claude-explorer-cc-watcher.out")
+    click.echo("  stderr:    ~/Library/Logs/claude-explorer-cc-watcher.err")
     click.echo("")
     click.echo("Verify with: launchctl list | grep claude-explorer")
     click.echo(f"Uninstall:   {_sys.argv[0]} install-watcher --uninstall")

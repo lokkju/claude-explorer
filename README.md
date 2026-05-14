@@ -2,6 +2,19 @@
 
 A tool to extract, browse, search, and export your Claude conversation history — even if you've lost access to the email address on your account.
 
+> **Disclaimer**: This is an independent, community-built project. It is not affiliated with, endorsed by, sponsored by, or supported by Anthropic, PBC. "Claude" and "Claude Code" are trademarks of Anthropic, PBC. This project consumes Anthropic's products as a user would — via the same APIs and on-disk file formats the official clients use — but nothing here represents an Anthropic-sanctioned interface, and the formats this project depends on may change without notice.
+
+## Quick Start
+
+```bash
+# install uv if needed: https://docs.astral.sh/uv/getting-started/installation/
+uvx claude-explorer serve
+```
+
+That's it. Open `http://localhost:8000` in your browser and your Claude Code sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
+
+*Available on PyPI once V1 ships; until then, see [From source (for contributors)](#from-source-for-contributors) below.*
+
 ## Features
 
 - **Browse conversations** from both Claude Desktop and Claude Code
@@ -160,7 +173,9 @@ claude-explorer/
 
 ---
 
-## Quick Start
+## From source (for contributors)
+
+*If you want to hack on the project, run from a git checkout, or you're a contributor: install from source instead.*
 
 ### Prerequisites
 
@@ -169,7 +184,7 @@ claude-explorer/
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone and install
-git clone https://github.com/youruser/claude-explorer
+git clone https://github.com/rpeck/claude-explorer
 cd claude-explorer
 uv sync
 
@@ -189,7 +204,7 @@ The simplest approach — opens a browser window where you log into Claude norma
 uv run claude-explorer capture
 ```
 
-This opens Chromium, navigates to claude.ai, and waits for you to log in. Once authenticated, credentials are automatically extracted and saved to `~/.claude-exporter/credentials.json`.
+This opens Chromium, navigates to claude.ai, and waits for you to log in. Once authenticated, credentials are automatically extracted and saved to `~/.claude-explorer/credentials.json`.
 
 **Options:**
 - `--timeout N` — Max seconds to wait for login (default: 300)
@@ -231,7 +246,7 @@ claude --proxy-server="127.0.0.1:8080" --ignore-certificate-errors
 
 ---
 
-Both methods save credentials to `~/.claude-exporter/credentials.json`.
+Both methods save credentials to `~/.claude-explorer/credentials.json`.
 
 ### Step 2: Download Your Conversations
 
@@ -239,7 +254,7 @@ Both methods save credentials to `~/.claude-exporter/credentials.json`.
 uv run claude-explorer fetch
 ```
 
-This downloads all your conversations as JSON files to `~/.claude-exporter/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded.
+This downloads all your conversations as JSON files to `~/.claude-explorer/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded.
 
 Options:
 - `--full-refresh` — Re-download all conversations
@@ -259,7 +274,7 @@ Opens the web app at `http://localhost:8000`.
 Once the web app is running, the **Refresh** button in the sidebar footer owns the entire pipeline. A single click:
 
 1. Tries an incremental fetch with whatever credentials are on disk.
-2. If credentials are missing, or the fetch fails with `401`/`403`/`cf-mitigated`, the backend automatically launches the same Playwright login flow as `claude-explorer capture` — a Chromium window opens, you log in, and the new `sessionKey` is written to `~/.claude-exporter/credentials.json` (`0o600`, atomically).
+2. If credentials are missing, or the fetch fails with `401`/`403`/`cf-mitigated`, the backend automatically launches the same Playwright login flow as `claude-explorer capture` — a Chromium window opens, you log in, and the new `sessionKey` is written to `~/.claude-explorer/credentials.json` (`0o600`, atomically).
 3. The fetch then continues automatically. Existing conversations are preserved (incremental — never `--full-refresh` automatically).
 
 The toast walks you through each phase:
@@ -296,11 +311,19 @@ The project ships with a built-in **Model Context Protocol** server that lets Cl
 | `get_messages` | Full message content for specific positions or UUIDs, with optional tool calls/results |
 | `export_session` | Markdown export of a full or partial session |
 
-The server runs over **stdio** (no network port) and reads from the same `~/.claude-exporter/conversations/` directory the web UI uses.
+The server runs over **stdio** (no network port) and reads from the same `~/.claude-explorer/conversations/` directory the web UI uses.
 
 ### Prerequisites
 
-Make sure the project is installed and conversations have been fetched at least once:
+Make sure the project is installed and conversations have been fetched at least once.
+
+If you installed via PyPI/uvx, you already have everything you need:
+
+```bash
+uvx claude-explorer serve   # fetch via the Refresh button, then quit
+```
+
+If you're working from a git checkout (contributor flow), the equivalent is:
 
 ```bash
 cd /path/to/claude-explorer
@@ -312,8 +335,12 @@ uv run claude-explorer fetch
 The MCP entry point is `claude-explorer mcp`. You can verify it works standalone:
 
 ```bash
-uv run --directory /path/to/claude-explorer claude-explorer mcp
+# PyPI/uvx install:
+uvx claude-explorer mcp
 # (prints nothing; it's waiting for MCP JSON-RPC on stdin — Ctrl+C to exit)
+
+# From source:
+uv run --directory /path/to/claude-explorer claude-explorer mcp
 ```
 
 ### Claude Code setup (all platforms)
@@ -449,12 +476,12 @@ In Claude Code you can also run `/mcp` to see the server status and the list of 
 ### Troubleshooting
 
 - **"command not found: uv"** — the MCP client doesn't see your shell `PATH`. Use the absolute path to `uv` in `command`.
-- **"Session not found" / empty results** — run `uv run claude-explorer fetch` first; the MCP server reads from `~/.claude-exporter/conversations/`.
-- **Need to use a non-default data dir** — set `CLAUDE_EXPORTER_DATA_DIR` via an `env` block in the MCP config:
+- **"Session not found" / empty results** — run `uv run claude-explorer fetch` first; the MCP server reads from `~/.claude-explorer/conversations/`.
+- **Need to use a non-default data dir** — set `CLAUDE_EXPLORER_DATA_DIR` via an `env` block in the MCP config:
   ```json
-  "env": { "CLAUDE_EXPORTER_DATA_DIR": "/path/to/conversations" }
+  "env": { "CLAUDE_EXPLORER_DATA_DIR": "/path/to/conversations" }
   ```
-- **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-exporter/cache.db`. Delete that file to force a full rebuild.
+- **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-explorer/cache.db`. Delete that file to force a full rebuild.
 
 ---
 
@@ -519,11 +546,19 @@ After recovery, **set a high `cleanupPeriodDays`** with the checker above so thi
 | Fetcher | httpx, curl_cffi |
 | Backend | FastAPI, uvicorn, uv, weasyprint |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS v4, shadcn/ui, TanStack Query |
-| Search | In-process full-text search over loaded JSON |
+| Search | SQLite FTS5 (primary), orjson + FileCache + ThreadPoolExecutor linear-scan fallback |
+| MCP server | FastMCP (5 tools: list_sessions, list_projects, get_session_outline, get_messages, export_session) |
 | Export | Markdown (built-in), PDF (weasyprint) |
+| Packaging | hatchling (PyPI wheel includes pre-built React bundle) |
 
 ---
 
+## Contributing
+
+PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for prerequisites, dev workflow, code style, and the CLA process.
+
 ## License
 
-MIT
+This project is licensed under the [Apache License 2.0](./LICENSE). Contributors agree to the [Contributor License Agreement](./CLA.md) (via [CLA Assistant](https://cla-assistant.io)) on their first pull request; the signature applies to all subsequent contributions.
+
+See the disclaimer at the top of this README regarding Anthropic trademarks and the unaffiliated nature of this project.

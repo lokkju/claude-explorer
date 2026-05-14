@@ -1,7 +1,6 @@
 """Tests for bookmark CRUD (Build-4)."""
 
 import json
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -142,8 +141,8 @@ def test__post_bookmark__duplicate_conv_msg__creates_second_row_no_409(client_wi
 
     r2 = client.post("/api/bookmarks", json={**payload, "snippet": "second", "note": "n2"})
     assert r2.status_code == 201, (
-        f"current contract: duplicates allowed (no 409). If this is now 409, "
-        f"update the contract clause BKM-DUPLICATE-PINNED."
+        "current contract: duplicates allowed (no 409). If this is now 409, "
+        "update the contract clause BKM-DUPLICATE-PINNED."
     )
     id2 = r2.json()["id"]
     assert id1 != id2, "each duplicate POST must mint a fresh id"

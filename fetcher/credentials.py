@@ -63,7 +63,7 @@ import portalocker
 log = logging.getLogger(__name__)
 
 
-DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-exporter" / "credentials.json"
+DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-explorer" / "credentials.json"
 
 #: Default seconds to wait for the file lock before raising.
 LOCK_TIMEOUT_SECONDS = 10.0

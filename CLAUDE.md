@@ -52,7 +52,7 @@ Options:
 1. Starts a local HTTPS proxy using mitmproxy
 2. You launch Claude Desktop through the proxy
 3. The addon extracts `sessionKey` and `org_id` from API requests
-4. Credentials are saved to `~/.claude-exporter/credentials.json`
+4. Credentials are saved to `~/.claude-explorer/credentials.json`
 
 **Platform-specific launch commands:**
 ```bash
@@ -73,9 +73,9 @@ Download all conversations from Claude using captured credentials.
 ```
 Options:
   --output-dir PATH               Where to save JSON files
-                                  (default: ~/.claude-exporter/conversations)
+                                  (default: ~/.claude-explorer/conversations)
   --credentials PATH              Path to credentials file
-                                  (default: ~/.claude-exporter/credentials.json)
+                                  (default: ~/.claude-explorer/credentials.json)
   --session-key TEXT              Session key (overrides credentials file)
   --org-id TEXT                   Org ID (overrides credentials file)
   --incremental / --full-refresh  Skip already-saved conversations (default: incremental)
@@ -150,7 +150,7 @@ uv run claude-explorer install-watcher --uninstall
 #### `claude-explorer reindex-search` (manual override only)
 
 Force a rebuild of the SQLite FTS5 search index at
-`~/.claude-exporter/search-index.sqlite`. **You should not need this in
+`~/.claude-explorer/search-index.sqlite`. **You should not need this in
 normal operation:** the index is built automatically at backend startup
 (non-blocking lifespan task) and kept in sync by the same 5s watcher
 loop that handles CC images. Use only when:
@@ -193,7 +193,7 @@ and the next process startup will drop+rebuild on its own.
 The sidebar **Refresh** button owns the full pipeline — capture + fetch — so the user never has to drop to the CLI to re-capture credentials.
 
 - **Endpoint:** `GET /api/fetch/refresh?incremental=true` (SSE).
-- **Behavior:** if `~/.claude-exporter/credentials.json` is missing OR the fetch returns `401`/`403`/`cf-mitigated`, the backend invokes `fetcher.playwright_capture.capture_credentials` in-process. On success it persists creds (atomic write, `0o600`) and continues with an incremental fetch automatically.
+- **Behavior:** if `~/.claude-explorer/credentials.json` is missing OR the fetch returns `401`/`403`/`cf-mitigated`, the backend invokes `fetcher.playwright_capture.capture_credentials` in-process. On success it persists creds (atomic write, `0o600`) and continues with an incremental fetch automatically.
 - **Capture is run at most once per request.** A post-capture fetch that still 401s emits a final `error` event — no retry loop.
 - **Concurrency:** module-level `_refresh_in_progress` flag plus `asyncio.Lock`. A second concurrent request returns `409 Conflict`. Frontend disables the button while running, so 409 is defense-in-depth.
 - **SSE event types:** `capture_start`, `capture_waiting_login` (heartbeat every 25s during the 5-min login wait), `capture_done`, `capture_error`, plus the existing `start`, `progress`, `complete`, `error`.
@@ -247,9 +247,9 @@ The frontend proxies `/api` requests to the backend.
 
 ## Data Directory
 
-Conversations are stored in `~/.claude-exporter/conversations/` as JSON files.
+Conversations are stored in `~/.claude-explorer/conversations/` as JSON files.
 
-Set `CLAUDE_EXPORTER_DATA_DIR` to override, or create `~/.claude-exporter/config.json`:
+Set `CLAUDE_EXPLORER_DATA_DIR` to override, or create `~/.claude-explorer/config.json`:
 ```json
 {"data_dir": "/path/to/conversations"}
 ```

@@ -8,7 +8,7 @@ sources (inline base64 + ``[Image: source: ...]`` markers) and image
 
 These tests assert the new ``attachments/`` zip prefix is populated
 from on-disk bytes cached under
-``~/.claude-exporter/files/<conv-uuid>/<file-uuid>/{document|original}``
+``~/.claude-explorer/files/<conv-uuid>/<file-uuid>/{document|original}``
 (per fetcher contract) and that ``conversation.md`` rewrites the
 references to point at the bundled file using the chosen Markdown
 dialect.
@@ -65,14 +65,14 @@ def _make_conv_with_pdf_file() -> ConversationDetail:
 
 @pytest.fixture
 def attachments_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Stand up an isolated ~/.claude-exporter layout: data_dir under
+    """Stand up an isolated ~/.claude-explorer layout: data_dir under
     tmp_path/conversations and the per-conv attachment cache under
     tmp_path/files. Returns the files_dir."""
     data_dir = tmp_path / "conversations"
     data_dir.mkdir()
     files_dir = tmp_path / "files"
     files_dir.mkdir()
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     # Isolate claude_dir so the bundle's image-cache scan can't escape tmp.
     claude_dir = tmp_path / "claude"
     claude_dir.mkdir()

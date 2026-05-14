@@ -1,7 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
 [project]
 name = "claude-explorer"
 version = "0.1.0"
+description = "Local archive + web viewer + MCP server for Claude Desktop and Claude Code conversations. Browse, search, export, and let Claude query its own history."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+authors = [
+    {name = "Raymond Peck"},
+]
+keywords = [
+    "claude",
+    "anthropic",
+    "llm",
+    "archive",
+    "viewer",
+    "mcp",
+    "claude-code",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business",
+    "Topic :: Utilities",
+]
 dependencies = [
     "httpx>=0.27",
     "click>=8.1",
@@ -17,11 +52,15 @@ dependencies = [
     "portalocker>=2.8",
 ]
 
+[project.urls]
+Homepage = "https://github.com/rpeck/claude-explorer"
+Documentation = "https://github.com/rpeck/claude-explorer#readme"
+Source = "https://github.com/rpeck/claude-explorer"
+Issues = "https://github.com/rpeck/claude-explorer/issues"
+Changelog = "https://github.com/rpeck/claude-explorer/releases"
+
 [project.scripts]
 claude-explorer = "fetcher.cli:main"
-
-[tool.setuptools.packages.find]
-include = ["fetcher*", "backend*", "mcp_server*"]
 
 [project.optional-dependencies]
 dev = [
@@ -31,6 +70,60 @@ dev = [
     "respx>=0.21",
     "pypdf>=4.0",
 ]
+
+# ----- Hatchling build configuration ------------------------------------------
+# Wheel target: include only what an end user needs at runtime. The frontend
+# bundle is injected at build time by hatch_build.py via build_data["force_include"]
+# (so it doesn't need to live in the source tree or be git-tracked).
+[tool.hatch.build.targets.wheel]
+packages = ["backend", "fetcher", "mcp_server"]
+exclude = [
+    "**/tests/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/conftest.py",
+]
+
+# Sdist target: include everything a contributor needs to rebuild the wheel
+# from source — including the frontend sources so the build hook can run.
+[tool.hatch.build.targets.sdist]
+include = [
+    "backend/**/*.py",
+    "fetcher/**/*.py",
+    "mcp_server/**/*.py",
+    "frontend/src/**",
+    "frontend/public/**",
+    "frontend/index.html",
+    "frontend/vite.config.ts",
+    "frontend/package.json",
+    "frontend/package-lock.json",
+    "frontend/tsconfig*.json",
+    "frontend/eslint.config.js",
+    "frontend/tailwind.config.*",
+    "frontend/postcss.config.*",
+    "hatch_build.py",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+    "CLAUDE.md",
+    "CLAUDE-TESTING.md",
+    "CONTRIBUTING.md",
+    "CLA.md",
+]
+exclude = [
+    "**/tests/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/node_modules/**",
+    "frontend/dist/**",
+    "frontend/playwright-report/**",
+    "frontend/test-results/**",
+]
+
+# Custom build hook that bundles the frontend into the wheel. Only fires for
+# the wheel target (see hat_build.py guard).
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
 
 [tool.pytest.ini_options]
 testpaths = ["fetcher/tests", "backend/tests"]

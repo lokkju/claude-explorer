@@ -86,7 +86,7 @@ def fixture_store(tmp_path, monkeypatch):
     with the fixture's index instance for the duration of the test, so
     any call to ``get_search_index()`` from production code (e.g., from
     ``search_conversations()``'s dispatcher) returns this test's index
-    — NEVER the user's real ``~/.claude-exporter/search-index.sqlite``.
+    — NEVER the user's real ``~/.claude-explorer/search-index.sqlite``.
     Without this we'd silently scribble against the user's real index
     and possibly crawl their real conversations.
     """

@@ -25,7 +25,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.routers.fetch import SESSION_EXPIRED_MESSAGE
 
 
 _TEST_ORG_ID = "ae24ae66-4622-48e7-b4b3-1ab2c49f933d"
@@ -152,7 +151,6 @@ def test__refresh__capture_failure__legacy_error_envelope(
     Pin both presence (type, message) AND absence (kind, retryable) so a
     future envelope unification surfaces here loudly.
     """
-    from backend.routers import fetch as fetch_mod
 
     creds = tmp_path / "credentials.json"  # does NOT exist
     monkeypatch.setattr(

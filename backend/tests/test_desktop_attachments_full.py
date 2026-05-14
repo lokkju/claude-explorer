@@ -7,7 +7,7 @@ etc. attached to a conversation never get cached locally.
 
 P4c extends download_conversation_files to also fetch document_url when
 present, storing under the existing
-~/.claude-exporter/files/<conv-uuid>/<file-uuid>/document<ext> convention,
+~/.claude-explorer/files/<conv-uuid>/<file-uuid>/document<ext> convention,
 and adds a /api/attachments/<conv>/<file>/<variant> route that serves
 the cached bytes (404 if not cached — no on-demand refetch).
 
@@ -59,7 +59,7 @@ def _patch_download(fetcher, payloads: dict[str, bytes]):
 
 def test_fetch_downloads_pdf_attachment(tmp_path: Path) -> None:
     """A conversation with a PDF in Message.files[] downloads the PDF
-    bytes into ~/.claude-exporter/files/<conv-uuid>/<file-uuid>/document<ext>."""
+    bytes into ~/.claude-explorer/files/<conv-uuid>/<file-uuid>/document<ext>."""
     fetcher = _make_fetcher(tmp_path)
     pdf_bytes = b"%PDF-1.4\n%fake pdf bytes\n%%EOF"
     pdf_url = "https://claude.ai/api/org-1/files/abcd-1234/document"
@@ -189,13 +189,13 @@ def test_fetch_stamps_local_document_path(tmp_path: Path) -> None:
 def attachments_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the backend at tmp_path/conversations for data and tmp_path/files
     for cached attachments — mirrors the production layout where both dirs
-    sit under ~/.claude-exporter/.
+    sit under ~/.claude-explorer/.
     """
     data_dir = tmp_path / "conversations"
     data_dir.mkdir()
     files_dir = tmp_path / "files"
     files_dir.mkdir()
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     from backend import config as cfg
 
     cfg.get_settings.cache_clear()  # type: ignore[attr-defined]

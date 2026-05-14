@@ -63,13 +63,20 @@ def _bootstrap_macos_dyld_for_weasyprint() -> None:
 _bootstrap_macos_dyld_for_weasyprint()
 
 
-import httpx
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from httpx import ASGITransport
+# The following imports MUST run AFTER _bootstrap_macos_dyld_for_weasyprint()
+# above. WeasyPrint (transitively imported via backend.main.app's PDF export
+# router) loads native libgobject/libpango/libcairo via CFFI at import time,
+# and macOS SIP strips DYLD_* env vars from `uv run` subprocess invocations,
+# so we must set DYLD_FALLBACK_LIBRARY_PATH in-process before any WeasyPrint
+# import is triggered. ruff E402 is silenced here intentionally; do not
+# reorder these lines.
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from httpx import ASGITransport  # noqa: E402
 
-from backend.main import app
+from backend.main import app  # noqa: E402
 
 
 def _weasyprint_available() -> bool:
@@ -185,8 +192,9 @@ def isolated_data_dir(
     """Per-test, env-var-driven, ``lru_cache``-aware data-dir isolation.
 
     Creates ``<tmp_path>/data`` (a SUBDIRECTORY of ``tmp_path``, NOT
-    ``tmp_path`` itself) and points ``CLAUDE_EXPORTER_DATA_DIR`` at it.
-    The subdirectory layout is mandatory because
+    ``tmp_path`` itself) and points ``CLAUDE_EXPLORER_DATA_DIR`` at it
+    (also sets the legacy ``CLAUDE_EXPORTER_DATA_DIR`` so the fallback
+    path stays exercised). The subdirectory layout is mandatory because
     ``backend/routers/preferences.py:_resolve_path`` resolves the
     preferences file via ``settings.data_dir.parent / "preferences.json"``,
     so ``<isolated_data_dir>.parent`` is the writable preferences root.
@@ -209,7 +217,7 @@ def isolated_data_dir(
     data_dir.mkdir()
     claude_dir.mkdir()
 
-    monkeypatch.setenv("CLAUDE_EXPORTER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
 
     config.get_settings.cache_clear()
@@ -242,7 +250,7 @@ async def real_async_client(fastapi_app: FastAPI) -> AsyncIterator[httpx.AsyncCl
     .. warning::
 
        This fixture does NOT isolate disk state. Routes that read or
-       write ``~/.claude-exporter/preferences.json``, ``credentials.json``,
+       write ``~/.claude-explorer/preferences.json``, ``credentials.json``,
        or the data dir will hit the developer's REAL files unless the
        test ALSO requests :func:`isolated_data_dir` and/or
        :func:`_isolated_credentials_path` (and the existing fetch
@@ -443,9 +451,29 @@ def reset_refresh_flag() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def disable_data_dir_migration_in_tests(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Prevent ``TestClient(app)`` from migrating the developer's real
+    ``~/.claude-exporter/`` to ``~/.claude-explorer/`` during ``pytest``.
+
+    ``TestClient(app)`` invokes the FastAPI lifespan handler, which calls
+    :func:`backend.config.migrate_legacy_data_dir`. Without this guard,
+    every test that constructs a TestClient (directly or via the
+    ``client`` fixture) would scribble against the developer's real
+    home directory and move their data — exactly the failure mode the
+    feature guards against in production but inverted for tests.
+
+    The migration is FUNCTIONALLY tested in test_data_dir_migration.py,
+    which monkeypatches HOME before invoking the migrator. Every other
+    test gets this opt-out by default.
+    """
+    monkeypatch.setenv("CLAUDE_EXPLORER_SKIP_DATA_DIR_MIGRATION", "1")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def isolate_search_index_singleton(tmp_path_factory, monkeypatch) -> Iterator[None]:
     """Prevent any test from accidentally instantiating or writing to the
-    user's real ``~/.claude-exporter/search-index.sqlite``.
+    user's real ``~/.claude-explorer/search-index.sqlite``.
 
     ``backend.search.search_conversations`` (the function tested by
     ``test_search_*.py``) calls ``get_search_index()`` which lazily
