@@ -1,0 +1,124 @@
+name: Release
+
+# Triggered when a version tag (v0.1.0, v0.2.0, v1.2.3-rc1, etc.) is
+# pushed. Builds the wheel (including the frontend bundle via the hatch
+# build hook) and uploads it to PyPI via Trusted Publishing — no
+# long-lived API token in repo secrets.
+#
+# Cutting a release from your laptop:
+#
+#     # bump version in pyproject.toml first, commit, push to main
+#     git tag v0.2.0
+#     git push origin v0.2.0
+#
+# The workflow auto-runs on the tag push; ~3 min later the wheel is
+# live on https://pypi.org/project/claude-explorer/
+#
+# Prerequisite (one-time): configure the Trusted Publisher at
+#   https://pypi.org/manage/project/claude-explorer/settings/publishing/
+# with these exact values:
+#   * Repository owner: rpeck
+#   * Repository name: claude-explorer
+#   * Workflow filename: release.yml
+#   * Environment name: pypi
+#
+# The `pypi` GitHub environment (configured in repo Settings →
+# Environments) adds a required reviewer gate so an accidental tag
+# push doesn't auto-publish. Approve in the Actions UI to release.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'         # v0.1.0, v1.2.3
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'       # v0.1.0-rc1, v1.0.0-beta.2
+
+# Trusted Publishing requires the workflow to mint an OIDC token from
+# GitHub and trade it with PyPI for an upload token. PyPI verifies the
+# claim matches the configured Trusted Publisher record.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    name: Build wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node (for the frontend build hook)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend bundle
+        working-directory: frontend
+        run: npm run build
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Build wheel
+        # The build hook detects frontend/dist exists and skips npm
+        # (we built it above), then copies the bundle into
+        # backend/_static/ for inclusion in the wheel.
+        env:
+          CLAUDE_EXPLORER_SKIP_FRONTEND_BUILD: '1'
+        run: uv build --wheel
+
+      - name: Verify wheel contents
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/claude_explorer-*.whl)
+          echo "Inspecting $WHEEL"
+          # Bundle must be present
+          unzip -l "$WHEEL" | grep -q "backend/_static/index.html" \
+            || (echo "::error::frontend bundle missing from wheel"; exit 1)
+          # License must be present
+          unzip -l "$WHEEL" | grep -q "dist-info/licenses/LICENSE" \
+            || (echo "::error::LICENSE missing from wheel"; exit 1)
+          echo "Wheel contents OK"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*.whl
+          retention-days: 7
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Pin to the `pypi` environment so the trusted-publisher record
+    # matches and the required-reviewer gate (configured in Settings →
+    # Environments → pypi) fires before upload.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/claude-explorer/
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish via PyPA Trusted Publishing
+        # The action mints an OIDC token from GitHub and exchanges it
+        # with PyPI. No `password:` / API-token input needed.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Default is PyPI; explicit for documentation.
+          repository-url: https://upload.pypi.org/legacy/
+          # Fail loud if the wheel is missing or malformed rather than
+          # silently uploading nothing.
+          skip-existing: false
+          verbose: true
