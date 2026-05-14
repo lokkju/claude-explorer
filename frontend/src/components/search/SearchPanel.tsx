@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, Loader2, Pin } from 'lucide-react'
+import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, Loader2, Pin, HelpCircle } from 'lucide-react'
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
 import { useNavigateToMatch } from '@/components/search/navigateToMatch'
@@ -13,6 +13,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn, formatDate } from '@/lib/utils'
 import type { SortField } from '@/lib/types'
 
@@ -267,6 +273,33 @@ export function SearchPanel() {
               data-allow-shortcuts
             />
           </div>
+          {/* Query-syntax help icon. Tooltip explains the AND-of-terms vs.
+              quoted-phrase distinction so users don't have to discover it by
+              trial and error. Keyboard-accessible: focusing the button (Tab)
+              opens the tooltip via Radix's focus handling. */}
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Search query syntax help"
+                  data-testid="search-syntax-help"
+                  className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                >
+                  <HelpCircle className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" className="max-w-xs leading-relaxed">
+                <p className="font-medium">Search syntax</p>
+                <p className="mt-1">
+                  Multi-word: all words must appear in the same message, in any order.
+                </p>
+                <p className="mt-1">
+                  Wrap in <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">&quot;double quotes&quot;</code> to match the exact phrase.
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         {/* Sort controls — mirror left sidebar; default updated_at + desc. */}
