@@ -198,10 +198,10 @@ async def fetch_conversations_stream(
         # Load credentials
         try:
             creds = load_credentials(DEFAULT_CREDENTIALS_PATH)
-        except Exception as e:
+        except Exception:
             yield send_event({
                 "type": "error",
-                "message": f"No credentials found. Run 'claude-explorer capture' first.",
+                "message": "No credentials found. Run 'claude-explorer capture' first.",
             })
             return
 
@@ -650,6 +650,13 @@ async def _fetch_phase_stream(
                         None, fetcher.fetch_conversation_list
                     )
                 except Exception as exc:
+                    # Capture exc state up front: `exc` is deleted when the
+                    # `except` clause exits, and the lambdas below are
+                    # scheduled via `run_in_executor` — ruff F821 catches
+                    # the closure-over-deleted-name risk even though `await`
+                    # runs the lambda inside the except body in practice.
+                    exc_message = str(exc)
+                    exc_type_name = type(exc).__name__
                     for frame in _drain_retry_events(fetcher):
                         yield ("event", frame)
                     kind = _classify_error(exc)
@@ -667,7 +674,7 @@ async def _fetch_phase_stream(
                             None,
                             lambda: fetcher.save_index([], status="skipped",
                                                        error_code=error_code,
-                                                       error_message=str(exc)),
+                                                       error_message=exc_message),
                         )
                         org_results.append({
                             "org_id": org_uuid, "name": org_name,
@@ -709,7 +716,7 @@ async def _fetch_phase_stream(
                             None,
                             lambda: fetcher.save_index([], status="failed",
                                                        error_code="TRANSIENT",
-                                                       error_message=str(exc)),
+                                                       error_message=exc_message),
                         )
                         org_results.append({
                             "org_id": org_uuid, "name": org_name,
@@ -729,8 +736,8 @@ async def _fetch_phase_stream(
                     await loop.run_in_executor(
                         None,
                         lambda: fetcher.save_index([], status="failed",
-                                                   error_code=type(exc).__name__,
-                                                   error_message=str(exc)),
+                                                   error_code=exc_type_name,
+                                                   error_message=exc_message),
                     )
                     org_results.append({
                         "org_id": org_uuid, "name": org_name,
@@ -742,7 +749,7 @@ async def _fetch_phase_stream(
                             "type": "org_done",
                             "org_id": org_uuid,
                             "status": "failed",
-                            "error_code": type(exc).__name__,
+                            "error_code": exc_type_name,
                         }),
                     )
                     continue
