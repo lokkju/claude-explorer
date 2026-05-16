@@ -41,12 +41,28 @@ def format_timestamp(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-# Placeholder text that Claude Desktop uses for tool calls
+# Placeholder strings the originating Claude Desktop client baked into a
+# flattened conversation's `.text` field whenever it couldn't render a
+# content block at write time (tool calls — web search, MCP servers,
+# artifacts, the analysis REPL, file ops; mobile-only artifact preview;
+# etc.). Once flattened, the structured block is gone from the wire format;
+# we can only suppress the literal placeholder string downstream, never
+# restore the original content. TOOL_PLACEHOLDER stays as the primary
+# literal for back-compat with imports / tests; TOOL_PLACEHOLDERS is the
+# full set the filter walks.
 TOOL_PLACEHOLDER = "This block is not supported on your current device yet."
+TOOL_PLACEHOLDER_MOBILE_ARTIFACT = (
+    "Viewing artifacts created via the Analysis Tool web feature preview "
+    "isn't yet supported on mobile."
+)
+TOOL_PLACEHOLDERS: tuple[str, ...] = (
+    TOOL_PLACEHOLDER,
+    TOOL_PLACEHOLDER_MOBILE_ARTIFACT,
+)
 
 
 def filter_tool_placeholders(text: str) -> str:
-    r"""Strip Claude Desktop's TOOL_PLACEHOLDER everywhere in ``text``.
+    r"""Strip every Claude Desktop placeholder in ``TOOL_PLACEHOLDERS`` from ``text``.
 
     Mirrors the frontend canonical algorithm in
     ``frontend/src/components/message/MarkdownRenderer.tsx::stripToolPlaceholderText``
@@ -73,7 +89,7 @@ def filter_tool_placeholders(text: str) -> str:
     After the line walk we collapse 3-or-more consecutive newlines
     down to a single paragraph break, matching the frontend.
     """
-    if TOOL_PLACEHOLDER not in text:
+    if not any(p in text for p in TOOL_PLACEHOLDERS):
         return text
 
     lines = text.split("\n")
@@ -109,7 +125,9 @@ def filter_tool_placeholders(text: str) -> str:
         # Non-fence line: strip ALL occurrences regardless of fence
         # state (see docstring re: backend has no badge surface).
         had_content = line.strip() != ""
-        stripped = line.replace(TOOL_PLACEHOLDER, "")
+        stripped = line
+        for placeholder in TOOL_PLACEHOLDERS:
+            stripped = stripped.replace(placeholder, "")
         if had_content and stripped.strip() == "":
             # Line was only the placeholder (plus whitespace) — drop it.
             continue

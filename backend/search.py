@@ -40,7 +40,12 @@ logger = logging.getLogger(__name__)
 # field consists ONLY of this placeholder is treated as "no visible text"
 # (mirrors messageHasVisibleContent semantics).
 _TOOL_PLACEHOLDER_RE = re.compile(
-    r"```\s*\n?\s*This block is not supported on your current device yet\.\s*\n?\s*```"
+    r"```\s*\n?\s*(?:"
+    r"This block is not supported on your current device yet\."
+    r"|"
+    r"Viewing artifacts created via the Analysis Tool web feature preview "
+    r"isn't yet supported on mobile\."
+    r")\s*\n?\s*```"
 )
 
 

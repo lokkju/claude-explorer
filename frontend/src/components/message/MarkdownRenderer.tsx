@@ -8,12 +8,17 @@ import { cn } from '@/lib/utils'
 // Import highlight.js styles
 import 'highlight.js/styles/github-dark.css'
 
-// Placeholder text that Claude Desktop uses for tool calls. Mirrors the
-// constant in `backend/export.py::TOOL_PLACEHOLDER` (and the regex in
-// `filter_tool_placeholders`). Keep both in sync — see P1.3a.
+// Placeholder strings Claude Desktop bakes in for blocks the originating
+// client couldn't render at write time (tool calls, artifacts, analysis
+// REPL, mobile-only artifact preview, etc.). Mirrors the constants in
+// `backend/export.py::TOOL_PLACEHOLDERS` and the regex in
+// `backend/search.py::_TOOL_PLACEHOLDER_RE`. Keep all three in sync — see P1.3a.
 export const TOOL_PLACEHOLDER = 'This block is not supported on your current device yet.'
+export const TOOL_PLACEHOLDER_MOBILE_ARTIFACT =
+  "Viewing artifacts created via the Analysis Tool web feature preview isn't yet supported on mobile."
+export const TOOL_PLACEHOLDERS = [TOOL_PLACEHOLDER, TOOL_PLACEHOLDER_MOBILE_ARTIFACT] as const
 
-// Strip the placeholder OUTSIDE of fenced code blocks. Inside a fenced
+// Strip placeholders OUTSIDE of fenced code blocks. Inside a fenced
 // code block the `code` component below renders a friendly badge
 // ("Tool call or artifact not captured in export"), so we must leave
 // the placeholder text intact so ReactMarkdown can hand it to that
@@ -22,7 +27,7 @@ export const TOOL_PLACEHOLDER = 'This block is not supported on your current dev
 // literal string both ways. We track fenced state by toggling on each
 // line that opens with ``` (with optional language tag).
 function stripToolPlaceholderText(content: string): string {
-  if (!content.includes(TOOL_PLACEHOLDER)) return content
+  if (!TOOL_PLACEHOLDERS.some((p) => content.includes(p))) return content
   const lines = content.split('\n')
   const out: string[] = []
   let inFence = false
@@ -37,10 +42,13 @@ function stripToolPlaceholderText(content: string): string {
       out.push(line)
       continue
     }
-    // Outside a fence: drop ALL occurrences anywhere on the line.
-    const stripped = line.split(TOOL_PLACEHOLDER).join('')
+    // Outside a fence: drop ALL occurrences of every placeholder anywhere on the line.
+    let stripped = line
+    for (const placeholder of TOOL_PLACEHOLDERS) {
+      stripped = stripped.split(placeholder).join('')
+    }
     // If the line was non-empty before but is whitespace-only after
-    // (i.e. the placeholder was the only content on the line), drop
+    // (i.e. a placeholder was the only content on the line), drop
     // the entire line so we don't leave a phantom blank paragraph.
     if (stripped.trim() === '' && line.trim() !== '') continue
     out.push(stripped)
@@ -104,7 +112,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
           // captured in the export. We surface it regardless of the
           // showToolCalls toggle (the toggle hides captured tool calls
           // and tool results, not breadcrumbs of missing ones).
-          if (text === TOOL_PLACEHOLDER) {
+          if (TOOL_PLACEHOLDERS.includes(text as (typeof TOOL_PLACEHOLDERS)[number])) {
             return (
               <span className="my-2 flex items-center gap-2 rounded-md border border-zinc-300 bg-zinc-100 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
                 <AlertCircle className="h-4 w-4 shrink-0" />

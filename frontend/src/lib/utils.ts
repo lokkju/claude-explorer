@@ -53,7 +53,10 @@ export function messageHasVisibleContent(message: Message, showToolCalls: boolea
     // Check if it's only tool placeholders
     if (!showToolCalls) {
       const filtered = message.text
-        .replace(/```\s*\n?\s*This block is not supported on your current device yet\.\s*\n?\s*```/g, '')
+        .replace(
+          /```\s*\n?\s*(?:This block is not supported on your current device yet\.|Viewing artifacts created via the Analysis Tool web feature preview isn't yet supported on mobile\.)\s*\n?\s*```/g,
+          ''
+        )
         .trim()
       if (!filtered) return false
     }
@@ -90,10 +93,12 @@ export function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url)
 }
 
-// Remove tool placeholder blocks from markdown text
+// Remove tool placeholder blocks from markdown text. Matches both the
+// "tool / artifact" placeholder and the "mobile artifact preview" placeholder
+// Claude Desktop emits — see backend/export.py::TOOL_PLACEHOLDERS.
 function filterToolPlaceholders(text: string): string {
-  // Match code blocks containing the Claude Desktop placeholder (with optional whitespace)
-  const pattern = /```\s*\n?\s*This block is not supported on your current device yet\.\s*\n?\s*```/g
+  const pattern =
+    /```\s*\n?\s*(?:This block is not supported on your current device yet\.|Viewing artifacts created via the Analysis Tool web feature preview isn't yet supported on mobile\.)\s*\n?\s*```/g
   return text.replace(pattern, '').replace(/\n{3,}/g, '\n\n')
 }
 
