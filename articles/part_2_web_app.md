@@ -85,29 +85,29 @@ claude-explorer serve --help
 
 To pull in your Claude Desktop history, click the **Refresh** button in the top of the sidebar and the UI runs the full pipeline in-process: capture credentials (Playwright), persist them to `~/.claude-explorer/credentials.json`, then incrementally fetch your conversations and stream progress back to a small status popup in the corner of the window. Subsequent Refresh clicks reuse the saved credentials and only re-capture when they expire.
 
-### Tech Stack
+### Tech Overview
 
 Skip ahead if the stack doesn't interest you.
+#### back and front end stack
+The back end uses FastAPI from Sebastián Ramírez for the REST API, served by uvicorn, with [FastMCP](https://github.com/jlowin/fastmcp) layered on for the MCP server you'll meet in Part 3. I cover FastAPI in detail in [my best-practices column](https://medium.com/@raymondpeck/column-best-practices-in-modern-python-0cc40b50170e). PDF export goes through WeasyPrint (the optional `brew install` line earlier in the install block was for its system libs). The whole Python side runs inside a `uv`-managed virtual environment; `uv` is also how `uvx` ran the install command at the top of this section.
 
-The back end is FastAPI from Sebastián Ramírez for the REST API, served by uvicorn, with [FastMCP](https://github.com/jlowin/fastmcp) layered on for the MCP server you'll meet in Part 3. I cover FastAPI in detail in [my best-practices column](https://medium.com/@raymondpeck/column-best-practices-in-modern-python-0cc40b50170e). PDF export goes through WeasyPrint (the optional `brew install` line earlier in the install block was for its system libs). The whole Python side runs inside a `uv`-managed venv; `uv` is also how `uvx` ran the install command at the top of this section.
+The front end is React 18 + TypeScript, built with Vite, styled with Tailwind CSS v4, and assembled out of shadcn/ui components, with TanStack Query for server-state caching. The whole thing builds to a static bundle that the FastAPI process serves directly; one server for both.
 
-The front end is React 18 + TypeScript, built with Vite, styled with Tailwind CSS v4, and assembled out of shadcn/ui components, with TanStack Query for server-state caching. The whole thing builds to a static bundle that the FastAPI process serves directly; one server, no separate dev origin in production.
+Packaging is hatchling, and the PyPI wheel ships with the pre-built React bundle inside it. That's the trick that lets `uvx claude-explorer serve` be a single line: nothing to clone, nothing to build, just run.
 
 Since this article was written shortly after the May 2026 Mini Shai-Hulud npm worm hit parts of the TanStack ecosystem, one note: I audited our four pinned `@tanstack/*` packages (`react-query`, `query-core`, `react-virtual`, `virtual-core`) against [GHSA-g7cv-rxg3-hmpx](https://github.com/advisories/GHSA-g7cv-rxg3-hmpx). None of them appear in the advisory, and a defense-in-depth scan of `node_modules` and the shipped front-end bundle for the worm's known indicators of compromise came back clean. The full 15-check audit log (lockfile, on-disk IoCs, CI workflows, git author history, project- and user-level persistence vectors, shipped artifact) lives in [SECURITY.md](https://github.com/rpeck/claude-explorer/blob/main/SECURITY.md).
 
-Credential capture uses Playwright for the default browser-login path and mitmproxy for the SSO-blocked-account fallback (we'll get to both in the next section). The fetcher itself uses httpx for the HTTP calls and curl_cffi for the TLS fingerprint Cloudflare expects from a real desktop browser.
+#### credentials
+Credential capture uses Playwright to open a Chromium window for the standard login flow. The fetcher itself uses httpx for the HTTP calls and curl_cffi for the TLS fingerprint Cloudflare expects from a real desktop browser.
 
+#### FTS5 for fast search
 Search is SQLite FTS5 for the fast path and a linear-scan fallback (orjson + an mtime-keyed FileCache + a ThreadPoolExecutor) for the case where FTS5 is not available in a given sqlite3 build. We'll get to the details when we get to search.
-
-Packaging is hatchling, and the PyPI wheel ships with the pre-built React bundle inside it. That's the trick that lets `uvx claude-explorer serve` be a single line: nothing to clone, nothing to build, just run.
 
 ### Some details about auth and fetching
 
 Skip ahead if the auth internals don't interest you.
 
 Claude Desktop's history lives behind a session cookie called `sessionKey`. The default capture path opens a Chromium window via Playwright, lets you log into Claude the normal way (email, Google, your work SSO, whatever your account uses), and on success reads the `sessionKey` cookie plus the active org ID out of the browser context. Those two values get written to `~/.claude-explorer/credentials.json` with mode `0o600`, atomically. The capture step has no network egress beyond the browser tab you used to log in; the code path is `fetcher/playwright_capture.py::capture_credentials` if you want to audit it.
-
-There's one common failure mode the default path can't handle: an SSO-locked work account where the web login no longer works for you, but Claude Desktop on your machine is still authenticated. For that case there's a proxy-interception fallback. Run `uv run claude-explorer capture --proxy` to start a local mitmproxy on port 8080, then launch Claude Desktop through that proxy with `--proxy-server="127.0.0.1:8080" --ignore-certificate-errors`. Click around in Desktop for a few seconds; the addon snatches the `sessionKey` out of the intercepted traffic and writes it the same way the Playwright flow does. The one prereq is a real ANSI terminal (Terminal.app, iTerm2, etc); mitmproxy will not run inside non-TTY shells.
 
 With credentials in hand, the fetch step uses the unofficial `chat_conversations` API at `GET /api/organizations/{org_id}/chat_conversations` to list IDs and `GET /api/organizations/{org_id}/chat_conversations/{uuid}` to pull each full conversation tree. The fetcher rate-limits itself to a 0.3s polite pause between requests. It is incremental by default (skips conversations already on disk); `--full-refresh` re-pulls everything, `--limit N` caps the run, `--verbose` shows progress. JSON lands in `~/.claude-explorer/conversations/`; attachment bytes land in a sibling `~/.claude-explorer/files/` keyed by conversation and file UUID.
 
