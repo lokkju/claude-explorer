@@ -277,39 +277,87 @@ class SearchIndex:
 
     # ----- schema ----------------------------------------------------
 
-    def _init_schema(self) -> None:
-        """Create tables if missing; drop+rebuild if SCHEMA_VERSION mismatch.
+    # Expected user-facing columns of the ``messages`` FTS5 table for the
+    # current SCHEMA_VERSION. Used at open time to detect when an on-disk
+    # ``messages`` table predates the current code (column-level drift),
+    # which the version-row check alone can miss — see below.
+    _EXPECTED_MESSAGES_COLS = frozenset({
+        "conv_uuid", "message_uuid", "sender", "created_at",
+        "source", "project_path", "organization_id",
+        "title", "body",
+    })
 
-        On version mismatch we set ``_schema_ok=False`` BEFORE the DROP so
-        any concurrent query falls back to linear scan instead of seeing a
-        half-rebuilt index. Once the rebuild is done we restore the flag
-        but leave ``_is_ready=False`` until :func:`build_full_index` finishes.
+    def _init_schema(self) -> None:
+        """Create tables if missing; drop+rebuild if the on-disk schema
+        doesn't match the current code.
+
+        We trigger a drop+rebuild on ANY of:
+
+          * the ``schema_version`` row is missing (legitimately fresh DB
+            falls into this branch too — drop+rebuild on an empty file is
+            cheap and ensures a clean state);
+          * the ``schema_version`` row doesn't equal ``SCHEMA_VERSION``;
+          * the existing ``messages`` table's column set doesn't match
+            ``_EXPECTED_MESSAGES_COLS`` (defensive: catches the historical
+            bug where a prior process stamped the version row but failed
+            to actually rebuild the table, leaving the DB in a state where
+            ``upsert_conversation`` raises "no column named X" forever
+            because the version-row check declares the schema "current").
+
+        On rebuild we set ``_schema_ok=False`` BEFORE the DROP so any
+        concurrent query falls back to linear scan instead of seeing a
+        half-rebuilt index. Once the rebuild finishes we restore the flag
+        but leave ``_is_ready=False`` until :func:`build_full_index`
+        completes its first pass.
         """
         with self._write_lock:
             cur = self._write_conn.cursor()
-            cur.executescript(SCHEMA_SQL)
 
-            row = cur.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-            if row is None:
-                cur.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+            # Inspect what's actually on disk BEFORE running CREATE IF NOT
+            # EXISTS — otherwise we'd lose the ability to distinguish a
+            # genuinely fresh DB from a stale-tables-without-version-row
+            # case. ``PRAGMA table_info`` works on FTS5 virtual tables and
+            # returns the user-defined column list.
+            existing_cols = {
+                r[1] for r in cur.execute("PRAGMA table_info(messages)").fetchall()
+            }
+
+            # ``schema_version`` may not exist yet on a fresh file; guard
+            # the SELECT with a table-existence check.
+            sv_exists = cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
+            ).fetchone() is not None
+            row = (
+                cur.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+                if sv_exists else None
+            )
+
+            cols_ok = (not existing_cols) or existing_cols == self._EXPECTED_MESSAGES_COLS
+            version_ok = row is not None and row[0] == SCHEMA_VERSION
+
+            if cols_ok and version_ok:
+                # On-disk schema matches; ensure all tables exist (no-op if
+                # already there) and we're done.
+                cur.executescript(SCHEMA_SQL)
                 self._write_conn.commit()
                 return
 
-            if row[0] != SCHEMA_VERSION:
-                logger.info(
-                    "search_index: schema version mismatch on disk=%s vs code=%s; rebuilding",
-                    row[0], SCHEMA_VERSION,
+            logger.info(
+                "search_index: rebuilding (version on-disk=%s code=%s; messages cols match=%s)",
+                row[0] if row else None, SCHEMA_VERSION, existing_cols == self._EXPECTED_MESSAGES_COLS,
+            )
+            self._schema_ok = False
+            try:
+                cur.execute("DROP TABLE IF EXISTS messages")
+                cur.execute("DROP TABLE IF EXISTS indexed_files")
+                cur.execute("DROP TABLE IF EXISTS schema_version")
+                cur.executescript(SCHEMA_SQL)
+                cur.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
                 )
-                self._schema_ok = False
-                try:
-                    cur.execute("DROP TABLE IF EXISTS messages")
-                    cur.execute("DROP TABLE IF EXISTS indexed_files")
-                    cur.execute("DROP TABLE IF EXISTS schema_version")
-                    cur.executescript(SCHEMA_SQL)
-                    cur.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
-                    self._write_conn.commit()
-                finally:
-                    self._schema_ok = True
+                self._write_conn.commit()
+            finally:
+                self._schema_ok = True
 
     # ----- read connections ------------------------------------------
 

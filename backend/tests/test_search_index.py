@@ -164,6 +164,95 @@ def test_schema_version_mismatch_triggers_full_rebuild(tmp_path, monkeypatch):
     idx2.close()
 
 
+def test_open_rebuilds_when_messages_table_missing_expected_columns(tmp_path):
+    """Defensive: if a prior process left the DB with a stale ``messages``
+    table (wrong columns) but a current ``schema_version`` row, the next
+    open MUST detect the column-level drift and rebuild — not trust the
+    version row blindly.
+
+    Bug it would surface (regression of 2026-05-15): a v4 ``messages``
+    table on disk with ``schema_version=5`` (stamped by an interrupted
+    prior rebuild) caused every ``upsert_conversation`` to crash with
+    "no column named organization_id" forever, because the version-row
+    check declared the schema "current" and never re-rebuilt.
+    """
+    import sqlite3
+    path = tmp_path / "index.sqlite"
+
+    # Hand-craft a stale v4-shaped DB: 8-column messages table + a
+    # schema_version row claiming the current code version.
+    raw = sqlite3.connect(str(path))
+    raw.executescript(
+        """
+        CREATE VIRTUAL TABLE messages USING fts5(
+            conv_uuid UNINDEXED,
+            message_uuid UNINDEXED,
+            sender UNINDEXED,
+            created_at UNINDEXED,
+            source UNINDEXED,
+            project_path UNINDEXED,
+            title,
+            body
+        );
+        CREATE TABLE indexed_files (
+            path TEXT PRIMARY KEY, mtime REAL NOT NULL, indexed_at INTEGER NOT NULL
+        );
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        """
+    )
+    raw.execute("INSERT INTO schema_version (version) VALUES (?)", (si.SCHEMA_VERSION,))
+    raw.commit()
+    raw.close()
+
+    # Opening with the real code must detect the column drift and rebuild
+    # the messages table with the expected (current) column set, so the
+    # very next upsert succeeds rather than raising "no column named X".
+    idx = si.SearchIndex(path)
+    try:
+        idx.upsert_conversation(_conv("conv-1", "Recovered"), tmp_path / "x.json", 1.0)
+        assert idx.stats()["messages"] == 1
+    finally:
+        idx.close()
+
+
+def test_open_rebuilds_when_schema_version_row_missing_but_tables_exist(tmp_path):
+    """Defensive: if ``schema_version`` is empty (e.g., a prior crashed
+    rebuild dropped it but failed before re-INSERTing), a stale
+    ``messages`` table from an older version MUST be rebuilt — not
+    silently re-stamped as "current" while preserving the wrong columns.
+
+    Bug it would surface: same root cause as the column-drift test above,
+    different trigger path (empty version table instead of correct row).
+    """
+    import sqlite3
+    path = tmp_path / "index.sqlite"
+
+    raw = sqlite3.connect(str(path))
+    raw.executescript(
+        """
+        CREATE VIRTUAL TABLE messages USING fts5(
+            conv_uuid UNINDEXED, message_uuid UNINDEXED, sender UNINDEXED,
+            created_at UNINDEXED, source UNINDEXED, project_path UNINDEXED,
+            title, body
+        );
+        CREATE TABLE indexed_files (
+            path TEXT PRIMARY KEY, mtime REAL NOT NULL, indexed_at INTEGER NOT NULL
+        );
+        CREATE TABLE schema_version (version INTEGER NOT NULL);
+        """
+    )
+    # NB: no INSERT into schema_version on purpose.
+    raw.commit()
+    raw.close()
+
+    idx = si.SearchIndex(path)
+    try:
+        idx.upsert_conversation(_conv("conv-1", "Recovered"), tmp_path / "x.json", 1.0)
+        assert idx.stats()["messages"] == 1
+    finally:
+        idx.close()
+
+
 def test_repeat_open_is_idempotent_within_same_version(tmp_path):
     """Opening the same file twice (same SCHEMA_VERSION) preserves rows.
 
