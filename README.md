@@ -166,9 +166,11 @@ claude-explorer/
 │   └── routers/              # conversations, search, export endpoints
 ├── frontend/
 │   └── src/                  # React 18 + TypeScript + Tailwind + shadcn/ui
-└── scripts/
-    ├── check-cleanup-period.py        # Inspect/fix Claude Code's cleanupPeriodDays
-    └── macos-restore-claude-projects.py  # Recover deleted projects from Time Machine
+├── scripts/
+│   ├── check-cleanup-period.py        # Inspect/fix Claude Code's cleanupPeriodDays
+│   └── macos-restore-claude-projects.py  # Recover deleted projects from Time Machine
+└── utils/
+    └── restore-deleted-sessions-and-images.sh  # Recover both sessions AND image-cache PNGs
 ```
 
 ---
@@ -527,6 +529,48 @@ sudo python3 scripts/macos-restore-claude-projects.py --apply
 **Requires:** Terminal must have **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access → add Terminal). Without FDA, macOS returns "Operation not permitted" when reading TM snapshot directories. The script detects this and tells you what to do.
 
 After recovery, **set a high `cleanupPeriodDays`** with the checker above so this doesn't happen again.
+
+### `utils/restore-deleted-sessions-and-images.sh` — recover sessions AND image-cache PNGs
+
+A bash superset of the Python script above that also restores files under `~/.claude/image-cache/<session-uuid>/<N>.png` (Claude Code rotates these off disk on its own schedule, separately from the `cleanupPeriodDays` setting). Walks Time Machine snapshots **newest-first**, restores anything missing from `~/.claude/projects/` and `~/.claude/image-cache/`, **never overwrites** files that still exist, and supports `--dry-run` so you can review the plan before anything moves.
+
+**Step 1 — grant Full Disk Access** (one-time):
+
+System Settings → Privacy & Security → Full Disk Access → add (and enable) whichever terminal you'll run the script from (Terminal.app, iTerm, Ghostty, your IDE's terminal, etc.). **Quit and re-launch the terminal** so it picks up the new permission. Without FDA, even `tmutil` can't read the snapshot tree.
+
+**Step 2 — find the canonical Time Machine path.** The user-friendly mount (e.g. `/Volumes/M3 Max Backups 5T`) is **not** what the script wants — modern macOS keeps snapshots under `/Volumes/.timemachine/<volume-uuid>/<machine-uuid>/`. Discover yours with:
+
+```bash
+tmutil destinationinfo   # shows mount points + UUIDs
+tmutil latestbackup      # prints the full path to the newest snapshot
+```
+
+`tmutil latestbackup` prints something like:
+
+```
+/Volumes/.timemachine/52A1580A-…-6E0B20631733/A1B2C3D4-…/2026-05-15-153000.backup/Macintosh HD - Data
+```
+
+Pass the **parent of the dated directory** (the `<machine-uuid>` level) as `--tm-disk`.
+
+**Step 3 — dry-run, then apply:**
+
+```bash
+# Preview what would be restored (no writes):
+./utils/restore-deleted-sessions-and-images.sh \
+    --tm-disk /Volumes/.timemachine/52A1580A-…/A1B2C3D4-… \
+    --dry-run
+
+# If the plan looks right, drop --dry-run to apply:
+./utils/restore-deleted-sessions-and-images.sh \
+    --tm-disk /Volumes/.timemachine/52A1580A-…/A1B2C3D4-…
+```
+
+**Safety contract:**
+- **No-overwrite, three layers deep**: precheck `[ -e dest ]`, then `cp -n`, then a postcheck. Any file that still exists on the live filesystem is left alone.
+- **Latest-copy-wins**: snapshots are walked newest-first; the first snapshot that contains a missing file is the one we restore from.
+- **Idempotent**: a second `apply` run after the first is a no-op (everything's already there → all skipped).
+- **Per-file errors are tallied, not fatal**: one unreadable file in one snapshot doesn't abort the run.
 
 ---
 
