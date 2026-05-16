@@ -115,7 +115,7 @@ With credentials in hand, the fetch step uses the unofficial `chat_conversations
 
 ## The Conversation List (Sidebar)
 
-The sidebar makes the unified corpus visible: one list, containing both Claude Desktop conversations (read from the fetched JSON files) and Claude Code sessions (read live and cached from `~/.claude/projects/*.jsonl`), with a few affordances that make it usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read!
+The sidebar makes the unified corpus visible: one list, containing both Claude Desktop conversations (read from the fetched JSON files) and Claude Code sessions (read live and cached from `~/.claude/projects/*.jsonl`), with a few affordances that make it usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read! That was my intro to the word "affordance".
 
 <div align="center">
 <img src="Pasted image 20260514121201.png" alt="The Claude Explorer sidebar showing the source filter dropdown, project grouping, starred sessions, and the refresh button" width="300">
@@ -123,9 +123,13 @@ The sidebar makes the unified corpus visible: one list, containing both Claude D
 
 ### Source filter and project grouping
 
-At the top, you'll see a simple source filter dropdown: `All Conversations`, `Claude Desktop`, and `Claude Code`. That sounds trivial, but it matters because your brain tends to remember context before content. If you know "this was a Claude Code debugging session in my repo" you can switch to `Claude Code` and cut your search space in half; if you remember "this was a long Desktop conversation where I attached this certain PDF," you flip to `Claude Desktop` and you're in the right neighborhood instantly.
+At the top, you can search by title or project.
 
-Claude Code sessions also show up grouped by project. The UI pulls the project name from the directory the session ran in, which is usually the git repo root (or at least somewhere inside it); it then renders a collapsible grouping so you can treat *"everything I did in repo `foo`"* as a first-class bucket. I prefer this to tags because it matches how work happens; most of us don't sit down and decide which taxonomy to apply to a session, we just run `claude` in a directory and get to work.
+Just below that, you'll see the named filter dropdown. More on that in a bit.
+
+Next is a simple source filter dropdown: `All Conversations` | `Claude Desktop` | `Claude Code`. That sounds trivial, but it helps because your brain tends to remember context before content.
+
+Claude Code sessions can also be grouped by project. The UI pulls the project name from the directory the session ran in, which is usually the git repo root (or at least somewhere inside it); it then renders a collapsible grouping so you can treat *"everything I did in repo `foo`"* as a first-class bucket.
 
 ### Row metadata
 
@@ -140,9 +144,9 @@ Those four fields give you the shape of the conversation: whether it was long or
 
 ### Stars and the refresh button
 
-You'll also see a starred group at the top. Stars are blunt, and that's why I like them; when you find something you know you'll come back to (a good project retrospective, a hard-won debugging thread, a clean solution you don't want to lose), you star it and it stops drifting away into the scrollback.
+You'll also see a starred group at the top. When you find something you know you'll come back to (a good project retrospective, a hard-won debugging thread, a clean solution you don't want to lose), you star it and it stops drifting away into the scrollback.
 
-There's a refresh button at the top of the sidebar, and it does exactly what you want in a unified browser: one click triggers a Desktop fetch for new conversations *and* a re-scan of the Claude Code directory. You don't have to remember which source needs which kind of refresh; the UI just rebuilds the corpus and you keep reading. I asked for that because I'm lazy, and laziness is the mother of "make it one button."
+There's a refresh button at the top of the sidebar, and it does exactly what you want in a unified browser: one click triggers a Desktop fetch for new conversations *and* a re-scan of the Claude Code directory. You don't have to remember which source needs which kind of refresh; the UI just rebuilds the corpus and you keep reading. I asked for that because I'm lazy, and laziness is the mother of "make it one button." Note that we also have message bookmarks, which we'll see later.
 
 ### The phantom-session filter
 
@@ -196,7 +200,7 @@ This UI avoids that by making one focus rule paramount: exactly one of `{sidebar
 
 ### Running a search (`⌘+K`)
 
-Full-text search is bound to `⌘+K`, which has become the standard across modern apps for *"I want a fast, global search"*. It slides in as a right sidebar so we can see the conversations list and the search hits list at the same time.
+`⌘+K` opens full-text search; the shortcut has become the standard across modern apps for *"I want a fast, global search"*. The pane slides in from the right so we can see the conversations list and the search hits list at the same time. The pane actually carries two tabs (Search and Bookmarks); `⌘+K` always lands on Search, and clicking the Bookmarks tab swaps the list view to your saved-message list. We'll get to bookmarks under the conversation pane.
 
 When you type a query and hit enter, the UI sends it to a full-text search endpoint; the back end runs the same query across both sources and returns a single list of hits. Each hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text.
 
@@ -361,6 +365,14 @@ Copy affordances show up where you'd expect. Each content block shows a *"two ov
 There's also a *"View branches"* button on the conversation header. Claude can create branches when you edit an earlier message and regenerate from there; when branches exist, the UI renders a tree visualization so you can see the structure, and you can click any leaf to switch the conversation pane to that branch's path (the URL gains a `?leaf=<uuid>` so the choice is shareable and back-button friendly).
 
 Finally, the scroll-to-match behavior we discussed in search shows up here too. Each message bubble carries a stable identifier, and the UI uses it to jump directly to a matching message when you click a search hit; it's deterministic, and it makes the *"search then read"* loop feel tight.
+
+### Bookmarks (message-level)
+
+Stars in the sidebar save a whole conversation; bookmarks save a single message inside one. Hover over any message bubble and a star icon appears in the action overlay alongside the copy icon; clicking it adds that message to your bookmark list and turns the star amber. Clicking it again removes the bookmark. Argless-command markers (`/exit`, `/clear`) deliberately do not get the bookmark affordance, since *"save a meaningful message"* is the whole mental model.
+
+The bookmark list lives in the **Bookmarks** tab of the right pane (the same pane that holds the search results; click the tab header to switch between them, and the choice persists across sessions). The list groups bookmarks by conversation, and each row shows a ~140-character snippet of the saved message, an optional note you can edit inline, and the timestamp. Click any row to navigate to that exact message in the conversation pane; an edit icon opens the note field, and a trash icon deletes the bookmark.
+
+A small **Export to Markdown** button at the top of the panel writes the whole bookmark set to a single `bookmarks-YYYY-MM-DD.md` file. Each entry includes the snippet and any note, grouped under its conversation, so the export reads cleanly outside the app. The back end persists everything atomically to `~/.claude-explorer/bookmarks.json`, so a `claude-explorer serve` restart never loses a bookmark.
 
 With the core reading experience covered, the remaining features are the ones that make the app comfortable to live in: appearance controls, a small settings page, the responsive layout, and exports.
 

@@ -146,7 +146,7 @@ The flow relies on a strict focus model to keep the shortcuts predictable. Exact
 
 ### Running a search (`⌘+K`)
 
-Full-text search is bound to `⌘+K`, the standard across modern apps for *"I want a fast, global search"*. It slides in as a right sidebar so we can see the conversations list and the search hits list at the same time. Each hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text. The fact that tool calls and tool results are searched matters once you use Claude Code heavily; we tend to remember the *effect* of a tool invocation ("the `ripgrep` output showed the string in three files") even when we've forgotten the exact assistant text around it.
+`⌘+K` opens full-text search, the standard shortcut across modern apps for *"I want a fast, global search"*. The pane slides in from the right so we can see the conversations list and the search hits list at the same time. The pane carries two tabs (Search and Bookmarks); `⌘+K` always lands on Search, and clicking the Bookmarks tab swaps the list view to your saved-message list (more on bookmarks in the conversation-pane section). Each search hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text. Search also covers tool calls and tool results, which matters once you use Claude Code heavily; we tend to remember the *effect* of a tool invocation ("the `ripgrep` output showed the string in three files") even when we've forgotten the exact assistant text around it.
 
 ### Query syntax: terms vs phrases
 
@@ -214,6 +214,14 @@ Images live in two places depending on which Claude they came from. Claude Deskt
 Each content block shows a *"two overlaid pages"* copy icon on hover, and the conversation header includes a *"Copy as Markdown"* action that copies the entire thread to your clipboard. This becomes a workflow the first time you realize you can paste a whole session into notes, a pull request description, or a retrospective without wrestling with formatting. The copy paths respect the same tool-call toggle as the viewer; one truth, three surfaces (viewer, copy, export).
 
 There's also a *"View branches"* button on the conversation header. Claude can create branches when you edit an earlier message and regenerate from there; when branches exist, the UI renders a tree so you can see the structure and click any leaf to switch the conversation pane to that branch's path. The scroll-to-match behavior we discussed in search shows up here too: clicking a search hit jumps directly to that message.
+
+### Bookmarks (message-level)
+
+Stars in the sidebar save a whole conversation; bookmarks save a single message inside one. Hover over any message bubble and a star icon appears in the action overlay alongside the copy icon; clicking it adds that message to your bookmark list and turns the star amber. Clicking it again removes the bookmark. Argless-command markers (`/exit`, `/clear`) deliberately do not get the bookmark affordance, since *"save a meaningful message"* is the whole mental model.
+
+The bookmark list lives in the **Bookmarks** tab of the right pane (the same pane that holds the search results; click the tab header to switch between them, and the choice persists across sessions). The list groups bookmarks by conversation, and each row shows a snippet of the saved message, an optional note you can edit inline, and the timestamp. Click any row to navigate to that exact message in the conversation pane; an edit icon opens the note field, and a trash icon deletes the bookmark.
+
+A small **Export to Markdown** button at the top of the panel writes the whole bookmark set to a single `.md` file. Each entry includes the snippet and any note, grouped under its conversation, so you can paste the export into notes or share it without needing the app running.
 
 ## Appearance and Settings
 

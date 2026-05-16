@@ -39,6 +39,7 @@ If you'd rather hack on the project than install it, see [From source (for contr
 - **Dark mode** with automatic system preference detection
 - **Keyboard navigation** with Emacs and Vim modes
 - **Message tree visualization** for branched conversations
+- **Bookmarks** (per-message): hover any message and click the star to save it; the **Bookmarks** tab in the right pane lists every saved message, with editable notes and Markdown export
 - **Command palette** (Cmd+K) for quick navigation
 - **Claude Code integration** with project grouping and subagent display
 - **MCP server** exposing your saved sessions to Claude Desktop and Claude Code
@@ -314,6 +315,14 @@ The toast walks you through each phase:
 If the capture window is closed or login times out (5 min default), the toast becomes sticky with a **Retry** action. You never have to drop to the CLI to re-capture.
 
 Manual override: the **Details** modal still exposes "Full Refresh" and "Fetch New" buttons that hit the original `/fetch/start` endpoint without auto-capture.
+
+#### Bookmarks (per-message)
+
+Hover over any message in the conversation pane and click the star icon to bookmark it. The right pane carries a **Bookmarks** tab next to **Search**; the tab lists every saved message grouped by conversation, with a snippet, an optional inline-editable note, and the timestamp. Click any entry to jump straight to that message. A top-of-panel **Export to Markdown** button writes the whole bookmark set to a single `bookmarks-YYYY-MM-DD.md` file.
+
+Bookmarks differ from sidebar stars: stars save a whole conversation, bookmarks save a specific message inside one. Argless command markers (`/exit`, `/clear`) intentionally do not get a bookmark affordance, since "save a meaningful message" is the underlying model.
+
+The back end persists bookmarks atomically to `~/.claude-explorer/bookmarks.json` via the `/bookmarks` REST endpoint (`GET` / `POST` / `PATCH` / `DELETE`); set `CLAUDE_EXPLORER_BOOKMARKS_FILE` to override the location for tests.
 
 For development with hot-reload:
 ```bash
