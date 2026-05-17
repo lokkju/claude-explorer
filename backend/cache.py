@@ -248,27 +248,32 @@ def parse_jsonl_fast_limited(path: Path, max_lines: int = 30) -> list[dict]:
 
 # Global cache instance - shared across requests.
 #
-# ``max_entries=64`` caps in-memory growth at ~64 parsed conversation
-# dicts. The 64 most-recently-touched conversations cover virtually
-# every interactive UI use case (sidebar of N, viewing 1-2 at a time,
-# export of 1, FTS5 scatter-gather of a few dozen matches). The cap
-# is a soft guarantee, not a correctness invariant — the cache is
-# purely a perf optimization; cache misses fall back to a fresh
-# disk read which is exactly the pre-cache behavior.
+# ``max_entries=4096`` caps in-memory growth at ~4k parsed conversation
+# dicts. The cap exists to bound long-running server memory (defending
+# against the R8 risk in PLANS/PERFORMANCE_PHASE_2.md §C1), NOT to
+# trim the working set — search and sidebar paths call
+# ``store.get_all_conversations_raw`` which warms every conversation
+# in the corpus on first call. A tight cap (e.g. 64) would thrash
+# under that path: the corpus walk warms N entries, evicts down to
+# the cap, and the FTS5 scatter-gather then has to re-load most of
+# them.
 #
-# Rationale for 64 (PLANS/PERFORMANCE_PHASE_2.md §C1 R8): on a
-# heavy CC corpus the largest sessions are ~300 MB on disk and the
-# parsed dict is ~1.5-2x that in memory. 10 such heavy sessions
-# cached simultaneously would be ~5 GB, too high. But typical CC
-# sessions are <5 MB; 64 entries at typical mean ~150 MB resident,
-# bounded. If a user opens 64 heavy sessions in sequence we cap at
-# ~30 GB which is still high — but realistic interactive sessions
-# don't touch 64 distinct heavy convs without re-touching most of
-# them, so the LRU keeps the heavy hitters warm.
+# Sizing: the heaviest known CC corpus today is ~1k conversations;
+# 4x headroom (~4k) protects us against organic growth while still
+# bounding pathological cases (e.g. a test or script that creates
+# millions of conversations).
+#
+# Rationale for the value (PLANS/PERFORMANCE_PHASE_2.md §C1 R8):
+#   * Typical CC session: <5 MB parsed in memory.
+#   * 4,096 typical entries: ~20 GB resident in the worst case where
+#     every entry is "typical". In practice corpora are mixed; mean
+#     resident on the user's heavy 991-conv corpus is ~1-2 GB.
+#   * Heavy sessions (288 MB on disk) are rare; the LRU keeps the
+#     hot N in cache where N ≪ 4096.
 #
 # A future refinement could weight by serialized size and cap on
 # memory bytes rather than entry count. Out of scope for V1.
-_conversation_cache = FileCache(max_workers=8, max_entries=64)
+_conversation_cache = FileCache(max_workers=8, max_entries=4096)
 
 
 def get_conversation_cache() -> FileCache:
