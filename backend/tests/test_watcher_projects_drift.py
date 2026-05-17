@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 import time
 from pathlib import Path
 
@@ -189,8 +188,6 @@ def test_jsonl_modify_event_triggers_debounced_drift(
     event, hammering the SQL writer; OR the debounce never fires, and
     drift is never picked up.
     """
-    from watchdog.events import FileSystemEventHandler
-
     from backend import cc_image_watcher
 
     drift_calls = {"n": 0}
