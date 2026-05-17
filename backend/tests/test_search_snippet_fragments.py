@@ -52,7 +52,6 @@ from backend import search_index as si
 from backend.cache import clear_cache
 from backend.models import MessageSnippet
 from backend.search import (
-    _search_via_index,
     _search_via_linear_scan,
     search_conversations,
 )
