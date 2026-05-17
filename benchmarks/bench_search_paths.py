@@ -9,7 +9,7 @@ historical pre-FTS5 numbers measured on an earlier corpus.
 
 Usage (no server required):
 
-    uv run python scripts/bench_search_paths.py
+    uv run python benchmarks/bench_search_paths.py
 
 The script picks up the canonical data directory via the default
 ``ConversationStore()`` constructor and the existing FTS5 index at

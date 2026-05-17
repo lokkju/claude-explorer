@@ -13,9 +13,9 @@ so we can ship article numbers we actually believe.
 
 Usage (server must be running on http://localhost:8765):
 
-    uv run python scripts/bench_perf.py
-    uv run python scripts/bench_perf.py --runs 20 --query handshake
-    uv run python scripts/bench_perf.py --base http://localhost:8766
+    uv run python benchmarks/bench_perf.py
+    uv run python benchmarks/bench_perf.py --runs 20 --query handshake
+    uv run python benchmarks/bench_perf.py --base http://localhost:8766
 
 The harness uses urllib (stdlib) so it has zero dependencies; it deliberately
 does not start its own server because we want to measure real on-disk

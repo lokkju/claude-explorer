@@ -277,7 +277,7 @@ Skip ahead if the internal architecture doesn't interest you. The rest of this s
 
 A **SQLite FTS5 inverted index** built at backend startup is what keeps things fast, even on archives in the thousands of conversations; the same watcher that protects the CC image cache keeps it warm as new conversations land. The linear-scan path (`orjson` parsing plus an mtime-keyed `FileCache` plus parallel reads via a `ThreadPoolExecutor`) is still in the codebase as a safety-net fallback that triggers if FTS5 isn't available (e.g., with some Linux distros' stock sqlite3 builds) or if the index hasn't finished its first walk yet. So search never goes "down": the FTS5 path is fast, and the fallback is correct.
 
-Performance-wise, the tuned FTS5 path is fast enough that you stop thinking about search on a typical archive. The numbers below come from `scripts/bench_search_paths.py` running against my own data directory (about 1,000 conversations across Desktop and Claude Code after phantom-session filtering, ~2.9 GB of JSON on disk, warm OS file cache, FTS5 index built), so they should give you a realistic feel rather than a synthetic best case. Both columns hit the same corpus the same way; the only thing that changes is which code path the dispatcher runs.
+Performance-wise, the tuned FTS5 path is fast enough that you stop thinking about search on a typical archive. The numbers below come from `benchmarks/bench_search_paths.py` running against my own data directory (about 1,000 conversations across Desktop and Claude Code after phantom-session filtering, ~2.9 GB of JSON on disk, warm OS file cache, FTS5 index built), so they should give you a realistic feel rather than a synthetic best case. Both columns hit the same corpus the same way; the only thing that changes is which code path the dispatcher runs.
 
 The gap between the fallback linear scan and the FTS5 index is large enough to feel:
 
@@ -292,7 +292,7 @@ That's well inside the *"feels interactive"* zone for search; the search palette
 
 First paint tells a different story. `/api/conversations` returns the full sidebar in around **5 s** for ~650 KB, dominated by JSON parse and serialization across thousands of files. That's slower than I'd like and a known target for optimization on the current corpus size.
 
-If you want to take your own measurements, two bench scripts ship with the repo: `scripts/bench_perf.py` hits the HTTP endpoints (which always go through the dispatcher and so always measure the FTS5 path when the index is ready), and `scripts/bench_search_paths.py` calls `_search_via_linear_scan` and `_search_via_index` directly so you can compare both paths against the same corpus.
+If you want to take your own measurements, two bench scripts ship with the repo: `benchmarks/bench_perf.py` hits the HTTP endpoints (which always go through the dispatcher and so always measure the FTS5 path when the index is ready), and `benchmarks/bench_search_paths.py` calls `_search_via_linear_scan` and `_search_via_index` directly so you can compare both paths against the same corpus.
 
 ## Inside the Conversation Pane
 
