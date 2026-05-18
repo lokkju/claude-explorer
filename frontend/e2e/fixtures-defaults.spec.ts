@@ -154,11 +154,22 @@ test.describe('mockBackend default routes (M1)', () => {
     })
   })
 
-  test('GET /api/search returns []', async ({ page, mockBackend }) => {
+  test('GET /api/search returns the empty SearchResponse envelope', async ({
+    page,
+    mockBackend,
+  }) => {
+    // 2026-05-16 (plan §B): the wire format is now an envelope, not a
+    // bare list. The default mock returns an empty SearchResponse so
+    // tests that don't override /api/search still hit the new shape.
     await mockBackend({})
     const r = await fetchOnPage(page, '/api/search?q=anything')
     expect(r.status).toBe(200)
-    expect(JSON.parse(r.body)).toEqual([])
+    expect(JSON.parse(r.body)).toEqual({
+      results: [],
+      total_messages_matched: 0,
+      returned_messages: 0,
+      truncated: false,
+    })
   })
 
   test('GET /api/cc-image returns 404 by default', async ({ page, mockBackend }) => {
