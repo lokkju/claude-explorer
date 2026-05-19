@@ -143,9 +143,15 @@ class SearchRequest(BaseModel):
     sort_order: Literal["asc", "desc"] = "desc"
     conversation_uuid: str | None = None
     project_path: str | None = None
-    bookmarks: list[str] | None = None
+    bookmarks: list[str] | None = Field(None, max_length=5000)
     organization_id: str | None = None
-    conversation_uuids: list[str] | None = None
+    # Hunt #4 (API boundaries): cap at 5000 to bound work in the
+    # filter pipeline. The frontend's active-filter UI never sends
+    # more than the visible-list size (~1500 at the 99th percentile);
+    # 5000 gives 3x headroom AND keeps the underlying SQLite IN(...)
+    # clause well under SQLITE_MAX_VARIABLE_NUMBER. Without this cap,
+    # a 100k-UUID POST takes ~21s.
+    conversation_uuids: list[str] | None = Field(None, max_length=5000)
     include_tool_calls: bool = True
 
 

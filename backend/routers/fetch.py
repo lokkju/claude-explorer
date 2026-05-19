@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import AsyncGenerator, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -442,7 +442,11 @@ async def force_refetch_conversation(uuid: str) -> dict:
 @router.get("/fetch/start")
 async def fetch_conversations(
     incremental: bool = True,
-    limit: int | None = None,
+    # Hunt #4 (API boundaries): bound to positive ints up to 5000.
+    # `?limit=-5` previously reached `conversations[:limit]` and
+    # silently returned the LAST 5 — counter to "Max number of
+    # conversations to fetch" docs.
+    limit: int | None = Query(None, ge=1, le=5000),
 ) -> StreamingResponse:
     """Fetch conversations from Claude Desktop API.
 
@@ -1105,7 +1109,8 @@ async def refresh_pipeline_stream(
 @router.get("/fetch/refresh")
 async def refresh_pipeline(
     incremental: bool = True,
-    limit: int | None = None,
+    # Hunt #4 (API boundaries): same bound as /fetch/start.
+    limit: int | None = Query(None, ge=1, le=5000),
 ) -> StreamingResponse:
     """Combined capture + fetch SSE stream — Build-9 one-button Refresh.
 

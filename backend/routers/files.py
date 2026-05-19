@@ -107,13 +107,25 @@ def _proxy(org_id: str, file_uuid: str, variant: str) -> Response:
         # for a local copy the bulk fetcher cached at
         # <attachments_root>/<conv>/<file>/<variant>.<ext>. Mirrors the
         # /api/cc-image fallback at lines 222-237.
-        try:
-            cached = [
-                m for m in _attachments_root().glob(f"*/{file_uuid}/{variant}.*")
-                if m.is_file()  # exclude any stray directory matching the pattern
-            ]
-        except OSError:
+        #
+        # Hunt #4 (API boundaries audit): defense-in-depth glob-meta
+        # reject. `Path.glob()` interprets `*`, `?`, `[`, `]` in the
+        # pattern, and `**` as recursive descent. With `file_uuid="**"`
+        # a request would return the FIRST matching file from any
+        # subdir — real attachment bytes from an unrelated file_uuid,
+        # at 200 OK. h11 / Starlette routing doesn't filter these
+        # characters from path segments. Skip the glob entirely on any
+        # metachar so the route falls through to its standard 502.
+        if any(ch in file_uuid for ch in "*?[]"):
             cached = []
+        else:
+            try:
+                cached = [
+                    m for m in _attachments_root().glob(f"*/{file_uuid}/{variant}.*")
+                    if m.is_file()  # exclude any stray directory matching the pattern
+                ]
+            except OSError:
+                cached = []
         if cached:
             logger.info(
                 "proxy_local_fallback",
