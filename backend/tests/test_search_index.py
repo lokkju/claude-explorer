@@ -816,3 +816,103 @@ def test_update_drifted_files_cleans_up_vanished_paths(tmp_path):
         "Cleanup pass failed to drop rows for a vanished file."
     )
     idx.close()
+
+
+# ----- 10b. TOCTOU race: stat-AFTER-read causes persistent index staleness
+
+
+def test_update_drifted_files_toctou_does_not_poison_index(tmp_path, monkeypatch):
+    """Hunt #8 TOCTOU: if a file is mutated DURING the read in
+    update_drifted_files, the index must NOT stamp the read content
+    with a mtime that already reflects unread bytes. That would freeze
+    drift detection at a snapshot the index never actually saw, hiding
+    the unread bytes from search until the file is touched again.
+
+    The race in the buggy implementation:
+      1. _drift_first_scan sees mtime_disk != mtime_indexed → drift
+      2. conv = _load_conversation_at(path, store) reads content C1 at T1
+      3. (CC appends a new line; on-disk content becomes C2; mtime → M2)
+      4. mtime = path.stat().st_mtime → reads M2
+      5. index.upsert_conversation(conv=C1, path, mtime=M2) → STALE
+         content C1 stamped with FRESH mtime M2
+      6. Until CC appends AGAIN, drift checks return mtime_disk == M2
+         == mtime_indexed → no drift → C2's new lines are invisible to
+         search even though they're on disk.
+
+    Bug it would surface: the recommended check-read-check (stat both
+    sides of the read, abort on drift) was never implemented. The
+    file's contents-at-indexed-mtime invariant is broken.
+
+    Simulation strategy: monkeypatch _load_conversation_at so that it
+    (a) returns the OLD content, and (b) atomically writes NEW content
+    + bumps mtime. The post-read stat will see the bumped mtime. The
+    fix must detect the mtime drift and skip the upsert; the file
+    stays "drifted" for the next pass, which picks up C2 correctly.
+    """
+    import os
+
+    by_org = tmp_path / "by-org" / "org-1"
+    path = _write_desktop_conv(
+        by_org, _conv("a", "A", body="content one alpha"),
+    )
+    cc_dir = tmp_path / "claude-empty"
+    cc_dir.mkdir()
+    store = ConversationStore(data_dir=tmp_path, claude_dir=cc_dir)
+
+    idx = si.SearchIndex(tmp_path / "index.sqlite")
+    si.build_full_index(store, index=idx)
+    assert len(idx.query("alpha")) == 1
+
+    # First legitimate append — drift pass should pick this up.
+    path.write_text(json.dumps(_conv("a", "A", body="content two beta")))
+    bumped_mtime = time.time() + 10.0
+    os.utime(path, (bumped_mtime, bumped_mtime))
+    from backend.cache import clear_cache
+    clear_cache()
+
+    # Inject the race: the loader returns C1 ("content one alpha")
+    # but the file on disk advances to C2 ("content three gamma") with
+    # a fresh mtime before the caller's post-read stat happens.
+    real_loader = si._load_conversation_at
+    race_mtime = bumped_mtime + 50.0
+
+    def _racy_loader(p, s):
+        if p == path:
+            # Pretend we read the file's OLDEST snapshot (C1).
+            conv = _conv("a", "A", body="content one alpha")
+            # Then CC appends; disk content + mtime advance past us.
+            path.write_text(
+                json.dumps(_conv("a", "A", body="content three gamma"))
+            )
+            os.utime(p, (race_mtime, race_mtime))
+            return conv
+        return real_loader(p, s)
+
+    monkeypatch.setattr(si, "_load_conversation_at", _racy_loader)
+    si.update_drifted_files(store, index=idx)
+
+    # Restore the real loader for the next pass.
+    monkeypatch.setattr(si, "_load_conversation_at", real_loader)
+    clear_cache()
+
+    # KEY ASSERTION: after the race, a SECOND drift pass with the real
+    # loader MUST re-index the file so search reflects on-disk C2
+    # ("content three gamma"). With the bug, the index stamped C1 with
+    # mtime=race_mtime; stat() now returns race_mtime; drift detector
+    # sees mtime_disk == mtime_indexed and SKIPS the file — leaving
+    # "content three gamma" permanently absent from search until the
+    # next outside-the-race append.
+    si.update_drifted_files(store, index=idx)
+    assert len(idx.query("gamma")) == 1, (
+        "TOCTOU bug confirmed: the in-flight mtime (read AFTER the "
+        "file content read) was stamped onto stale content. Drift "
+        "detection now believes the file is up-to-date even though "
+        "on-disk content was never indexed. Fix requires check-read-"
+        "check: stat the file both before and after the content read; "
+        "if mtime drifted, abort the upsert and let the next pass retry."
+    )
+    assert idx.query("alpha") == [], (
+        "Stale content C1 must not survive in the index after a "
+        "second drift pass."
+    )
+    idx.close()

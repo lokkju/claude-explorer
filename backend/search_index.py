@@ -1500,15 +1500,39 @@ def build_full_index(
     messages_indexed = 0
     total = len(drifted)
     for i, path in enumerate(drifted):
+        # Hunt #8 TOCTOU fix: check-read-check (see update_drifted_files
+        # for the full rationale). Stat before AND after the read; if
+        # the file was mutated during the read, skip the upsert so the
+        # index never stamps stale content with a fresh mtime.
+        try:
+            mtime_before = path.stat().st_mtime
+        except OSError:
+            mtime_before = None
         conv = _load_conversation_at(path, store)
         if conv is None:
             if on_progress is not None:
                 on_progress(i + 1, total)
             continue
         try:
-            mtime = path.stat().st_mtime
+            mtime_after = path.stat().st_mtime
         except OSError:
+            mtime_after = None
+        # If we couldn't stat the file at all, fall back to 0.0 (legacy
+        # behavior) — the file just disappeared and the next drift pass
+        # will resolve via the cleanup branch.
+        if mtime_before is None or mtime_after is None:
             mtime = 0.0
+        elif mtime_before != mtime_after:
+            logger.info(
+                "search_index: file mtime drifted during initial-build "
+                "read (%s → %s); skipping upsert, drift pass will retry: %s",
+                mtime_before, mtime_after, path,
+            )
+            if on_progress is not None:
+                on_progress(i + 1, total)
+            continue
+        else:
+            mtime = mtime_before
         try:
             messages_indexed += index.upsert_conversation(conv, path, mtime)
             files_indexed += 1
@@ -1568,15 +1592,34 @@ def update_drifted_files(
 
     updated = 0
     for path in drifted:
+        # Hunt #8 TOCTOU fix: check-read-check. Stat BEFORE the read so
+        # the mtime we stamp into the index reflects the snapshot we
+        # actually read, not a later one. If the file is mutated during
+        # the read (CC appends a line between _load_conversation_at and
+        # the upsert), the post-read stat will differ — skip this pass
+        # and let the next drift fire pick up the post-race content.
+        # Without this, the index would store stale content under a
+        # fresh mtime and never re-detect the unread bytes.
+        try:
+            mtime_before = path.stat().st_mtime
+        except OSError:
+            continue
         conv = _load_conversation_at(path, store)
         if conv is None:
             continue
         try:
-            mtime = path.stat().st_mtime
+            mtime_after = path.stat().st_mtime
         except OSError:
             continue
+        if mtime_before != mtime_after:
+            logger.info(
+                "search_index: file mtime drifted during read (%s → %s); "
+                "skipping upsert, next drift pass will retry: %s",
+                mtime_before, mtime_after, path,
+            )
+            continue
         try:
-            index.upsert_conversation(conv, path, mtime)
+            index.upsert_conversation(conv, path, mtime_before)
             updated += 1
         except sqlite3.Error:
             logger.exception("search_index: drift-upsert failed for %s", path)
