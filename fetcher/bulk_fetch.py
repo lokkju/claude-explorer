@@ -1067,15 +1067,42 @@ class ClaudeFetcher:
 
 
 def load_credentials(credentials_path: Path) -> dict:
-    """Load credentials from JSON file."""
+    """Load credentials from JSON file.
+
+    A corrupt or unreadable credentials file is the most common
+    hand-edited failure mode for this tool — and the worst UX:
+    pre-fix, a malformed file surfaced as a raw Python stack trace at
+    the CLI top level. Wrap the parse so the user sees an actionable
+    ClickException with the same recovery copy as the missing-file
+    case.
+
+    Note: the canonical credential reader lives in
+    ``fetcher/credentials.py:load_credentials`` and does strict v1/v2
+    schema validation via ``_validate``. This legacy duplicate
+    deliberately stays permissive — it returns whatever shape the
+    JSON parses into (including non-dict roots) — because some
+    callers in this module hand-build their orgs list from
+    ``--session-key`` / ``--org-id`` overrides without writing a
+    schema-valid credentials file. Migrating to the canonical reader
+    is a separate refactor that requires aligning those override
+    paths first.
+    """
     if not credentials_path.exists():
         raise click.ClickException(
             f"Credentials file not found: {credentials_path}\n"
             f"Run the mitmproxy addon first to capture credentials."
         )
 
-    with open(credentials_path) as f:
-        return json.load(f)
+    try:
+        with open(credentials_path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        raise click.ClickException(
+            f"Credentials file is corrupt or unreadable: {credentials_path}\n"
+            f"  Parse error: {e}\n"
+            f"Fix or remove the file and re-run "
+            f"`claude-explorer capture` to recapture credentials."
+        ) from e
 
 
 @click.command()
