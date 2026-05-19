@@ -35,6 +35,35 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def _safe_int(raw: Any, *, default: int = 0, field: str = "?",
+              uuid: str | None = None) -> int:
+    """Coerce a raw JSON value to int, falling back to ``default`` on
+    any non-numeric / wrong-shape input.
+
+    Same documented-fallback pattern as :func:`backend.parsing.parse_datetime`
+    and the inline guard in :func:`get_conversation` for
+    ``prelude_hidden_count`` (commit 15c4fc5). Used by ``_make_summary``
+    to defang corrupt-on-disk ``message_count`` / ``human_message_count``
+    values that would otherwise propagate to ``ConversationSummary(int=...)``
+    and 500 the entire sidebar via the ``list_conversations`` loop.
+
+    Catches ValueError (non-numeric string), TypeError (list/dict/None),
+    and also handles a quirk of ``dict.get(k, 0)``: when the on-disk JSON
+    has ``"k": null``, ``.get`` returns ``None`` (not the default!), which
+    Pydantic v2 rejects.
+    """
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        logger.warning(
+            "Conversation %s has non-numeric %s %r; defaulting to %d",
+            uuid, field, raw, default,
+        )
+        return default
+
+
 # Top-level files that should be considered conversation JSONs.
 # UUID-shaped names only — excludes _index.json, .migration_log.json, etc.
 _UUID_FILENAME_RE = re.compile(r"^[0-9a-f-]{36}\.json$", re.IGNORECASE)
@@ -328,13 +357,31 @@ class ConversationStore:
         # at the boundary for parity with get_conversation /
         # get_conversation_tree (fixed in f9a2fd2).
         chat_messages = data.get("chat_messages") or []
-        # Use pre-computed counts if available (from fast reader), else calculate
+        # Use pre-computed counts if available (from fast reader), else calculate.
+        # The else-branch reads counts straight from disk and passes them to
+        # Pydantic ``int``-typed fields on ``ConversationSummary``. A
+        # corrupt-on-disk value (``"foo"`` / null / list / dict) would
+        # propagate as a ValidationError → 500 in the ``list_conversations``
+        # loop, taking out the entire sidebar for one bad row. ``_safe_int``
+        # mirrors the prelude_hidden_count fix in ``get_conversation`` and
+        # the parse_datetime fix in ``parsing.py`` (Council coercion audit).
+        conv_uuid = data.get("uuid")
         if chat_messages:
             message_count = len(chat_messages)
             human_count = sum(1 for m in chat_messages if m.get("sender") == "human")
         else:
-            message_count = data.get("message_count", 0)
-            human_count = data.get("human_message_count", 0)
+            message_count = _safe_int(
+                data.get("message_count"),
+                default=0,
+                field="message_count",
+                uuid=conv_uuid,
+            )
+            human_count = _safe_int(
+                data.get("human_message_count"),
+                default=0,
+                field="human_message_count",
+                uuid=conv_uuid,
+            )
 
         # Parse subagents if requested
         subagents = []
@@ -347,7 +394,16 @@ class ConversationStore:
                     model=agent_data.get("model", ""),
                     created_at=_parse_datetime(agent_data.get("created_at")),
                     updated_at=_parse_datetime(agent_data.get("updated_at")),
-                    message_count=agent_data.get("message_count", 0),
+                    # Same coerce-with-fallback as the parent counts above;
+                    # subagent metadata flows from cc_agent_reader (trusted)
+                    # in production, but a partial-write or hand-edit on the
+                    # parent JSON could surface a non-int here too.
+                    message_count=_safe_int(
+                        agent_data.get("message_count"),
+                        default=0,
+                        field="subagents[].message_count",
+                        uuid=agent_data.get("uuid"),
+                    ),
                 ))
 
         # ``data.get(k, fallback_str)`` returns the fallback ONLY when the

@@ -728,3 +728,116 @@ def test_get_conversation_handles_list_prelude_hidden_count(
     assert r.status_code == 200, r.text
 
 
+# ---------------------------------------------------------------------------
+# Hunt #1 follow-up — corrupt ``message_count`` / ``human_message_count``
+# on the list-summary path.
+#
+# Same bug-class as the prelude_hidden_count fix (commit 15c4fc5):
+# ``_make_summary`` reads these counts straight from disk in the
+# no-chat-messages branch (store.py:336-337), then passes them to the
+# Pydantic ``int``-typed fields on ``ConversationSummary``. Pydantic v2
+# DOES coerce ``"42"`` to 42 (lax mode), but rejects ``"foo"`` /
+# ``null`` / list / dict with a ValidationError → HTTP 500 — and
+# because the bad row is inside the ``list_conversations`` loop, ONE
+# corrupt file empties the sidebar for ALL conversations.
+#
+# The fast-reader path (cc_jsonl_io / claude_code_reader) only emits
+# integers, so production data won't trigger this. The realistic
+# source is hand-edited JSON or a partial-write crash mid-fetch.
+# ---------------------------------------------------------------------------
+
+
+def test_list_conversations_handles_non_numeric_message_count_without_500(
+    tmp_path, monkeypatch
+):
+    """A conversation with ``message_count: "foo"`` and an absent /
+    null ``chat_messages`` (so the else-branch in _make_summary fires)
+    must not 500 the sidebar list endpoint.
+
+    Pre-fix: Pydantic v2 raised
+    ``ValidationError: Input should be a valid integer, unable to
+    parse string as an integer`` when ``ConversationSummary`` was
+    instantiated with ``message_count="foo"``.
+    """
+    conv = {
+        "uuid": "conv-bad-msg-count",
+        "name": "corrupt message count",
+        "summary": "",
+        "model": "claude-sonnet-4-6",
+        "created_at": "2026-05-01T12:00:00Z",
+        "updated_at": "2026-05-01T13:00:00Z",
+        "is_starred": False,
+        "source": "CLAUDE_AI",
+        # chat_messages absent → else-branch in _make_summary reads
+        # message_count from data.get(...) directly.
+        "message_count": "foo",  # poisoned: non-numeric string
+        "human_message_count": 0,
+    }
+    _seed_corrupt_conv(tmp_path, monkeypatch, conv)
+
+    client = TestClient(app)
+    r = client.get("/api/conversations")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    uuids = [c["uuid"] for c in body]
+    assert "conv-bad-msg-count" in uuids, (
+        "corrupt row must still appear (with safe-default count), not "
+        "vanish from the sidebar"
+    )
+
+
+def test_list_conversations_handles_null_human_message_count_without_500(
+    tmp_path, monkeypatch
+):
+    """A conversation with ``human_message_count: null`` (explicit JSON
+    null, distinct from missing) must not 500.
+
+    Pre-fix: ``data.get("human_message_count", 0)`` returns ``None``
+    (not the default!) for a key whose value is null. Pydantic v2
+    rejects ``int = None`` with ValidationError.
+    """
+    conv = {
+        "uuid": "conv-null-human-count",
+        "name": "null human count",
+        "summary": "",
+        "model": "claude-sonnet-4-6",
+        "created_at": "2026-05-01T12:00:00Z",
+        "updated_at": "2026-05-01T13:00:00Z",
+        "is_starred": False,
+        "source": "CLAUDE_AI",
+        "message_count": 5,
+        "human_message_count": None,  # poisoned: explicit null
+    }
+    _seed_corrupt_conv(tmp_path, monkeypatch, conv)
+
+    client = TestClient(app)
+    r = client.get("/api/conversations")
+    assert r.status_code == 200, r.text
+    uuids = [c["uuid"] for c in r.json()]
+    assert "conv-null-human-count" in uuids
+
+
+def test_list_conversations_handles_list_message_count_without_500(
+    tmp_path, monkeypatch
+):
+    """List shape on ``message_count`` — exercises the TypeError /
+    int_type validation path."""
+    conv = {
+        "uuid": "conv-list-msg-count",
+        "name": "list message count",
+        "summary": "",
+        "model": "claude-sonnet-4-6",
+        "created_at": "2026-05-01T12:00:00Z",
+        "updated_at": "2026-05-01T13:00:00Z",
+        "is_starred": False,
+        "source": "CLAUDE_AI",
+        "message_count": [1, 2, 3],  # poisoned: list
+        "human_message_count": 0,
+    }
+    _seed_corrupt_conv(tmp_path, monkeypatch, conv)
+
+    client = TestClient(app)
+    r = client.get("/api/conversations")
+    assert r.status_code == 200, r.text
+
+
