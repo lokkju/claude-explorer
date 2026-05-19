@@ -135,7 +135,15 @@ logger = logging.getLogger(__name__)
 #     body for typical CC sessions). Bumping the version forces a
 #     one-time rebuild; the build remains non-blocking via the
 #     existing lifespan task.
-SCHEMA_VERSION = 7
+#   * v8 (2026-05-18, doubled-snippet bug): no schema change, but
+#     ``_extract_searchable_text`` no longer appends both
+#     ``message['text']`` AND each text-type content block. Pre-v8
+#     rows have the prose indexed twice (``"X\nX"``), which surfaces
+#     in the UI as doubled snippets (e.g. "Good! Now deploy this
+#     image:\nGood! Now deploy this image:"). Bumping forces a one-
+#     time rebuild so existing rows get the deduped projection;
+#     query path falls back to linear scan during the rebuild.
+SCHEMA_VERSION = 8
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata

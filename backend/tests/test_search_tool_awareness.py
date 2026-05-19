@@ -178,23 +178,28 @@ def test_schema_has_body_text_column(fresh_index) -> None:
 # ----- 2. Schema version bumped → auto-rebuild fires --------------------
 
 
-def test_schema_version_bumped_to_7() -> None:
-    """SCHEMA_VERSION is at 7 so existing v6 indexes drop+rebuild on open.
+def test_schema_version_bumped_to_at_least_7() -> None:
+    """SCHEMA_VERSION is at least 7 so existing v6 indexes drop+rebuild.
+
+    Originally pinned to ==7 for the body_text rollout. Loosened to
+    >=7 once the doubled-snippet fix bumped to v8 — the contract this
+    test pins is "v6-and-earlier installs MUST rebuild," not "the
+    current version is exactly 7."
 
     Bug it would surface: bumping the column set without bumping the
     version. Old installs would either keep the old schema indefinitely
     (column-drift detector flag would have to catch it) or rebuild only
     by accident if a different column-set check fired.
     """
-    assert si.SCHEMA_VERSION == 7, (
-        f"SCHEMA_VERSION must be 7 for body_text rollout; got {si.SCHEMA_VERSION}"
+    assert si.SCHEMA_VERSION >= 7, (
+        f"SCHEMA_VERSION must be ≥7 for body_text rollout; got {si.SCHEMA_VERSION}"
     )
 
 
-def test_schema_v6_to_v7_triggers_rebuild(tmp_path) -> None:
+def test_schema_v6_to_current_triggers_rebuild(tmp_path) -> None:
     """Open an on-disk index whose messages table predates body_text.
-    Constructing a SearchIndex must drop+rebuild so the v7 schema lands
-    and ``body_text`` becomes a real column.
+    Constructing a SearchIndex must drop+rebuild so the current schema
+    lands and ``body_text`` becomes a real column.
 
     Bug it would surface: the version check passing on a v6 file (e.g.
     by reading SCHEMA_VERSION from a stale constant) — body_text would
@@ -230,13 +235,14 @@ def test_schema_v6_to_v7_triggers_rebuild(tmp_path) -> None:
         )
         raw.commit()
 
-    # Open with the real SearchIndex — must rebuild to v7.
+    # Open with the real SearchIndex — must rebuild to the current
+    # SCHEMA_VERSION (≥7) so body_text appears.
     idx = si.SearchIndex(db_path)
     try:
         conn = idx._get_read_conn()
         cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)").fetchall()}
         assert "body_text" in cols, (
-            "v6 → v7 open must drop+rebuild so body_text appears"
+            "v6 → current open must drop+rebuild so body_text appears"
         )
         # And the stale row is gone (rebuild dropped it).
         row_count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
@@ -245,7 +251,9 @@ def test_schema_v6_to_v7_triggers_rebuild(tmp_path) -> None:
             f"{row_count} stale rows"
         )
         sv = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-        assert sv == (7,), f"schema_version row must be (7,); got {sv}"
+        assert sv == (si.SCHEMA_VERSION,), (
+            f"schema_version row must be ({si.SCHEMA_VERSION},); got {sv}"
+        )
     finally:
         idx.close()
 

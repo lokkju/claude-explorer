@@ -139,13 +139,13 @@ def test_message_with_empty_string_slash_command_is_skipped() -> None:
     skips it cleanly — neither the empty string nor a stray separator
     pollutes the projection.
 
-    Note on duplication: `_extract_searchable_text` deliberately appends
-    BOTH `message["text"]` AND each `content[]` text block's text. For
-    most CC and Desktop messages these mirror each other, so the body
-    appears twice in the projection — this is pre-existing behavior and
-    not what this test is checking. What we're pinning here is that an
-    empty slash_command adds NO additional content (no stray "None",
-    no spurious empty separator, no projection growth).
+    Note on dedupe (2026-05-18, SCHEMA_VERSION v8): the indexer used
+    to append BOTH `message["text"]` AND each `content[]` text block,
+    producing a doubled-prose projection ("X\\nX") that surfaced in
+    the UI as doubled snippets. v8 fixes it by skipping
+    `message["text"]` when text blocks exist. So the body now appears
+    ONCE; an empty slash_command must NOT add a second copy or a
+    stray sep.
     """
     msg = {
         "uuid": "u1",
@@ -155,9 +155,9 @@ def test_message_with_empty_string_slash_command_is_skipped() -> None:
         "slash_command": "",
     }
     projection = _extract_searchable_text(msg)
-    # The body appears twice (text mirror + content block). The empty
-    # slash_command must NOT add a third copy or a stray sep.
-    assert projection.count("Body text.") == 2, (
+    # v8 dedupe: body appears once (content block wins; message["text"]
+    # is skipped). Empty slash_command must NOT add a second copy.
+    assert projection.count("Body text.") == 1, (
         f"empty slash_command should add nothing; got: {projection!r}"
     )
     # And absolutely no "None" leak.

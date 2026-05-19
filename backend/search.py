@@ -121,8 +121,31 @@ def _extract_searchable_text(
 
     parts: list[str] = []
 
+    # Dedupe contract (2026-05-18, doubled-snippet bug):
+    # ``backend/store._parse_message`` populates ``Message.text`` from
+    # ``raw.get("text", "") or _extract_text(content)``. For Claude
+    # Code AND Desktop messages, the resulting ``text`` field is the
+    # newline-join of every text-type content block. If we then also
+    # append each content block's text inside the loop below, the
+    # indexed body carries the prose twice (``"X\nX"``). FTS5's
+    # ``snippet()`` echoes the duplication and the search panel
+    # renders each hit twice.
+    #
+    # Mirror the frontend ``MessageBubble`` renderer instead: when
+    # ``content`` has at least one text block, treat the blocks as
+    # the canonical source and skip ``message['text']``. Fall back
+    # to ``text`` only when no text blocks exist — bare-text legacy
+    # shapes (Desktop messages with no ``content`` array, or messages
+    # whose content is only ``tool_use``/``tool_result``/``image``
+    # blocks) still need the field as the sole index source.
+    content_blocks = message.get("content") or []
+    has_text_block = any(
+        isinstance(b, dict) and b.get("type") == "text" and b.get("text")
+        for b in content_blocks
+    )
+
     text = message.get("text") or ""
-    if text:
+    if text and not has_text_block:
         if not include_tool_calls:
             # Mirror frontend filterToolPlaceholders so a message whose
             # `text` is ONLY a tool placeholder is correctly treated as

@@ -192,10 +192,18 @@ def test_extract_full_projection_includes_all_block_types() -> None:
     the matching text is invisible to the user). The full projection
     is "everything visible-or-toggle-able to the user"; thinking is
     neither.
+
+    Doubled-snippet fix (2026-05-18, SCHEMA_VERSION v8): the indexer
+    skips ``message['text']`` when ``content`` already has text
+    blocks, because the canonical text-block content is what the
+    frontend renders. We therefore use DISTINCT strings for the
+    `text` field and the text block here — `text` is a bare-text
+    fallback marker, the block carries the user-visible content
+    that must appear in the projection.
     """
-    msg = _msg("m1", text="plain body",
+    msg = _msg("m1", text="bare-text fallback (skipped when text block present)",
                content=[
-                   {"type": "text", "text": "text block"},
+                   {"type": "text", "text": "text block content"},
                    {"type": "tool_use", "id": "tu", "name": "Bash",
                     "input": {"command": "echo hi"}},
                    {"type": "tool_result", "tool_use_id": "tu",
@@ -203,8 +211,14 @@ def test_extract_full_projection_includes_all_block_types() -> None:
                    {"type": "thinking", "thinking": "secret reasoning"},
                ])
     out = _extract_searchable_text(msg)
-    assert "plain body" in out
-    assert "text block" in out
+    # v8 dedupe: `message['text']` is skipped because content has a
+    # text block. Pre-v8 the indexer appended both, producing
+    # doubled-snippet bug.
+    assert "bare-text fallback" not in out, (
+        "v8 contract: when content has text blocks, message['text'] "
+        "must not also be indexed (it would double-index the prose)"
+    )
+    assert "text block content" in out
     assert "echo hi" in out
     assert "result content" in out
     # Spec invariant (V1 polish 2026-05-13): thinking is NEVER indexed.
@@ -223,10 +237,14 @@ def test_extract_textonly_excludes_tool_blocks_and_thinking() -> None:
     test_extract_full_projection_includes_all_block_types). Pinning
     that here too so a future re-enable of thinking indexing must
     update both tests.
+
+    Doubled-snippet fix (2026-05-18, SCHEMA_VERSION v8): same dedupe
+    contract — when content has text blocks, message['text'] is the
+    redundant projection and gets dropped.
     """
-    msg = _msg("m1", text="plain body",
+    msg = _msg("m1", text="bare-text fallback (skipped when text block present)",
                content=[
-                   {"type": "text", "text": "text block"},
+                   {"type": "text", "text": "text block content"},
                    {"type": "tool_use", "id": "tu", "name": "Bash",
                     "input": {"command": "echo hi"}},
                    {"type": "tool_result", "tool_use_id": "tu",
@@ -234,8 +252,10 @@ def test_extract_textonly_excludes_tool_blocks_and_thinking() -> None:
                    {"type": "thinking", "thinking": "secret reasoning"},
                ])
     out = _extract_searchable_text(msg, include_tool_calls=False)
-    assert "plain body" in out, "text field is user-visible content"
-    assert "text block" in out, "text-type blocks are user-visible content"
+    assert "bare-text fallback" not in out, (
+        "v8 contract: message['text'] dropped when text blocks exist"
+    )
+    assert "text block content" in out, "text-type blocks are user-visible content"
     assert "echo hi" not in out, "tool_use input must be excluded"
     assert "result content" not in out, "tool_result must be excluded"
     assert "secret reasoning" not in out, "thinking must be excluded"
