@@ -171,14 +171,40 @@ class Settings(BaseModel):
             canonical_home_dir() / "config.json",
             legacy_home_dir() / "config.json",
         ):
-            if config_path.exists():
+            if not config_path.exists():
+                continue
+            # Hunt-config-parse (2026-05-18 broad sweep): a corrupt
+            # config.json (editor crash mid-save, truncated JSON, non-dict
+            # root) MUST NOT crash boot — otherwise the user has no UI to
+            # recover and is stuck deciphering a stack trace. Catch
+            # JSONDecodeError + OSError (TOCTOU between exists() and open(),
+            # permission denied) + TypeError (subscript on non-dict root).
+            # On parse failure, log a warning and ``continue`` to the next
+            # candidate — Council Critic 2026-05-18 §2: ``break`` on error
+            # would silently default when a valid legacy config sits right
+            # next door. We do NOT catch bare ``Exception`` (catalog #4).
+            try:
                 with open(config_path) as f:
-                    config = json.load(f)
-                    if "data_dir" in config:
-                        config_data_dir = Path(config["data_dir"])
-                    if "claude_dir" in config:
-                        config_claude_dir = Path(config["claude_dir"])
+                    parsed = json.load(f)
+                if not isinstance(parsed, dict):
+                    log.warning(
+                        "Config file %s root is not a JSON object; ignoring.",
+                        config_path,
+                    )
+                    continue
+                if "data_dir" in parsed:
+                    config_data_dir = Path(parsed["data_dir"])
+                if "claude_dir" in parsed:
+                    config_claude_dir = Path(parsed["claude_dir"])
                 break
+            except (json.JSONDecodeError, OSError, TypeError) as exc:
+                log.warning(
+                    "Failed to parse config %s: %s. "
+                    "Using defaults; fix the file and restart to apply.",
+                    config_path,
+                    exc,
+                )
+                continue
 
         # Default data dir: canonical first; legacy as last-resort
         # fallback so a startup that bypassed migration still finds data.
