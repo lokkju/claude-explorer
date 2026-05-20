@@ -13,6 +13,7 @@ export function RootLayout() {
 
   // Close drawer on viewport returning to desktop.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: derive drawerOpen from (drawerOpen && isMobile). Today this is event-driven via the resize external system; cascade is one render-pass.
     if (!isMobile) setDrawerOpen(false)
   }, [isMobile])
 

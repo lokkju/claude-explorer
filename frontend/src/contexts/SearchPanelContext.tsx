@@ -61,6 +61,7 @@ export type SearchContextSize = 'snippet' | 'full'
  * white-screened the search panel. Mirrors the backend
  * `(data.get(k) or "").lower()` invariant.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- safe: pure helper co-located with SearchPanelProvider. HMR fast refresh falls back to full reload; no runtime impact.
 export function narrowSearchResults(
   rawResults: SearchResult[] | undefined,
   query: string,
@@ -398,6 +399,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
 
   // Reset activeMatchIndex whenever the query changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: hoist activeMatchIndex alongside flatMatches as derived state. Today this resets a single int once per query change — bounded cascade.
     setActiveMatchIndexState(-1)
   }, [query])
 
@@ -421,6 +423,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // (navigateToMatch.ts:46-54) for 2s.
   useEffect(() => {
     if (!isSearching && flatMatches.length > 0 && activeMatchIndex === -1) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: "auto-promote first match once per stable-query cycle". Three-gate guard prevents infinite cascade; converting requires restructuring the navigateToMatch downstream effect too.
       setActiveMatchIndexState(0)
     }
   }, [isSearching, flatMatches.length, activeMatchIndex])
@@ -527,6 +530,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload; no runtime impact.
 export function useSearchPanel() {
   const context = useContext(SearchPanelContext)
   if (!context) {

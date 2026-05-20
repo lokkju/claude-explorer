@@ -62,6 +62,7 @@ export function Sidebar({ className }: SidebarProps) {
 
   // Keep the search box synced with the URL so deep-links and back/forward both work.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: drive searchQuery from urlFilters.q (derived) and make the input controlled-via-URL. Today the effect runs once per URL change with no cascade.
     setSearchQuery(urlFilters.q)
   }, [urlFilters.q])
   // Build-9 Bug 1: Refresh button drives the same shared pipeline state

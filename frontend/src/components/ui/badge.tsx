@@ -32,4 +32,5 @@ function Badge({ className, variant, ...props }: BadgeProps) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: shadcn/ui pattern co-locates component + variant generator. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export { Badge, badgeVariants }

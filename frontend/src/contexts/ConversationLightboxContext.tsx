@@ -134,6 +134,7 @@ export function ConversationLightboxProvider({
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useConversationLightbox(): ConversationLightboxContextValue {
   const ctx = useContext(ConversationLightboxContext)
   if (!ctx) {

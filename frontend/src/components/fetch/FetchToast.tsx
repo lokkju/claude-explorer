@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
@@ -149,7 +149,13 @@ export function useFetchToast({ onOpenDetails }: UseFetchToastOptions) {
     [onOpenDetails, queryClient],
   )
 
-  startRef.current = startFetch
+  // React 19 / React-Compiler: do NOT assign to a ref during render.
+  // The retry-button closure inside startFetch reads `startRef.current`
+  // when the user clicks (after render commits), so an effect is the
+  // correct write site.
+  useEffect(() => {
+    startRef.current = startFetch
+  }, [startFetch])
 
   return { startFetch }
 }
@@ -167,6 +173,11 @@ export function useRefreshPipeline({ onOpenDetails }: UseRefreshPipelineOptions)
   const queryClient = useQueryClient()
   const sourceRef = useRef<EventSource | null>(null)
   const [isRunning, setIsRunning] = useState(false)
+  // Forward-reference for the toast's Retry action: the closure inside
+  // startRefresh references startRefresh itself for retry; via ref we
+  // avoid both the TDZ ("Cannot access variable before declared") that
+  // the React 19 compiler flags AND we don't capture a stale callback.
+  const startRefreshRef = useRef<(incremental?: boolean) => void>(() => {})
 
   const startRefresh = useCallback(
     (incremental: boolean = true) => {
@@ -206,7 +217,7 @@ export function useRefreshPipeline({ onOpenDetails }: UseRefreshPipelineOptions)
           sticky: !isTransient,
           retry: () => {
             toast.dismiss(toastId)
-            startRefresh(incremental)
+            startRefreshRef.current(incremental)
           },
         })
       }
@@ -303,6 +314,10 @@ export function useRefreshPipeline({ onOpenDetails }: UseRefreshPipelineOptions)
     },
     [onOpenDetails, queryClient],
   )
+
+  useEffect(() => {
+    startRefreshRef.current = startRefresh
+  }, [startRefresh])
 
   return { startRefresh, isRunning }
 }

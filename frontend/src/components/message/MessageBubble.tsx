@@ -407,16 +407,20 @@ interface CcImageMarkerTextProps {
 }
 
 function CcImageMarkerText({ content, showToolCalls, startCcIndex, onOpenCcImage }: CcImageMarkerTextProps) {
-  CC_IMAGE_MARKER_RE.lastIndex = 0
+  // Use `matchAll` so we don't mutate `CC_IMAGE_MARKER_RE.lastIndex` during
+  // render. The React 19 compiler flags module-scoped mutation as a render-
+  // purity violation (and rightly so — two concurrent renders sharing the
+  // regex's lastIndex would produce torn output). `matchAll` creates a fresh
+  // iterator per call.
   const segments: Array<{ kind: 'text'; value: string } | { kind: 'image'; path: string }> = []
   let lastIndex = 0
-  let match: RegExpExecArray | null
-  while ((match = CC_IMAGE_MARKER_RE.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ kind: 'text', value: content.slice(lastIndex, match.index) })
+  for (const match of content.matchAll(CC_IMAGE_MARKER_RE)) {
+    const matchIndex = match.index ?? 0
+    if (matchIndex > lastIndex) {
+      segments.push({ kind: 'text', value: content.slice(lastIndex, matchIndex) })
     }
     segments.push({ kind: 'image', path: match[1].trim() })
-    lastIndex = match.index + match[0].length
+    lastIndex = matchIndex + match[0].length
   }
   if (lastIndex < content.length) {
     segments.push({ kind: 'text', value: content.slice(lastIndex) })
@@ -579,17 +583,24 @@ function InlineImageBlock({
   source: ContentBlock['source']
   onOpen: () => void
 }) {
-  const [errored, setErrored] = useState(false)
-  const [retried, setRetried] = useState(false)
-  if (!source) return null
-  const src = imageSourceUrl(source)
-  if (!src) return null
+  // Hook order: ALL hooks must run on every render, even when we end up
+  // returning null. Rules-of-hooks violation pre-Task-D: the tombstone
+  // hook was called AFTER the `if (!src) return null` early return. If
+  // a re-render switched `src` between null and non-null (props change),
+  // React would change the hook count and throw / corrupt hook state.
+  // Compute `src` first, then call ALL hooks, then conditionally render.
+  const src = source ? imageSourceUrl(source) : null
   // V1 polish: session-level tombstone after 10 failures stops the
   // browser from re-fetching this URL on every remount. Only network
   // URLs get tombstoned — data: URLs are loaded inline and can't fail
-  // a network request anyway.
-  const isNetworkUrl = !src.startsWith('data:')
-  const tombstoned = useImageFailureTombstone(isNetworkUrl ? src : '')
+  // a network request anyway. Pass empty string for missing/data: URLs
+  // so the hook still runs unconditionally.
+  const isNetworkUrl = src ? !src.startsWith('data:') : false
+  const tombstoned = useImageFailureTombstone(isNetworkUrl && src ? src : '')
+  const [errored, setErrored] = useState(false)
+  const [retried, setRetried] = useState(false)
+  if (!source) return null
+  if (!src) return null
   // P4d: retry once with a cache-buster on the first error, but only for
   // network URLs — base64 / data: URLs can't be cache-busted, so for
   // those we skip straight to the fallback as before.

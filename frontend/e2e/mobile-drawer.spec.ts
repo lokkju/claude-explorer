@@ -17,10 +17,6 @@ test.describe('Mobile responsive layout', () => {
 
   test('sidebar is hidden on mobile by default and hamburger toggles it', async ({ page }) => {
     // Sidebar should not be visible on viewport <768px.
-    const sidebar = page.getByRole('complementary', { name: /claude explorer/i }).or(
-      page.locator('aside').first()
-    );
-
     // Either the aside is fully off-screen (translate-x-full) or absent from layout.
     // We assert visibility via bounding box being out-of-bounds OR display:none.
     const isOffScreen = await page.evaluate(() => {

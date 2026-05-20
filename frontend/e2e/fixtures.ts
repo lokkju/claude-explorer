@@ -194,6 +194,7 @@ export const test = base.extend<Fixtures>({
    */
   context: async ({ context }, use) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- safe: Playwright fixture API `use(value)`, not React.use(). The eslint plugin pattern-matches on the bare name.
     await use(context)
   },
 
@@ -512,6 +513,7 @@ export const test = base.extend<Fixtures>({
         await opts.extraRoutes(page)
       }
     }
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- safe: Playwright fixture API `use(value)`, not React.use(). The eslint plugin pattern-matches on the bare name.
     await use(fn)
   },
 })

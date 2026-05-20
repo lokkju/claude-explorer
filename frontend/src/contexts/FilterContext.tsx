@@ -259,7 +259,6 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     })
     // We deliberately depend ONLY on the inputs that decide whether to
     // migrate. Re-running on every render would cause an infinite write.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersState._migratedV1, legacyFilters, legacyActive, qc])
 
   // v1 → v2 migration (CFR1): `polarity` → `behavior` rename on atoms.
@@ -375,6 +374,7 @@ export function FilterProvider({ children }: { children: ReactNode }) {
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useFilters(): FilterContextType {
   const ctx = useContext(FilterContext)
   if (!ctx) throw new Error('useFilters must be used within a FilterProvider')

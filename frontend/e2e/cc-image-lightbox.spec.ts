@@ -44,9 +44,8 @@ async function trackPopups(page: Page): Promise<{ count: () => number }> {
     popups++
   })
   await page.addInitScript(() => {
-    const orig = window.open
     ;(window as unknown as { __openCalls: number }).__openCalls = 0
-    window.open = (...args: Parameters<typeof orig>) => {
+    window.open = () => {
       ;(window as unknown as { __openCalls: number }).__openCalls++
       return null
     }

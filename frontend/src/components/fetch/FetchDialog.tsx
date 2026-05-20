@@ -48,6 +48,7 @@ const CAPTURE_FETCH_TYPES: readonly string[] = [
   'capture_done',
 ]
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: helper co-located with FetchDialog. HMR falls back to a full reload for this file; no runtime impact.
 export function mapLiveProgressType(rawType: string): LegacyFetchProgress['type'] {
   if (CAPTURE_FETCH_TYPES.includes(rawType)) return 'progress'
   if ((LEGACY_FETCH_TYPES as readonly string[]).includes(rawType)) {
@@ -71,6 +72,7 @@ export function FetchDialog({ isOpen, onClose }: FetchDialogProps) {
   // Check status when dialog opens
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: replace with useQuery on /fetch/status. Today this is a single mount-time async fetch; the setState calls land on a promise resolution AFTER render, no cascade.
       setState('checking')
       api.getFetchStatus()
         .then((status) => {

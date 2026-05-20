@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
   type ReactNode,
@@ -61,6 +62,11 @@ export function FetchPipelineProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const sourceRef = useRef<EventSource | null>(null)
   const toastIdRef = useRef<number | string | null>(null)
+  // Forward-reference for the retry toast: the showErrorByKind closure
+  // calls startRefresh, which is the SAME function being declared via
+  // useCallback. React 19 compiler flags this as a TDZ; the ref breaks
+  // the cycle without changing the runtime call shape.
+  const startRefreshRef = useRef<(incremental?: boolean) => void>(() => {})
 
   const [state, setState] = useState<PipelineState>('idle')
   const [progress, setProgress] = useState<FetchProgress | null>(null)
@@ -116,7 +122,7 @@ export function FetchPipelineProvider({ children }: { children: ReactNode }) {
           sticky: !isTransient,
           retry: () => {
             toast.dismiss(toastId)
-            startRefresh(incremental)
+            startRefreshRef.current(incremental)
           },
         })
       }
@@ -201,6 +207,10 @@ export function FetchPipelineProvider({ children }: { children: ReactNode }) {
     [openDetails, queryClient],
   )
 
+  useEffect(() => {
+    startRefreshRef.current = startRefresh
+  }, [startRefresh])
+
   const isRunning = state === 'running'
 
   return (
@@ -222,6 +232,7 @@ export function FetchPipelineProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useFetchPipeline(): FetchPipelineContextValue {
   const ctx = useContext(FetchPipelineContext)
   if (!ctx) {

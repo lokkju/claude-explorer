@@ -137,13 +137,14 @@ function contentBlockToMarkdown(block: ContentBlock, showToolCalls: boolean): st
     case 'tool_use':
       if (!showToolCalls) return ''
       return `\n\n<details>\n<summary>Tool: ${block.name}</summary>\n\n\`\`\`json\n${JSON.stringify(block.input, null, 2)}\n\`\`\`\n</details>\n`
-    case 'tool_result':
+    case 'tool_result': {
       if (!showToolCalls) return ''
       const textContent = (block.content || [])
         .filter((b) => b.type === 'text')
         .map((b) => b.text)
         .join('\n')
       return `\n\n<details>\n<summary>Tool Result</summary>\n\n\`\`\`\n${textContent}\n\`\`\`\n</details>\n`
+    }
     default:
       return ''
   }

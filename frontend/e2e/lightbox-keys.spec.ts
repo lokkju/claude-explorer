@@ -46,23 +46,6 @@ const m = makeMessage({
 } as Partial<Message> & { uuid: string })
 const detail = makeDetail(summary, [m])
 
-async function openLightbox(page: Page) {
-  await mockBackendThenGo(page)
-  // Click the FIRST inline image to open the lightbox.
-  const tile = page.locator('[data-content-image]').first()
-  await expect(tile).toBeVisible({ timeout: 5000 })
-  await tile.click()
-  const lightbox = page.getByTestId('image-lightbox')
-  await expect(lightbox).toBeVisible()
-  return lightbox
-}
-
-async function mockBackendThenGo(page: Page) {
-  // Helper: shared between tests below.
-  // No-op — caller has already wired the mock.
-  void page
-}
-
 async function openLightboxWithDetailFocus(page: Page) {
   // Force the same precondition as real usage: the user has clicked
   // into the message pane, so focusArea === 'detail'. That's when the

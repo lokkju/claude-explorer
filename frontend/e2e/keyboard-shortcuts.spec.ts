@@ -124,29 +124,6 @@ const searchResultsWithinC1: SearchResult[] = [
   },
 ]
 
-// Two matches across two conversations. Used for B11 cross-conversation jump.
-const searchResultsCrossConv: SearchResult[] = [
-  searchResultsWithinC1[0],
-  {
-    conversation_uuid: C2,
-    conversation_name: c2Summary.name,
-    conversation_updated_at: c2Summary.updated_at,
-    conversation_created_at: c2Summary.created_at,
-    project_name: null,
-    matching_messages: [
-      {
-        // Pretend this message also matches the query for the test.
-        message_uuid: 'c2-m2',
-        sender: 'assistant',
-        snippet: 'There are two hard problems handshake.',
-        match_start: 27,
-        match_end: 36,
-        created_at: c2Messages[1].created_at,
-      },
-    ],
-  },
-]
-
 async function mockSearch(page: Page, results: SearchResult[]) {
   await page.route('**/api/search**', (route) => {
     route.fulfill({

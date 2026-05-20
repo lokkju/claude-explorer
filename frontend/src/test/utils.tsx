@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- safe: test utility file. Re-exports the entire RTL surface alongside a wrapped `render`. NOT a component module; HMR rules are irrelevant. */
 import React, { type ReactElement } from 'react';
 import { render, type RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

@@ -160,7 +160,6 @@ export function ConversationList({
         setSelectedIndex(index)
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedUuid, conversations, setSelectedIndex])
 
   if (isLoading) {
@@ -469,6 +468,12 @@ function VirtualizedFlatList({
     [items]
   )
 
+  // React 19 / React-Compiler warning: `react-hooks/incompatible-library`
+  // — TanStack Virtual's `useVirtualizer()` returns functions that cannot
+  // be safely memoized by the compiler, so this component opts out of
+  // compiler optimization. That's a library-level constraint, not a fix
+  // we can apply locally. The component still works correctly under
+  // React 19's concurrent renderer; we just don't get auto-memoization.
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollEl,

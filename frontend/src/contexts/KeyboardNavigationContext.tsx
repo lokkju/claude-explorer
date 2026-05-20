@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 
 export type FocusArea = 'list' | 'detail' | 'search' | 'none'
 
@@ -88,10 +88,17 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
   // Read prev state through refs so the callback identity is stable
   // (no re-creation on every selectedMessageIndex change), which
   // prevents the consumer's useEffect from firing extra times.
+  // Refs are written in a layout-equivalent effect so the React 19
+  // compiler does not flag a render-time ref mutation. Effect timing:
+  // the writes complete BEFORE the consumer's useEffect reads them
+  // because setMessagesAndPinSelection is only invoked from user-event
+  // callbacks (Enter/Esc/Arrow), never during the same render pass.
   const messagesRef = useRef<MessageInfo[]>([])
   const selectedMessageIndexRef = useRef(0)
-  messagesRef.current = messages
-  selectedMessageIndexRef.current = selectedMessageIndex
+  useEffect(() => {
+    messagesRef.current = messages
+    selectedMessageIndexRef.current = selectedMessageIndex
+  }, [messages, selectedMessageIndex])
 
   const setMessagesAndPinSelection = useCallback((next: MessageInfo[]) => {
     const prev = messagesRef.current
@@ -257,6 +264,7 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useKeyboardNavigation() {
   const context = useContext(KeyboardNavigationContext)
   if (!context) {

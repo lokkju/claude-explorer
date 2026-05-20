@@ -82,6 +82,7 @@ export function BookmarkProvider({ children }: { children: ReactNode }) {
   return <BookmarkContext.Provider value={value}>{children}</BookmarkContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. Splitting would force every consumer to re-import. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useBookmarks(): BookmarkContextType {
   const ctx = useContext(BookmarkContext)
   if (!ctx) throw new Error('useBookmarks must be used within a BookmarkProvider')

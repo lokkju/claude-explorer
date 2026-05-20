@@ -76,6 +76,7 @@ export function SearchPinProvider({ children }: { children: ReactNode }) {
 
   // React to React Router navigation AND browser back/forward.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: derive scope from useLocation() directly. Today this is "sync to external state (URL) on change" — bounded cascade.
     setScope(readScopeFromUrl())
   }, [location.pathname, location.search])
 
@@ -110,6 +111,7 @@ export function SearchPinProvider({ children }: { children: ReactNode }) {
   return <SearchPinContext.Provider value={value}>{children}</SearchPinContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload; no runtime impact.
 export function useSearchPin(): SearchPinContextValue {
   const ctx = useContext(SearchPinContext)
   if (!ctx) {

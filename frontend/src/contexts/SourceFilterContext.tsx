@@ -40,6 +40,7 @@ export function SourceFilterProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload; no runtime impact.
 export function useSourceFilter() {
   const context = useContext(SourceFilterContext)
   if (!context) {

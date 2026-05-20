@@ -79,7 +79,7 @@ function makeQc() {
 // reassignment of a module-scoped binding.
 const probeHolder: { current: ReturnType<typeof useFilters> | null } = { current: null };
 function Probe() {
-  // eslint-disable-next-line react-hooks/globals
+  // eslint-disable-next-line react-hooks/immutability -- safe: test probe assigning to a module-scoped holder so the test body can read the live hook value. Production code MUST NOT do this.
   probeHolder.current = useFilters();
   return null;
 }

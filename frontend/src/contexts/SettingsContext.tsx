@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- safe: context Provider, hook, and three runtime predicates (isTheme/isKeyboardMode/isMarkdownDialect) co-located by intent. The predicates pair-narrow the Settings unions; splitting them into a separate file would force every consumer to track two imports. HMR fast refresh falls back to full reload for this file; no runtime impact. */
 import { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react'
 import type { SortField, SortOrder } from '@/lib/types'
 import { usePreferences } from '@/hooks/usePreferences'

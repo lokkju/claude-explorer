@@ -52,6 +52,7 @@ const MARKDOWN_EXPORT_MODES: readonly MarkdownExportMode[] = [
   'bundle-obsidian',
 ]
 
+// eslint-disable-next-line react-refresh/only-export-components -- safe: helper predicate co-located with the dialog component that consumes it. HMR fast refresh falls back to a full reload for this file; no runtime impact.
 export function isMarkdownExportMode(v: unknown): v is MarkdownExportMode {
   return (
     typeof v === 'string' &&
