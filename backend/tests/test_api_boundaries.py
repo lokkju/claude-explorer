@@ -133,3 +133,69 @@ def test_fetch_refresh_rejects_oversized_limit():
     client = TestClient(app)
     r = client.get("/api/fetch/refresh?limit=5001")
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Hunt #6 — `extra='forbid'` on SearchRequest (POST /api/search body).
+#
+# Pydantic v2's default `extra='ignore'` silently drops unknown fields. For
+# a Query endpoint the failure mode is subtler than for a Mutation, but
+# still real: a typo on an OPTIONAL field that has a default returns 200
+# OK with the field silently using the default. The canonical example is
+# `{"q": "...", "sort_orderr": "asc"}` — the typo collapses to the
+# `sort_order="desc"` default, so the user gets results in the OPPOSITE
+# order they asked for, with no signal.
+#
+# Local single-user app, no external HTTP callers (mcp_server uses the
+# Python API directly), so this is a safe tightening. The matching
+# regression pin (`test_post_search_valid_body_still_accepted`) ensures
+# the legitimate POST shape from `lib/api.ts:search()` keeps working.
+# ---------------------------------------------------------------------------
+
+
+def test_post_search_unknown_field_returns_422():
+    """A typo'd top-level field on POST /api/search must 422.
+
+    Pre-`forbid`, a request like ``{"q": "x", "sort_orderr": "asc"}``
+    returned 200 OK with sort_order silently defaulting to "desc" —
+    a wrong-data-no-signal bug.
+    """
+    client = TestClient(app)
+    r = client.post("/api/search", json={"q": "x", "sort_orderr": "asc"})
+    assert r.status_code == 422, (
+        f"unknown POST /api/search field must 422; got {r.status_code}: "
+        f"{r.text[:200]}"
+    )
+    detail = r.json().get("detail", [])
+    assert any(
+        "sort_orderr" in str(e) or "extra_forbidden" in str(e).lower()
+        for e in (detail if isinstance(detail, list) else [detail])
+    ), f"422 detail should reference the offending field: {r.json()!r}"
+
+
+def test_post_search_valid_body_still_accepted():
+    """Bidirectional pair: a legitimate POST body still 200s post-forbid.
+
+    Mirrors the exact shape `frontend/src/lib/api.ts:search()` sends
+    when `conversationUuids` is defined (the only POST trigger path).
+    Without this, a future regression that tightened the schema (e.g.
+    required `q` AND `source`) would slip past the unknown-field
+    test alone.
+    """
+    client = TestClient(app)
+    r = client.post(
+        "/api/search",
+        json={
+            "q": "x",
+            "source": "all",
+            "context_size": "snippet",
+            "sort": "updated_at",
+            "sort_order": "desc",
+            "include_tool_calls": True,
+            "conversation_uuids": [],  # empty -> short-circuits to []
+        },
+    )
+    assert r.status_code == 200, (
+        f"valid POST body must still 200 post-forbid; got {r.status_code}: "
+        f"{r.text[:200]}"
+    )

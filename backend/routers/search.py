@@ -20,7 +20,7 @@ identical kwargs — only the transport differs.
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..deps import get_store
 from ..models import SearchResponse
@@ -135,6 +135,19 @@ class SearchRequest(BaseModel):
     whole point of having a POST variant. Spec §2 (2026-05-14, Council
     convergence): GET CSV blows past URL-length limits at ~1500 UUIDs.
     """
+
+    # Hunt #6: forbid unknown top-level fields. The typical Query-endpoint
+    # default of ``extra='ignore'`` would silently drop a typo on an
+    # optional field — e.g. ``{"q": "x", "sort_orderr": "asc"}`` collapses
+    # to the ``sort_order="desc"`` default, so the user gets results in
+    # the OPPOSITE order they asked for with no signal at all. This is a
+    # wrong-data-no-signal bug; forbid converts it to a 422 at the wire
+    # boundary. Local single-user app, no documented external HTTP
+    # callers (mcp_server uses ``backend.search.search_conversations`` as
+    # a direct Python import — see mcp_server/server.py line ~32), so
+    # tightening the contract is safe. See
+    # ``test_post_search_unknown_field_returns_422``.
+    model_config = ConfigDict(extra="forbid")
 
     q: str = Field(..., min_length=1, description="Search query")
     source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all"

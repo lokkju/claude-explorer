@@ -29,7 +29,7 @@ from typing import Literal
 
 import orjson
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,16 @@ class Bookmark(BaseModel):
 
 
 class BookmarkCreate(BaseModel):
+    # ``extra='forbid'`` mirrors ``PreferencesWrite``: a typo'd field on a
+    # mutation endpoint (e.g. ``{"notee": "x"}``) used to return 201 with
+    # the field silently dropped — the user sees "saved" but their input
+    # never persisted. Forbid turns the typo into a 422 at the wire
+    # boundary. The frontend's only documented caller sends exactly
+    # ``Omit<Bookmark, 'id' | 'created_at'>`` (lib/api.ts:createBookmark),
+    # so this is a tightening with no known caller breakage. See
+    # ``test__create_bookmark__unknown_field__returns_422``.
+    model_config = ConfigDict(extra="forbid")
+
     conversation_id: str
     message_uuid: str
     source: Literal["claude_desktop", "claude_code"]
@@ -78,6 +88,12 @@ class BookmarkCreate(BaseModel):
 
 
 class BookmarkUpdate(BaseModel):
+    # Same rationale as ``BookmarkCreate`` — PATCH is the worst-case
+    # silent-drop surface because the route returns 200 OK with the
+    # bookmark unchanged when the caller PATCHes an unknown field. See
+    # ``test__update_bookmark__unknown_field__returns_422``.
+    model_config = ConfigDict(extra="forbid")
+
     note: str | None = None
     snippet: str | None = None
 

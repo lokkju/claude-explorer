@@ -180,6 +180,92 @@ def test__post_bookmark__os_replace_fails__no_tmp_leak(client_with_bookmarks, mo
     assert leaked == [], f"leaked tmp files after failed atomic write: {leaked}"
 
 
+# ---------------------------------------------------------------------------
+# Hunt #6 — `extra='forbid'` on BookmarkCreate / BookmarkUpdate.
+#
+# Pydantic v2's default `extra='ignore'` silently drops unknown fields on a
+# POST / PATCH body. For a mutation endpoint that's a silent-data-loss bug:
+# a frontend typo (`{"notee": "x"}`) on PATCH returns 200 OK with the field
+# unchanged. The user sees "saved" and thinks the note was updated.
+#
+# `extra='forbid'` turns the typo into a 422 at the wire boundary, mirroring
+# `PreferencesWrite` (see `test_patch_preferences_unknown_field_returns_422`).
+# Bookmarks are the second user-input write surface on the backend; the
+# rationale is identical.
+# ---------------------------------------------------------------------------
+
+
+def test__create_bookmark__unknown_field__returns_422(client_with_bookmarks):
+    """POST with a typo'd field must return 422 (silent-drop guard).
+
+    The pre-`forbid` default silently dropped `notee` and stored the
+    bookmark with `note=""` — a successful 201 that doesn't match the
+    user's intent.
+    """
+    client, _ = client_with_bookmarks
+    r = client.post(
+        "/api/bookmarks",
+        json={
+            "conversation_id": "c",
+            "message_uuid": "m",
+            "source": "claude_code",
+            "snippet": "s",
+            "notee": "typo lives here",
+        },
+    )
+    assert r.status_code == 422, (
+        f"unknown field on POST must 422; got {r.status_code}: {r.text}"
+    )
+    detail = r.json().get("detail", [])
+    assert any(
+        "notee" in str(e) or "extra_forbidden" in str(e).lower()
+        for e in (detail if isinstance(detail, list) else [detail])
+    ), f"422 detail should reference the offending field: {r.json()!r}"
+
+
+def test__update_bookmark__unknown_field__returns_422(client_with_bookmarks):
+    """PATCH with a typo'd field must return 422.
+
+    Update is the worst-case silent-drop: a `{"notee": "new"}` PATCH
+    used to return 200 OK with the bookmark unchanged.
+    """
+    client, _ = client_with_bookmarks
+    # Seed a real bookmark so the route path resolves to the validator.
+    r = client.post(
+        "/api/bookmarks",
+        json={"conversation_id": "c", "message_uuid": "m", "source": "claude_code"},
+    )
+    assert r.status_code == 201
+    bid = r.json()["id"]
+
+    r2 = client.patch(f"/api/bookmarks/{bid}", json={"notee": "typo"})
+    assert r2.status_code == 422, (
+        f"unknown field on PATCH must 422; got {r2.status_code}: {r2.text}"
+    )
+    detail = r2.json().get("detail", [])
+    assert any(
+        "notee" in str(e) or "extra_forbidden" in str(e).lower()
+        for e in (detail if isinstance(detail, list) else [detail])
+    ), f"422 detail should reference the offending field: {r2.json()!r}"
+
+
+def test__update_bookmark__valid_partial_still_accepted(client_with_bookmarks):
+    """Sanity pin: a real partial-update body still 200s post-forbid.
+
+    Without this, a future regression could tighten the schema to require
+    BOTH `note` and `snippet` and this file's other tests would still pass.
+    """
+    client, _ = client_with_bookmarks
+    r = client.post(
+        "/api/bookmarks",
+        json={"conversation_id": "c", "message_uuid": "m", "source": "claude_code"},
+    )
+    bid = r.json()["id"]
+    r2 = client.patch(f"/api/bookmarks/{bid}", json={"note": "valid"})
+    assert r2.status_code == 200, f"valid partial PATCH must still 200: {r2.text}"
+    assert r2.json()["note"] == "valid"
+
+
 def test__write_uses_orjson__unicode_preserved_and_trailing_newline(
     client_with_bookmarks,
 ):
