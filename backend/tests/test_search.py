@@ -148,18 +148,29 @@ def test_search_is_case_insensitive(search_data_dir):
 def test_search_envelope_shape(search_data_dir):
     """SearchResponse envelope contract: results / total_messages_matched /
     returned_messages / truncated. Frontend Truncation footer + MCP
-    pagination depend on these fields existing on every response.
+    pagination depend on these fields existing on every response AND
+    being the right TYPE — otherwise a regression that returned
+    ``total_messages_matched`` as a string ``"0"`` or ``results`` as a
+    dict instead of a list would slip through.
+
+    The previous version asserted only ``"key" in body`` for three of
+    the four fields; Critic's call-out (LLM council 2026-05-18 None-
+    safety audit) was that key-existence without type validation is a
+    rubber stamp on the envelope contract. Pin every field type.
     """
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "alphaneedle"})
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body, dict)
-    assert "results" in body
-    assert "total_messages_matched" in body
-    assert "returned_messages" in body
-    assert "truncated" in body
-    assert isinstance(body["truncated"], bool)
+    assert "results" in body and isinstance(body["results"], list)
+    assert "total_messages_matched" in body and isinstance(
+        body["total_messages_matched"], int
+    )
+    assert "returned_messages" in body and isinstance(
+        body["returned_messages"], int
+    )
+    assert "truncated" in body and isinstance(body["truncated"], bool)
 
 
 def test_search_requires_query():

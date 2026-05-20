@@ -345,7 +345,12 @@ describe('messageToMarkdown — null-text safety (mirrors backend H1-H4)', () =>
   })
 
   it('does NOT throw when message.text is undefined and content[] is absent', () => {
-    // @ts-expect-error — deliberate type-system bypass to simulate API drift
+    // Note: `Partial<Message>` allows `text: undefined` at the type
+    // level (Partial widens every required field to T | undefined),
+    // so no @ts-expect-error needed. But the runtime guard still
+    // matters: the production messageToMarkdown reads message.text
+    // through a typed assertion that says `string`, so an undefined
+    // leak would still crash without the `?? ''` coalesce.
     const m = makeMessage({ uuid: 'u1', sender: 'assistant', text: undefined, content: [] })
     expect(() => messageToMarkdown(m, false)).not.toThrow()
     const md = messageToMarkdown(m, false)

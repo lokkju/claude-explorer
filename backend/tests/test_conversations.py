@@ -99,23 +99,97 @@ def title_filter_data_dir(tmp_path, monkeypatch):
     cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
 
 
-# ---------- Original smoke tests (kept; widened to assert non-empty) ----------
+# ---------- Schema + 404 contracts (hermetic; no developer-disk dependency) ----------
 
 
-def test_list_conversations(client):
-    """Smoke: endpoint returns a list."""
+def test_list_conversations_schema_contract(title_filter_data_dir):
+    """Pin the EXACT serialized shape of one row from ``/api/conversations``.
+
+    This test is intentionally fragile and breaks loudly on any change to
+    the ``ConversationListItem`` schema. That is a feature, not a bug: a
+    silently renamed or dropped field on the public wire format would
+    otherwise pass the bidirectional needle-filter tests below (which
+    only assert ``uuids == [...]``).
+
+    Replaces the previous ``test_list_conversations`` which was a
+    rubber-stamp: it asserted only ``status_code == 200`` plus
+    ``isinstance(response.json(), list)`` against the developer's REAL
+    ``~/.claude-explorer/conversations`` (no isolation fixture). That test
+    would have passed against a broken implementation that returned
+    ``[]`` for every query, returned everything regardless of query, or
+    silently renamed every field on every row.
+
+    Dynamic-timestamp note: ``created_at`` / ``updated_at`` are popped
+    before the dict-equality and validated only as parseable ISO-8601
+    strings, because Pydantic's exact wire format (Z vs +00:00, etc.)
+    can drift between library versions. The static schema fields are
+    pinned verbatim.
+    """
+    from datetime import datetime
+
+    client = TestClient(app)
     response = client.get("/api/conversations")
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    assert response.status_code == 200, response.text
+
+    convs = {c["uuid"]: c for c in response.json()}
+    assert "conv-name" in convs, (
+        f"seeded conversation 'conv-name' missing from response; got {list(convs)}"
+    )
+    apple_conv = convs["conv-name"]
+
+    # Pop + validate dynamic fields separately so a Pydantic
+    # serialization-format change doesn't break the contract pin.
+    created_at = apple_conv.pop("created_at")
+    updated_at = apple_conv.pop("updated_at")
+    assert isinstance(created_at, str)
+    assert isinstance(updated_at, str)
+    # datetime.fromisoformat handles both "Z" and "+00:00" suffixes on
+    # Python 3.11+. The replace() is belt-and-suspenders for older
+    # interpreters that don't accept the Z suffix natively.
+    assert datetime.fromisoformat(created_at.replace("Z", "+00:00")).tzinfo is not None
+    assert datetime.fromisoformat(updated_at.replace("Z", "+00:00")).tzinfo is not None
+
+    # Exhaustive dict-equality on the static fields. Mirrors the
+    # ConversationListItem schema in backend/models.py:78-127 exactly.
+    # If a field is added/renamed/dropped on the model, this assertion
+    # fails and the test author is forced to think through whether the
+    # public wire shape change is intentional.
+    assert apple_conv == {
+        "uuid": "conv-name",
+        "name": "applekey title goes here",
+        "model": "claude-sonnet-4-6",
+        "is_starred": False,
+        "message_count": 1,
+        "has_branches": False,
+        "source": "CLAUDE_AI",
+        "project_path": None,
+        "project_name": None,
+        "organization_id": None,
+        "organization_name": None,
+        "subagents": [],
+    }
 
 
-def test_get_conversation_not_found(client):
+def test_get_conversation_not_found(title_filter_data_dir):
+    """404 on a UUID that does not exist in an ISOLATED, known-empty corpus.
+
+    Previously used the unfixtured ``client`` against the developer's
+    real ``~/.claude-explorer/conversations``; harmless in practice
+    (the literal ``"nonexistent-uuid"`` collides with nothing) but
+    violates hermetic-test discipline. The fixture pins the corpus to
+    three known UUIDs (``conv-name`` / ``conv-summary`` / ``conv-path``)
+    so ``nonexistent-uuid`` is guaranteed absent regardless of the
+    developer's disk state.
+    """
+    client = TestClient(app)
     response = client.get("/api/conversations/nonexistent-uuid")
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
 
 
-def test_get_conversation_tree_not_found(client):
+def test_get_conversation_tree_not_found(title_filter_data_dir):
+    """Same hermetic-isolation rationale as ``test_get_conversation_not_found``."""
+    client = TestClient(app)
     response = client.get("/api/conversations/nonexistent-uuid/tree")
     assert response.status_code == 404
 
@@ -348,3 +422,149 @@ def test_sidebar_search_sort_orders_results(title_filter_data_dir):
     assert asc_names == list(reversed(desc_names)), (
         f"asc={asc_names} ; desc={desc_names}"
     )
+
+
+# ---------------------------------------------------------------------------
+# ?starred= and ?model= filter contracts (bidirectional)
+#
+# Previously: zero tests for either filter. Both flow through
+# ``store.list_conversations`` at backend/store.py:431-434 — a regression
+# that made either filter a no-op (returning everything regardless of the
+# query parameter) would have passed the test suite.
+#
+# Added in the LLM council None-safety audit follow-up because the
+# bug-class that caused the search crash was identical in shape: silent
+# filter regression with no content-based test pinning the contract.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def starred_model_data_dir(tmp_path, monkeypatch):
+    """Three Desktop conversations with orthogonal (is_starred, model) tags:
+
+      * conv-star-sonnet: is_starred=True,  model="claude-sonnet-4-6"
+      * conv-plain-sonnet: is_starred=False, model="claude-sonnet-4-6"
+      * conv-plain-opus:   is_starred=False, model="claude-opus-4-7"
+
+    Lets each filter test assert that a query for X returns ONLY the
+    conversations matching X — bidirectional with a non-match assertion
+    that pins the "always-return-everything" failure mode.
+    """
+    convs = [
+        {**_conv("conv-star-sonnet", "starred sonnet conv"), "is_starred": True,
+         "model": "claude-sonnet-4-6"},
+        {**_conv("conv-plain-sonnet", "plain sonnet conv"), "is_starred": False,
+         "model": "claude-sonnet-4-6"},
+        {**_conv("conv-plain-opus", "plain opus conv"), "is_starred": False,
+         "model": "claude-opus-4-7"},
+    ]
+    by_org = tmp_path / "by-org" / "org-1"
+    by_org.mkdir(parents=True)
+    for c in convs:
+        (by_org / f"{c['uuid']}.json").write_text(json.dumps(c))
+    empty_claude = tmp_path / "claude-empty"
+    empty_claude.mkdir()
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_DIR", str(empty_claude))
+    cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
+    _conversation_cache.clear()
+    yield tmp_path
+    _conversation_cache.clear()
+    cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
+
+
+def test_starred_filter_true_returns_only_starred(starred_model_data_dir):
+    """``?starred=true`` returns ONLY the starred conversation.
+
+    A no-op regression in the filter (always returns everything) would
+    yield all 3 conversations and fail this test.
+    """
+    client = TestClient(app)
+    r = client.get("/api/conversations", params={"starred": "true"})
+    assert r.status_code == 200
+    uuids = sorted(c["uuid"] for c in r.json())
+    assert uuids == ["conv-star-sonnet"], uuids
+
+
+def test_starred_filter_false_returns_only_unstarred(starred_model_data_dir):
+    """``?starred=false`` returns ONLY the unstarred conversations.
+
+    Bidirectional with ``test_starred_filter_true_returns_only_starred``:
+    if the filter is broken in the "always-return-everything" direction,
+    one of these two tests fails. If broken in the "always-return-empty"
+    direction, both fail.
+    """
+    client = TestClient(app)
+    r = client.get("/api/conversations", params={"starred": "false"})
+    assert r.status_code == 200
+    uuids = sorted(c["uuid"] for c in r.json())
+    assert uuids == ["conv-plain-opus", "conv-plain-sonnet"], uuids
+
+
+def test_starred_filter_unset_returns_all(starred_model_data_dir):
+    """No ``?starred=`` parameter → all conversations (filter is opt-in)."""
+    client = TestClient(app)
+    r = client.get("/api/conversations")
+    assert r.status_code == 200
+    uuids = sorted(c["uuid"] for c in r.json())
+    assert uuids == ["conv-plain-opus", "conv-plain-sonnet", "conv-star-sonnet"], uuids
+
+
+def test_model_filter_matches_exact(starred_model_data_dir):
+    """``?model=claude-sonnet-4-6`` returns only the two sonnet conversations.
+
+    Pins the EXACT-match contract: the store uses ``data.get("model") !=
+    model`` for filtering (backend/store.py:433), so the filter is
+    case-sensitive and does not prefix-match. Both ``claude-sonnet-4-6``
+    rows survive; the opus row is excluded.
+    """
+    client = TestClient(app)
+    r = client.get("/api/conversations", params={"model": "claude-sonnet-4-6"})
+    assert r.status_code == 200
+    uuids = sorted(c["uuid"] for c in r.json())
+    assert uuids == ["conv-plain-sonnet", "conv-star-sonnet"], uuids
+
+
+def test_model_filter_opus_returns_only_opus(starred_model_data_dir):
+    """Bidirectional with the sonnet match: ``?model=claude-opus-4-7``
+    returns ONLY the opus conversation. The two together prove the
+    filter is reading the parameter, not ignoring it.
+    """
+    client = TestClient(app)
+    r = client.get("/api/conversations", params={"model": "claude-opus-4-7"})
+    assert r.status_code == 200
+    uuids = sorted(c["uuid"] for c in r.json())
+    assert uuids == ["conv-plain-opus"], uuids
+
+
+def test_model_filter_nonmatching_returns_empty(starred_model_data_dir):
+    """``?model=claude-nonexistent-model`` returns []. Pins the
+    "always-return-everything" failure mode: if the filter is a no-op,
+    this test fails because all 3 conversations are returned.
+    """
+    client = TestClient(app)
+    r = client.get(
+        "/api/conversations",
+        params={"model": "claude-nonexistent-model"},
+    )
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_starred_and_model_filters_compose(starred_model_data_dir):
+    """``?starred=true&model=claude-sonnet-4-6`` returns ONLY the
+    intersection. If either filter is broken, this fails:
+
+      * Broken ``starred`` → returns both sonnet conversations.
+      * Broken ``model``   → returns only the starred conversation but
+        with the wrong shape (would match if both opus and sonnet
+        starred convs existed).
+    """
+    client = TestClient(app)
+    r = client.get(
+        "/api/conversations",
+        params={"starred": "true", "model": "claude-sonnet-4-6"},
+    )
+    assert r.status_code == 200
+    uuids = sorted(c["uuid"] for c in r.json())
+    assert uuids == ["conv-star-sonnet"], uuids

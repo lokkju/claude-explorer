@@ -299,16 +299,32 @@ test.describe('Accessibility', () => {
   });
 
   test('form inputs have associated labels or placeholders', async ({ page, mockBackend }) => {
+    // 2026-05-18 council audit: the prior assertion called
+    // `getByPlaceholder('Search titles and projects')` then asserted
+    // `toBeTruthy()` on the result of `getAttribute('placeholder')`.
+    // That second assertion was tautological: `getByPlaceholder()`
+    // already throws if the placeholder doesn't exactly match, so the
+    // `toBeTruthy()` would never see a falsy value.
+    //
+    // Replaced with an exact-value assertion AND a check that the
+    // input is reachable by keyboard (its accessible name is the
+    // placeholder, by convention; this proves a screen reader user
+    // hears the same label the visual user sees).
     await mockBackend({});
     await page.goto('/');
 
-    // Search input should have placeholder
     const searchInput = page.getByPlaceholder('Search titles and projects');
     await expect(searchInput).toBeVisible();
-
-    // Placeholder serves as accessible name
-    const placeholder = await searchInput.getAttribute('placeholder');
-    expect(placeholder).toBeTruthy();
+    // Pin the EXACT placeholder copy. A regression that renamed the
+    // placeholder ("Search conversations…" was the legacy copy) would
+    // fail here loudly instead of silently passing.
+    await expect(searchInput).toHaveAttribute(
+      'placeholder',
+      'Search titles and projects',
+    );
+    // Element is focusable — keyboard users can reach it.
+    await searchInput.focus();
+    await expect(searchInput).toBeFocused();
   });
 
   // B9 — Cmd+R (or Ctrl+R) is intercepted: it triggers a React Query
