@@ -217,10 +217,18 @@ def test__proxy__local_fallback_glob__single_dotdot_stays_in_root(
     # the attachments root is served".
     if resp.status_code == 200:
         # Glob matched. Verify the served bytes came from INSIDE the
-        # attachments tree, not from some surprising outside-root
-        # location.
-        assert resp.content.startswith(LEAK_MAGIC) or len(resp.content) > 0, (
-            f"unexpected empty 200; status={resp.status_code}"
+        # attachments tree — i.e. the planted LEAK_MAGIC sentinel.
+        # The earlier `or len(resp.content) > 0` clause was a dead
+        # branch: any non-empty 200 response satisfied it, so a
+        # regression that returned an unrelated single byte like
+        # b'?' would silently pass. Tightened per /code-audit Hunt
+        # #14 (rubber-stamps) Round-2 Critic finding. The sibling
+        # test `test__proxy__local_fallback_glob__outside_root_never
+        # _served` still pins the primary security contract (no
+        # outside-root file served).
+        assert resp.content.startswith(LEAK_MAGIC), (
+            f"served bytes did not start with planted LEAK_MAGIC; "
+            f"status={resp.status_code}, first_bytes={resp.content[:32]!r}"
         )
         # The fact that we're serving root-level files via this
         # codepath is documented behavior, not a vulnerability.

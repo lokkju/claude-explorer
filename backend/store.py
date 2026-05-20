@@ -595,10 +595,66 @@ class ConversationStore:
         # which goes through FileCache; CC was missed when the cache
         # wrapper was added in a prior refactor. See
         # PLANS/PERFORMANCE_PHASE_2.md §Workstream C1.
-        for jsonl_path in discover_jsonl_files(self.claude_dir):
+        #
+        # Two-pass lookup (2026-05-18):
+        #   Pass A (fast): try `jsonl_path.stem == uuid` and confirm the
+        #   internal sessionId also matches. Catches the common case
+        #   where CC named the file by its own session id.
+        #
+        #   Pass B (fallback): scan all CC files via the summary cache
+        #   and match on the internal `sessionId`. Required because a
+        #   "continued session" file's filename stem can differ from
+        #   its internal sessionId — e.g. file `816c6dbf-….jsonl` whose
+        #   first user entry has sessionId `908533b6-…`. The sidebar
+        #   LIST endpoint reports the INTERNAL sessionId (since
+        #   ``read_conversation_summary_fast`` returns
+        #   ``first_user.get('sessionId', jsonl_path.stem)``), so the
+        #   user clicks a sidebar row with uuid X and we MUST find the
+        #   file whose internal sessionId equals X — not the file
+        #   whose FILENAME equals X. Without Pass B, those clicks 404.
+        cc_files = list(discover_jsonl_files(self.claude_dir))
+
+        for jsonl_path in cc_files:
             if jsonl_path.stem == uuid:
                 data = _load_conversation_cached(jsonl_path)
                 if data and data.get("uuid") == uuid:
+                    return data, jsonl_path
+
+        # Pass B: scan via summary cache (warm: in-memory bulk SELECT;
+        # cold: misses repopulate as a side effect — acceptable since
+        # detail-page misses are user-driven, not bulk).
+        from .summary_cache import get_summary_cache
+        from .cc_jsonl_io import read_conversation_summary_fast
+
+        summary_cache = get_summary_cache()
+        stat_index: dict[Path, Any] = {}
+        for p in cc_files:
+            try:
+                stat_index[p] = p.stat()
+            except OSError:
+                continue
+
+        if summary_cache is not None:
+            cached = summary_cache.get_many(cc_files, stat_index)
+            for jsonl_path, summary in cached.items():
+                if summary and summary.get("uuid") == uuid:
+                    data = _load_conversation_cached(jsonl_path)
+                    if data:
+                        return data, jsonl_path
+
+        # Final fallback (cache unavailable OR cache miss across the
+        # board): scan paths directly with the fast reader. Slower but
+        # never silently returns 404 when the data IS on disk.
+        for jsonl_path in cc_files:
+            if jsonl_path.stem == uuid:
+                continue  # already tried in Pass A
+            try:
+                summary = read_conversation_summary_fast(jsonl_path)
+            except Exception:
+                continue
+            if summary and summary.get("uuid") == uuid:
+                data = _load_conversation_cached(jsonl_path)
+                if data:
                     return data, jsonl_path
 
         return None, None
