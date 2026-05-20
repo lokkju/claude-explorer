@@ -66,13 +66,24 @@ export const api = {
   getConversationTree: (uuid: string): Promise<ConversationTree> =>
     fetchJson<ConversationTree>(`/conversations/${uuid}/tree`),
 
-  search: (
+  search: async (
     query: string,
     source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE',
     contextSize: 'snippet' | 'full',
     sort: SortField,
     sortOrder: SortOrder,
-    scope: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] } | undefined,
+    scope: {
+      conversationUuid?: string
+      projectPath?: string
+      bookmarks?: string[]
+      // 2026-05-14 (sidebar-scope propagation): Workspace dropdown and
+      // active-filter graph propagate to search via these.
+      organizationId?: string | null
+      // The set of UUIDs that pass the active-filter graph. undefined
+      // means "no constraint"; empty array means "filter excludes
+      // everything" (backend short-circuits to []). Spec §2.
+      conversationUuids?: string[]
+    } | undefined,
     // 2026-05-11: REQUIRED, no default. The backend default is True (for
     // backward compat with external scripts hitting /api/search), but every
     // in-app call site MUST pass the user's showToolCalls preference so
@@ -81,6 +92,44 @@ export const api = {
     // that forgets to wire useSettings().showToolCalls.
     includeToolCalls: boolean,
   ): Promise<SearchResult[]> => {
+    // Transport choice (spec §2, 2026-05-14): GET CSV is unsafe past
+    // ~6 KB of UUIDs. When `conversationUuids` is set AND non-trivially
+    // sized, use POST with a JSON body. The backend supports both with
+    // identical semantics — only the wire format differs.
+    //
+    // Threshold: any non-empty conversationUuids list switches to POST.
+    // Empty array (filter excludes everything) — POST too, so the backend's
+    // empty-set short-circuit fires uniformly. Absent (undefined) — GET.
+    const usePost = scope?.conversationUuids !== undefined
+    if (usePost) {
+      const body: Record<string, unknown> = {
+        q: query,
+        source,
+        context_size: contextSize,
+        sort,
+        sort_order: sortOrder,
+        include_tool_calls: includeToolCalls,
+      }
+      if (scope?.conversationUuid) body.conversation_uuid = scope.conversationUuid
+      if (scope?.projectPath) body.project_path = scope.projectPath
+      if (scope?.bookmarks && scope.bookmarks.length > 0) {
+        body.bookmarks = scope.bookmarks
+      }
+      if (scope?.organizationId) body.organization_id = scope.organizationId
+      // Always include conversation_uuids in POST (transport invariant:
+      // POST is reserved for the active-filter case).
+      body.conversation_uuids = scope?.conversationUuids ?? []
+      const res = await fetch(`${BASE_URL}/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        throw new ApiError(res.status, await res.text())
+      }
+      return res.json() as Promise<SearchResult[]>
+    }
+
     const params = new URLSearchParams({ q: query })
     if (source !== 'all') params.set('source', source)
     if (contextSize !== 'snippet') params.set('context_size', contextSize)
@@ -91,6 +140,7 @@ export const api = {
     if (scope?.bookmarks && scope.bookmarks.length > 0) {
       params.set('bookmarks', scope.bookmarks.join(','))
     }
+    if (scope?.organizationId) params.set('organization_id', scope.organizationId)
     // Only append the query param when filtering — keeps URLs short
     // for the common-case (tool calls visible) request.
     if (!includeToolCalls) params.set('include_tool_calls', 'false')

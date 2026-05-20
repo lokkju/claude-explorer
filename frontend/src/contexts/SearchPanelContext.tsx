@@ -7,11 +7,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useSearch } from '@/hooks/useConversations'
+import { useConversations, useSearch } from '@/hooks/useConversations'
 import { useSourceFilter } from '@/contexts/SourceFilterContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { useSettings } from '@/contexts/SettingsContext'
+import { useFilters } from '@/contexts/FilterContext'
+import { applyActiveFilter } from '@/lib/filterEngine'
 import { usePreferences } from '@/hooks/usePreferences'
 import type { SearchResult, SortField, SortOrder } from '@/lib/types'
 
@@ -73,7 +75,7 @@ interface SearchPanelContextType {
 const SearchPanelContext = createContext<SearchPanelContextType | null>(null)
 
 export function SearchPanelProvider({ children }: { children: ReactNode }) {
-  const { sourceFilter } = useSourceFilter()
+  const { sourceFilter, organizationId } = useSourceFilter()
   const { scope: pinScope } = useSearchPin()
   const { bookmarks } = useBookmarks()
   // 2026-05-11: thread the UI's "Show tool calls" pref into search so
@@ -81,6 +83,29 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // the conversation pane. When the toggle flips, useSearch's queryKey
   // changes and the network call re-fires automatically.
   const { showToolCalls } = useSettings()
+  // 2026-05-14 sidebar-scope propagation: the active-filter graph lives
+  // in FilterContext, the sidebar applies it client-side via
+  // applyActiveFilter(). For search to honor the SAME predicate, we
+  // need the conversation list (post source + workspace) and the filter
+  // state. The list comes from useConversations with the same scope
+  // params the sidebar uses; we then map+filter to UUIDs.
+  const { filtersState } = useFilters()
+  // Only fetch the conversation list when there's an enabled active
+  // filter (we need it to resolve filter→UUIDs). With no active filter,
+  // SearchPanel doesn't need the list, and an unconditional fetch on
+  // mount tripped net::ERR_NETWORK_CHANGED in Playwright page.reload()
+  // calls (2026-05-15). The Sidebar still fetches independently — same
+  // queryKey, so when the filter eventually activates the cache is
+  // already warm via TanStack Query dedupe.
+  const needsConversationList = !!filtersState.activeId &&
+    !!filtersState.nodes[filtersState.activeId]?.enabled
+  const conversationsQuery = useConversations(
+    {
+      source: sourceFilter,
+      organization_id: organizationId ?? undefined,
+    },
+    { enabled: needsConversationList },
+  )
 
   // P3e: dual-read/dual-write via usePreferences. The hook resolves
   // value as server.data[key] ?? localStorage[key] ?? fallback, and
@@ -109,15 +134,61 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // focus-input useEffect even when isOpen hasn't changed.
   const [focusRequestSeq, setFocusRequestSeq] = useState(0)
 
+  // 2026-05-14 sidebar-scope propagation: the set of UUIDs that PASS the
+  // active-filter graph. undefined → no constraint (filter is null OR
+  // passes everything). Empty array → "filter excludes everything"
+  // (backend short-circuits to empty results).
+  //
+  // Performance: applyActiveFilter is glob/regex on conversation NAME;
+  // for a 1500-conv corpus this is a sub-millisecond loop. Re-runs
+  // only when the conversation list or filter state changes.
+  //
+  // The "no-op short-circuit" (passing.length === total.length) keeps
+  // us from sending a payload at all when the filter is permissive.
+  // It does NOT save us from "almost all" cases (1499/1500 passing) —
+  // for those, api.search switches to POST automatically.
+  const conversationsList = conversationsQuery.data
+  const passingUuids = useMemo<string[] | undefined>(() => {
+    if (!conversationsList) return undefined
+    if (!filtersState.activeId) return undefined
+    const activeNode = filtersState.nodes[filtersState.activeId]
+    if (!activeNode || !activeNode.enabled) return undefined
+    const passing = conversationsList.filter((c) =>
+      applyActiveFilter(c.name, filtersState),
+    )
+    if (passing.length === conversationsList.length) return undefined
+    return passing.map((c) => c.uuid)
+  }, [conversationsList, filtersState])
+
   // Pin scope passed to useSearch. Pinned conversation/project is the
   // explicit user signal and always wins over the sidebar Source filter.
   // Bookmarks-as-scope plumbing exists end-to-end (api.search /
   // /api/search) for a future Starred sidebar value; not wired here yet.
+  //
+  // 2026-05-14 sidebar-scope propagation: organizationId (workspace
+  // dropdown) and conversationUuids (active-filter set) compose into the
+  // same scope object. queryKey changes when any of these flip → search
+  // auto re-fires (spec invariant I4). When the user has pinned a
+  // conversation, that pin remains the most-specific filter on the
+  // BACKEND side (search.py strips conversation_uuids when
+  // conversation_uuid is set), so we still pass the workspace and the
+  // filter set without breaking the precedence rule.
   const scope = useMemo(() => {
-    if (pinScope.kind === 'conversation') return { conversationUuid: pinScope.uuid }
-    if (pinScope.kind === 'project') return { projectPath: pinScope.path }
-    return undefined
-  }, [pinScope])
+    const out: {
+      conversationUuid?: string
+      projectPath?: string
+      organizationId?: string | null
+      conversationUuids?: string[]
+    } = {}
+    if (pinScope.kind === 'conversation') out.conversationUuid = pinScope.uuid
+    if (pinScope.kind === 'project') out.projectPath = pinScope.path
+    if (organizationId) out.organizationId = organizationId
+    if (passingUuids !== undefined) out.conversationUuids = passingUuids
+    // Return undefined when there's truly no constraint, so the cache
+    // key stays minimal for the common case.
+    if (Object.keys(out).length === 0) return undefined
+    return out
+  }, [pinScope, organizationId, passingUuids])
   void bookmarks
 
   // Fetch search results (updated useSearch signature accepts contextSize)

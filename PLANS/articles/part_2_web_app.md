@@ -114,7 +114,7 @@ Filters can also be composed into groups that AND / OR other named filters toget
 
 Full-text search is bound to `⌘+K`, which has become the standard across modern apps for *"I want a fast, global search"* . It slides in as a right sidebar so we can see the conversations list and the search hits list at the same time.
 
-![[Pasted image 20260428102241.png]]
+![[Pasted image 20260514161227.png]]
 
 ### What `⌘+K` does
 
@@ -124,16 +124,22 @@ When you type a query and hit enter, the UI sends it to a full-text search endpo
 
 There are two modes you'll use day-to-day, and the distinction matters because each one answers a different question:
 
-- **Multi-word, unquoted** — `comprehensive medium`. All words must appear in the same matched message, but in any order and not necessarily adjacent. This is the right tool when you remember a couple of distinctive words from a conversation but not the exact phrasing; the FTS5 index does the heavy lifting of finding messages where both tokens co-occur. Backed by `FTS5 MATCH 'comprehensive medium'` semantics under the hood, which is conjunctive ("AND") by default.
+- **Multi-word, unquoted** — `comprehensive medium`. All words must appear in the same matched message, but in any order and not necessarily adjacent. This is the right tool when you remember a couple of distinctive words from a conversation but not the exact phrasing; the FTS5 index does the heavy lifting of finding messages where both tokens co-occur. Backed by `FTS5 MATCH 'comprehensive medium'` semantics under the hood, which is "AND" by default.
 - **Quoted phrase** — `"comprehensive medium"`. The words must appear in that exact sequence. This is the right tool when you remember a specific turn of phrase verbatim, or when the unquoted version returns too many results and you want to narrow to literal occurrences. Wrap the whole query in double quotes; the backend translates that to an FTS5 phrase clause, and the snippet only highlights matches of the full phrase.
 
-Both modes highlight every matched token (or phrase) in the snippet, so you can tell at a glance which words triggered the hit. If you type `foo bar` and a result snippet shows both words highlighted (anywhere in the text), that's the terms-mode match doing its job; if you wrap as `"foo bar"` and the same conversation no longer appears in the list, it's because those words weren't adjacent in any of its messages. Same corpus, two different questions.
+Both modes highlight every matched token (or phrase) in the snippet, so you can tell at a glance which words triggered the hit.
 
 ### What gets searched
 
-Search also includes tool calls and tool results. This matters more than it sounds once you use Claude Code heavily. Engineers tend to remember the *effect* of a tool invocation ("the `ripgrep` output showed the string in three files," "the test runner printed that traceback") even when they don't remember the exact assistant text around it; if search only indexed the plain-language conversation, you'd miss a huge fraction of the information you actually want to retrieve. The same logic covers Claude Desktop sessions where the assistant ran a tool block (web search, web fetch, code execution) inside the conversation; that content is searchable too.
+Search also includes tool calls and tool results. This matters more than it sounds once you use Claude Code heavily. Engineers tend to remember the *effect* of a tool invocation ("the `ripgrep` output showed the string in three files," "the test runner printed that traceback") even when they don't remember the exact assistant text around it. The same logic covers Claude Desktop sessions where the assistant ran a tool block (web search, web fetch, code execution) inside the conversation; that content is searchable too.
 
-Search results respect the **Tools** toggle in the conversation header; with Tools off, a hit you couldn't see in the viewer never shows up in the result list either. One truth, three surfaces.
+Search results respect the **Tools** toggle in the conversation header; with Tools off, a hit you couldn't see in the viewer never shows up in the result list either.
+
+### Search honors the sidebar's active scope
+
+Both surfaces — the title-search input at the top of the sidebar AND the right-pane full-text search — also honor whatever scope the sidebar is currently showing. That includes the **source dropdown** (`All Conversations` / `Claude Desktop` / `Claude Code`), the **workspace dropdown** (for Claude Code sessions, lets you scope to a single project), and the **active filter** (any of your saved atom or group filters from the *Manage Filters* modal). What you can't see in the sidebar list can't appear in either search surface either.
+
+This composes with the pin scope and Tools toggle covered above; intersections, never unions. The mental model is "the sidebar is the lens; search asks questions through it." Flip a filter off and the previously-hidden matches re-appear without you having to re-type the query, because the search auto-re-runs whenever the scope changes. Same on the MCP side: `list_sessions` already accepts `source` and `project` arguments that mirror the dropdowns; an MCP-aware client (another Claude session) gets the same scoping vocabulary.
 
 ### Performance
 

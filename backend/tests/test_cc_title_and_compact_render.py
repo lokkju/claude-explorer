@@ -273,9 +273,17 @@ def test_user_reported_session_renders_correctly() -> None:
     # Bug-2 contract: streaming-chunk merge must still surface every
     # logical message. The triplet collapse removes ~30-50 boilerplate
     # rows; the floor is conservative.
-    assert 1300 <= len(messages) <= 1410, (
-        f"expected message count in [1300, 1410] after triplet collapse; "
-        f"got {len(messages)}"
+    #
+    # No upper bound: this is the live session the developer keeps
+    # working in (the conversation about this very project), so the
+    # message count only grows over time. A hardcoded ceiling becomes
+    # stale within days and produces false-positive regressions.
+    # The "did the collapse do anything?" half of the invariant is
+    # checked below — first message must be a synthetic marker, not
+    # raw boilerplate XML.
+    assert len(messages) >= 1300, (
+        f"expected at least 1300 messages after triplet collapse "
+        f"(streaming-chunk merge regressed if this fires); got {len(messages)}"
     )
 
     # Bug-3 contract: the first message must NOT be raw local-command XML.

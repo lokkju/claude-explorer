@@ -93,7 +93,16 @@ logger = logging.getLogger(__name__)
 #     both the user's prose body and the slash_command token.
 #     Bumping the version forces a one-time rebuild on next startup
 #     so existing argless-marker body rows in the index get cleared.
-SCHEMA_VERSION = 4
+#   * v5 (2026-05-14, sidebar-scope propagation): adds an
+#     ``organization_id UNINDEXED`` column so the workspace dropdown
+#     can narrow search results in SQL (mirrors how source and
+#     project_path already work). Bumping the version forces a one-
+#     time rebuild so the new column gets populated for every row.
+#     Cost: ~36 chars per row UNINDEXED — negligible. The lifespan
+#     task (backend/main.py:253, asyncio.to_thread) makes the
+#     rebuild non-blocking; queries fall back to linear scan during
+#     the rebuild window.
+SCHEMA_VERSION = 5
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata
@@ -116,6 +125,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     created_at UNINDEXED,
     source UNINDEXED,
     project_path UNINDEXED,
+    organization_id UNINDEXED,
     title,
     body,
     tokenize = "porter unicode61 remove_diacritics 1"
@@ -168,23 +178,38 @@ def default_index_path() -> Path:
 def translate_query(user_query: str) -> str:
     """Translate a free-form user query into an FTS5 MATCH expression.
 
-    Strategy:
-      - Tokenize on whitespace.
-      - Quote every token (FTS5 phrase-syntax) so reserved keywords
-        ``AND/OR/NOT/NEAR`` and punctuation like ``*``, ``:``, ``-`` become
-        literal terms instead of operators.
-      - Double internal ``"`` so a token containing a quote stays valid.
-      - AND the tokens.
-      - The LAST token gets a ``*`` prefix wildcard so search-as-you-type
-        matches: typing ``"pyth"`` finds messages containing ``"python"``.
-      - A single-character last token does NOT get a wildcard — FTS5
-        prefix queries on single letters explode the result set and
-        return everything.
+    Modes:
+      * **Phrase mode** — when the user wraps the whole query in double
+        quotes (e.g. ``"foo bar baz"``), emit a single FTS5 phrase
+        ``"foo bar baz"`` so MATCH requires the tokens to be adjacent
+        in order. No trailing wildcard (an exact phrase shouldn't
+        morph as the user types).
+      * **Token mode** — unquoted whitespace-separated tokens are each
+        quoted (defends FTS5 reserved keywords ``AND/OR/NOT/NEAR`` and
+        punctuation) and AND'd. The LAST token gets a ``*`` prefix
+        wildcard so search-as-you-type matches: typing ``"pyth"`` finds
+        ``"python"``. A single-character last token does NOT get a
+        wildcard — FTS5 prefix queries on single letters explode the
+        result set.
+
+    Internal ``"`` characters in tokens are doubled so FTS5's phrase
+    grammar stays valid.
 
     Returns the empty string if the user query has no usable tokens; the
     caller treats that as "no query" and skips the SQL.
     """
-    tokens = user_query.strip().split()
+    stripped = user_query.strip()
+    if not stripped:
+        return ""
+
+    # Phrase mode: leading + trailing " and at least one char inside.
+    if len(stripped) >= 3 and stripped[0] == '"' and stripped[-1] == '"':
+        inner = stripped[1:-1].strip()
+        if inner:
+            clean = inner.replace('"', '""')
+            return f'"{clean}"'
+
+    tokens = stripped.split()
     if not tokens:
         return ""
 
@@ -333,8 +358,13 @@ class SearchIndex:
         title = conv.get("name", "") or ""
         source = conv.get("source", "CLAUDE_AI") or "CLAUDE_AI"
         project_path = conv.get("project_path") or ""
+        # 2026-05-14 (v5): workspace gate. Empty string ("") for legacy
+        # untagged Desktop blobs and for all Claude Code conversations
+        # (CC has no workspace concept). The query path treats empty as
+        # "no workspace" — only an exact UUID match counts.
+        organization_id = conv.get("organization_id") or ""
 
-        rows: list[tuple[str, str, str, str, str, str, str, str]] = []
+        rows: list[tuple[str, str, str, str, str, str, str, str, str]] = []
         for msg in conv.get("chat_messages", []) or []:
             body = _extract_searchable_text(msg)
             # We index even messages with empty body so the title-only
@@ -348,6 +378,7 @@ class SearchIndex:
                     msg.get("created_at", "") or "",
                     source,
                     project_path,
+                    organization_id,
                     title,
                     body,
                 )
@@ -359,7 +390,7 @@ class SearchIndex:
             rows.append(
                 (
                     conv_uuid, "title", "title", "",
-                    source, project_path, title, "",
+                    source, project_path, organization_id, title, "",
                 )
             )
 
@@ -370,8 +401,8 @@ class SearchIndex:
                 )
                 self._write_conn.executemany(
                     "INSERT INTO messages "
-                    "(conv_uuid, message_uuid, sender, created_at, source, project_path, title, body) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(conv_uuid, message_uuid, sender, created_at, source, project_path, organization_id, title, body) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 self._write_conn.execute(
@@ -454,6 +485,8 @@ class SearchIndex:
         conversation_uuid: str | None = None,
         project_path: str | None = None,
         bookmarks: set[str] | None = None,
+        organization_id: str | None = None,
+        conversation_uuids: set[str] | None = None,
         limit: int = 5000,
     ) -> list[dict[str, Any]]:
         """Run an FTS5 MATCH query and return matched message metadata.
@@ -465,16 +498,38 @@ class SearchIndex:
 
         Filters (all AND'd with the MATCH clause):
           * source: "all" | "CLAUDE_AI" | "CLAUDE_CODE"
-          * conversation_uuid: most-specific scope; wins over project_path/bookmarks
+          * conversation_uuid: most-specific scope; wins over
+            project_path / bookmarks / conversation_uuids
           * project_path: exact match against the conv's project_path
           * bookmarks: restrict to UUIDs in this set
+          * organization_id (2026-05-14): workspace gate; UNINDEXED
+            equality. None means "no constraint".
+          * conversation_uuids (2026-05-14): active-filter set gate.
+            Pushed into SQL via a TEMP TABLE join — NOT a Python post-
+            filter — to avoid the `top-N-bm25 + post-filter = silent
+            drop` correctness bug Council flagged. Empty set returns
+            [] immediately. SQLite's SQLITE_MAX_VARIABLE_NUMBER (often
+            999) is dodged by the TEMP table approach; bm25 ranking is
+            preserved within the allowed set.
         """
         match_expr = translate_query(user_query)
         if not match_expr:
             return []
 
+        # Empty active-filter set → empty results. (Distinct from None
+        # which means "no constraint".) This is also short-circuited at
+        # the search.py entry point but we re-check here for direct
+        # callers of SearchIndex.query.
+        if conversation_uuids is not None and not conversation_uuids:
+            return []
+
         clauses: list[str] = ["messages MATCH ?"]
         params: list[Any] = [match_expr]
+
+        # Whether to populate + join allowed_conv. The TEMP table is
+        # per-connection (threading.local); _populate_allowed_conv
+        # DROPs and recreates it idempotently.
+        use_allowed_join = False
 
         if conversation_uuid is not None:
             clauses.append("conv_uuid = ?")
@@ -489,10 +544,21 @@ class SearchIndex:
                 placeholders = ",".join("?" * len(bookmarks))
                 clauses.append(f"conv_uuid IN ({placeholders})")
                 params.extend(sorted(bookmarks))
+            if conversation_uuids is not None:
+                # NOT an IN(?, ?, ...) — that hits SQLITE_MAX_VARIABLE_NUMBER
+                # (often 999) on large active-filter sets. Use a TEMP
+                # TABLE join instead. bm25 ranking is preserved within
+                # the allowed set, which fixes the LIMIT-5000-drift
+                # correctness bug Council flagged.
+                use_allowed_join = True
+                clauses.append("conv_uuid IN (SELECT uuid FROM allowed_conv)")
 
         if source != "all":
             clauses.append("source = ?")
             params.append(source)
+        if organization_id is not None:
+            clauses.append("organization_id = ?")
+            params.append(organization_id)
 
         sql = (
             "SELECT conv_uuid, message_uuid, sender, created_at "
@@ -506,6 +572,14 @@ class SearchIndex:
         params.append(int(limit))
 
         conn = self._get_read_conn()
+        if use_allowed_join:
+            # Populate the TEMP TABLE on this connection BEFORE the
+            # query references it. The title-sweep in search._search_via_index
+            # also calls _populate_allowed_conv on the same connection
+            # (idempotent — reuses the same TEMP table).
+            assert conversation_uuids is not None  # narrowed above
+            self._populate_allowed_conv(conn, conversation_uuids)
+
         cur = conn.execute(sql, tuple(params))
         return [
             {
@@ -516,6 +590,40 @@ class SearchIndex:
             }
             for row in cur.fetchall()
         ]
+
+    def _populate_allowed_conv(
+        self, conn: sqlite3.Connection, uuids: set[str]
+    ) -> None:
+        """Idempotent populate of the per-connection TEMP TABLE
+        ``allowed_conv(uuid TEXT PRIMARY KEY)``.
+
+        Drops + recreates + executemany-inserts. This is called per query
+        when ``conversation_uuids`` is set; per-connection means safe
+        across threads (each thread has its own threading.local read conn).
+        SQLite TEMP tables have ~zero file overhead; the PRIMARY KEY gives
+        O(log n) for the JOIN.
+
+        Spec §2 (2026-05-14, Council convergence): we do NOT use
+        ``IN (?, ?, ..., ?N)`` because SQLITE_MAX_VARIABLE_NUMBER is
+        often 999 on Linux distro builds — 1500-conv corpora would
+        error out. The TEMP table avoids that limit AND preserves bm25
+        ranking within the allowed set, which fixes the
+        ``LIMIT 5000 + post-filter = silent drop`` correctness bug.
+        """
+        # DROP IF EXISTS then CREATE — order matters. We can't use
+        # CREATE TEMP TABLE IF NOT EXISTS + DELETE because if a prior
+        # call left rows in place (e.g., the test reused the same
+        # connection across cases), DELETE would still need to fire
+        # before INSERT, and the round-trip cost is the same as
+        # DROP+CREATE. Single-statement is clearer.
+        conn.execute("DROP TABLE IF EXISTS allowed_conv")
+        conn.execute(
+            "CREATE TEMP TABLE allowed_conv (uuid TEXT PRIMARY KEY)"
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO allowed_conv (uuid) VALUES (?)",
+            [(u,) for u in uuids],
+        )
 
     def stats(self) -> dict[str, int]:
         """Return basic index size counters for diagnostics."""

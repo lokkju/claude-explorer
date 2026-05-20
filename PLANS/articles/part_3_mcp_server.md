@@ -504,7 +504,9 @@ It's also the part where you can ask for second-order artifacts: *"give me the m
 
 ![[Pasted image 20260514015009.png]]
 
-One personal note here, because it is the reason I keep working on this project: the loop is fun. I mean "fun" in the substantive sense: this changes how I work. When a new Claude Code session can read my old sessions as structured data, I stop treating my prior work as something I vaguely remember, and start treating it as something I can query. I figured out a way, and you're reading this!
+One personal note here, because it is the reason I keep working on this project: the loop is fun. I mean "fun" in the substantive sense; this changes how I work.
+
+When a new Claude Code session can read my old sessions as structured data, I stop treating my prior work as something I vaguely remember, and start treating it as something I can query. I figured out a way, and you're reading this!
 
 ## Token Cost and Caching Architecture
 

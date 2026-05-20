@@ -4,14 +4,27 @@ import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/queryClient'
 import type { ConversationFilters, SortField, SortOrder } from '@/lib/types'
 
-export function useConversations(filters?: ConversationFilters) {
+export function useConversations(
+  filters?: ConversationFilters,
+  options?: { enabled?: boolean },
+) {
   const { search, ...serverFilters } = filters ?? {}
 
-  // Fetch the full list without search — stable cache key across keystrokes
+  // Fetch the full list without search — stable cache key across keystrokes.
+  //
+  // `options.enabled` defaults to true (existing callers unchanged). The
+  // SearchPanelProvider opt-in to false when there's no active filter,
+  // because: (a) the list is only needed to resolve filter→UUIDs, so
+  // fetching it when no filter exists is wasted work, and (b) a fetch
+  // in-flight during page navigation has been observed to trip
+  // Chromium's net::ERR_NETWORK_CHANGED on reload in headless
+  // Playwright (2026-05-15 regression diagnosis). Gating the fetch
+  // avoids both costs.
   const query = useQuery({
     queryKey: queryKeys.conversations.list(serverFilters),
     queryFn: () => api.getConversations(serverFilters),
     staleTime: 5 * 60 * 1000, // 5 minutes
+    enabled: options?.enabled ?? true,
   })
 
   // Filter client-side — no network round-trip per keystroke.
@@ -58,7 +71,14 @@ export function useSearch(
   contextSize: 'snippet' | 'full' = 'snippet',
   sort: SortField = 'updated_at',
   sortOrder: SortOrder = 'desc',
-  scope: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] } | undefined = undefined,
+  scope: {
+    conversationUuid?: string
+    projectPath?: string
+    bookmarks?: string[]
+    // 2026-05-14 sidebar-scope propagation: workspace + active-filter set.
+    organizationId?: string | null
+    conversationUuids?: string[]
+  } | undefined = undefined,
   // 2026-05-11: REQUIRED, no default. Threaded all the way down to the
   // /api/search query param. Mandatory so any future call site is
   // forced (via TypeScript) to wire in useSettings().showToolCalls

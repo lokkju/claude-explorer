@@ -360,6 +360,7 @@ def list_sessions(
     query: str | None = None,
     source: str | None = None,
     project: str | None = None,
+    organization_id: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -371,8 +372,23 @@ def list_sessions(
                Omit to list all sessions.
         source: Filter by source: "CLAUDE_AI" or "CLAUDE_CODE".
         project: Filter by project name (substring match, case-insensitive).
+        organization_id: Workspace UUID — restrict to conversations whose
+                         organization_id matches exactly. Mirrors the
+                         sidebar's Workspace dropdown. Note that Claude
+                         Code sessions have no organization_id, so this
+                         filter only matches Claude Desktop conversations
+                         tagged with that workspace.
         limit: Max results to return (default 20, max 100).
         offset: Skip this many results for pagination.
+
+    Note (spec §3, 2026-05-14): there is intentionally NO ``active_filter``
+    or ``conversation_uuids`` parameter. The sidebar's active-filter
+    graph (atoms/groups under frontend/src/lib/filterEngine.ts) is a
+    UI-only convenience over the user's private preferences blob; MCP
+    callers don't know the user's filter names. The "one truth, three
+    surfaces" invariant is preserved by intersection on the common
+    subset (source, project, organization_id) — see
+    PLANS/2026.05.14-search-scope-propagation-spec.md.
     """
     store = _get_store()
     limit = min(max(1, limit), 100)
@@ -383,10 +399,22 @@ def list_sessions(
         src = source  # type: ignore[assignment]
 
     if query:
-        # Deep search across message content
-        search_results = search_conversations(store, query, source=src)
-        # Build a lookup map once (not per result)
-        all_summaries = store.list_conversations(source=src)
+        # Deep search across message content. organization_id is pushed
+        # into search_conversations so the FTS5 path filters in SQL —
+        # mirrors how source already works.
+        search_results = search_conversations(
+            store,
+            query,
+            source=src,
+            organization_id=organization_id,
+        )
+        # Build a lookup map once (not per result). Pass organization_id
+        # so the summary list and the search results agree on which
+        # workspace they're scoped to.
+        all_summaries = store.list_conversations(
+            source=src,
+            organization_id=organization_id,
+        )
         summary_map = {s.uuid: s for s in all_summaries}
         sessions = []
         for sr in search_results:
@@ -406,7 +434,10 @@ def list_sessions(
                 }
                 sessions.append(entry)
     else:
-        convs = store.list_conversations(source=src)
+        convs = store.list_conversations(
+            source=src,
+            organization_id=organization_id,
+        )
         sessions = []
         for s in convs:
             sessions.append({

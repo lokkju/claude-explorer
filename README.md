@@ -18,7 +18,7 @@ If you'd rather hack on the project than install it, see [From source (for contr
 ## Features
 
 - **Browse conversations** from both Claude Desktop and Claude Code
-- **Full-text search** across all messages with instant results — multi-word queries AND tokens (all words must appear in the same message, any order); wrap in `"double quotes"` to require an exact phrase
+- **Full-text search** across all messages with instant results — multi-word queries AND tokens (all words must appear in the same message, any order); wrap in `"double quotes"` to require an exact phrase. Both the title-search and full-text-search honor the sidebar's active scope (source dropdown, workspace, and any active filter), so what you can't see in the sidebar can't appear in search results either.
 - **Export** to Markdown or PDF
 - **Dark mode** with automatic system preference detection
 - **Keyboard navigation** with Emacs and Vim modes

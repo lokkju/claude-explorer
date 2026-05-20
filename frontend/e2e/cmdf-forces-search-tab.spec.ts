@@ -15,19 +15,22 @@ import { test, expect } from './fixtures'
  */
 
 test('Cmd+F forces the right-pane tab to "search" regardless of persisted preference', async ({ page, mockBackend }) => {
-  // Seed preferences with rightPaneTab=bookmarks so the page mounts
-  // with Bookmarks as the active tab (mimics a user who clicked
-  // Bookmarks at some point and never clicked back).
+  // Seed preferences with the panel already open AND rightPaneTab=bookmarks,
+  // so on initial mount the user sees Bookmarks as the active tab. This
+  // mimics a user who clicked Bookmarks at some point and closed/reopened
+  // the app with that state persisted server-side.
+  //
+  // We can't open the panel via Cmd+K to set up this state, because
+  // Cmd+K itself force-sets rightPaneTab='search' on open (the parallel
+  // fix in `cmd-k-always-opens-search-tab.spec.ts`). Seeding `isOpen: true`
+  // lets the panel hydrate directly from preferences with no shortcut
+  // interaction.
   await mockBackend({
-    preferences: { rightPaneTab: 'bookmarks' },
+    preferences: { rightPaneTab: 'bookmarks', 'searchPanel.isOpen': true },
   })
 
   await page.goto('/')
-
-  // Open the panel via Cmd+K (so we can assert the initial tab state
-  // BEFORE Cmd+F fires).
   await page.locator('main').click()
-  await page.keyboard.press('Meta+k')
   const aside = page.locator('aside[aria-label="Search panel"]')
   await expect(aside).toBeVisible()
 
@@ -52,7 +55,7 @@ test('Cmd+F forces the right-pane tab to "search" regardless of persisted prefer
 test('Cmd+F from a closed panel opens AND switches to search tab', async ({ page, mockBackend }) => {
   // Start with rightPaneTab=bookmarks AND panel closed.
   await mockBackend({
-    preferences: { rightPaneTab: 'bookmarks', isOpen: false },
+    preferences: { rightPaneTab: 'bookmarks', 'searchPanel.isOpen': false },
   })
 
   await page.goto('/')

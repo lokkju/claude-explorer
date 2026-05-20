@@ -36,6 +36,8 @@ Every part after #1 opens with a recap + link to the prior part:
 - **H3** for subsections: `### Guiding Principles`, `### CRUD Class Design`, `### Design Considerations`
 - Keep them short and declarative. No gerunds-as-headers unless required.
 
+- **Long H2 sections need H3 subheaders.** When an H2 section covers four-plus distinct subtopics, or runs past about eight paragraphs, split it with H3s so a reader skimming can see the section's structure. The article-of-record test: if the H2 section had its own little table of contents, would it have more than one entry? If yes, write the H3s that table of contents would have. A wall of H2-only sections, each covering a feature cluster without internal hierarchy, reads as undifferentiated to a scrolling reader; H3s give them the topic anchors they're reaching for.
+
 ## Section openings
 
 When opening a major section (especially *Install / Setup / First Run* sections), lead with the **named product or tool**, not with meta-framing about how to approach it.
@@ -51,6 +53,11 @@ When opening a major section (especially *Install / Setup / First Run* sections)
 - ✅ *"We'll leave the MCP server for the next article in the series. It'll let you use the same corpus of Claude conversations to have Claude analyze itself for a bunch of different use cases."* (same prose budget, with a strategic hook the late teaser will then pay off)
 
 The article ends up with a **two-stage tease**: an early hint here, the full setup later. The late teaser feels earned rather than abrupt because the reader has already been primed.
+
+**Implementation-detail sections should be visibly skippable.** The series targets both engineers who want the stack and the algorithm internals, and end users who just want to use the tool. Anything that's *"how it's built"* rather than *"how to use it"* (tech stack credits, performance benchmarks, SQLite schemas, useEffect snippets) belongs under its own H3 subheader, and ideally opens with a one-line skip hint so a non-tech reader can scroll past without parsing it. The H3 + skip-hint combo is especially right for sections labelled *"Tech Stack"*, *"How it works under the hood"*, *"Caching architecture"*, where the reader is making an explicit "tell me more or skip" choice.
+
+- ✅ *"### Tech Stack* — *Skip ahead if the stack doesn't interest you. The back end is FastAPI..."* (the H3 anchors the section, the first sentence tells the user it's optional)
+- ❌ Same content as a paragraph mid-section with no H3 and no skip-hint, forcing every reader to wade through it to reach the next product beat.
 
 ## Sentence rhythm
 
@@ -74,6 +81,14 @@ The article ends up with a **two-stage tease**: an early hint here, the full set
 
 - **Prefer technical vocabulary when it fits.** Small but real: Raymond will pick *query* over *ask*, *iterate* over *loop*, *idempotent* over *safe to re-run*, when the more-technical word is accurate. This is not showing off; it's precision. The "I love it when I get to use the word isomorphic!" moment (in Tone tics) is the archetype.
 
+- **First-person active voice beats relative-clause appendages.** When you want to attach a personal connection (your column, your other project, a thing you've written) to a noun you just named, do it in a new sentence with *"I"* rather than as a relative clause hanging off the prior subject. The first-person version is shorter, more direct, and lets the named thing get its own beat.
+  - ❌ *"FastAPI is Sebastián Ramírez's work, the same ecosystem I cover in [my best-practices column]."* (the *"I cover"* hangs off Sebastián as a tail clause; two ideas crammed into one sentence)
+  - ✅ *"FastAPI is from Sebastián Ramírez. I cover FastAPI in detail in [my best-practices column]."* (two sentences, two subjects, each doing one thing)
+
+- **Compress collaborator credits into naming when you can.** When the credit can ride alongside the introduction of the tool itself, the prose reads tighter than two-clauses-with-restating.
+  - ❌ *"The back end is FastAPI; FastAPI is Sebastián Ramírez's work..."* (introduces FastAPI, then re-references it as the subject of the credit clause)
+  - ✅ *"The back end is FastAPI from Sebastián Ramírez..."* (the credit is part of the naming itself)
+
 - **`backend` / `frontend` are adjectives; `back end` / `front end` are the noun forms.** Two words when it's the thing itself, one word when it modifies another noun.
   - ✅ Noun (two words): *"The back end is FastAPI."* *"The front end `PATCH`es `/api/preferences`."* *"The back end serves both out of one process."*
   - ✅ Adjective (one word): *"the FTS5 index is built at backend startup"*, *"the local backend proxy"*, *"a backend integration test"*.
@@ -83,6 +98,11 @@ The article ends up with a **two-stage tease**: an early hint here, the full set
 
 3–5 sentences. Rare two-sentence paragraphs for emphasis.
 
+**Split by subtopic, not by length.** A paragraph carries one beat. When the prose pivots from *"what this is"* to *"how the UI exposes it"*, or from *"the behavior"* to *"the rationale"*, that's the seam — start a new paragraph there, even if neither half would be "too long" on its own. Wall-of-text paragraphs (6+ sentences, or two-plus distinct beats jammed together) read like AI-generated dumps and lose readers who skim. A reader scanning paragraph openings should be able to reconstruct the section's structure.
+
+- ❌ One 7-sentence paragraph covering: *how images are stored on disk → the lightbox keyboard shortcuts → how the local proxy works → how path traversal is prevented*. Four beats, one block.
+- ✅ Four paragraphs, one beat each: *(1) on-disk shape and inline thumbnails. (2) lightbox + keyboard. (3) the local proxy and offline behavior. (4) the path-traversal hardening.* A reader who only reads the first sentence of each paragraph still gets the structure.
+
 ## Code
 
 - Full blocks (30–60 lines), not snippets.
@@ -91,6 +111,10 @@ The article ends up with a **two-stage tease**: an early hint here, the full set
 - Triple-quoted docstrings *inside* the code are used as teaching comments; `#`-comments are sparse.
 - In prose, every identifier / path / keyword / CLI flag goes in backticks: `async`, `table=True`, `/docs`, `--proxy-server`.
 - Italics for single-word emphasis: *"covered a lot of ground"*, *"This is the *only* place we …"*
+- **Shell commands the reader is meant to *execute* go in fenced code blocks, not inline backticks.** Inline backticks are for naming and referring (identifiers, paths, flags, error strings, tool names). The moment the prose is telling the reader to *run* something, the command moves to its own ```bash``` (or ```powershell```) block, even if it's a single line. Code blocks are copy-pasteable as-is (Medium renders a copy button), while inline backticks force the reader to assemble the command out of the surrounding sentence; they also help a scanning reader spot the article's executable surface at a glance.
+  - ❌ *"Run `claude-explorer serve --help` for the full set of flags."*
+  - ✅ *"For the full set of flags, run:* `bash` *block containing* `claude-explorer serve --help` *."*
+  - References stay inline: *"the `--proxy` flag"*, *"the `uv run --directory` form"*, *"every `claude-explorer serve` start kicks off..."* — these are naming the thing, not asking the reader to type it.
 
 ## Lists vs prose
 
@@ -148,6 +172,7 @@ Every part ends with an **H2 "Wrapping Up!"** (with exclamation). Content:
 - Numbered step-by-step lists for technical ideas — use prose with `1.` / `2.` embedded.
 - Overly academic tone. The author is a working engineer, not a professor.
 - AI-assistant tells: *"Let's dive in"*, *"In this comprehensive guide"*, *"It's worth noting that…"*, emdashes, "It's not this, it's that" and similar framing that's common to AI writing — Raymond doesn't write like that.
+- UI-design jargon (*"toast"*, *"modal"*, *"chip"*, *"drawer"*, *"hamburger"*, *"FAB"*, *"kebab"*) needs a plain-English description, not the term on its own. *"A small status popup in the corner"*, not *"a toast"*. PM / designer vocabulary makes engineering readers pause even when they know the word, and many readers don't.
 
 ### The "it's not X, it's Y" trope — one-shot example (do not use this construction)
 

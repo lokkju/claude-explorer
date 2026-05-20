@@ -336,6 +336,8 @@ def search_conversations(
     project_path: str | None = None,
     bookmarks: set[str] | None = None,
     include_tool_calls: bool = True,
+    organization_id: str | None = None,
+    conversation_uuids: set[str] | None = None,
 ) -> list[SearchResult]:
     """Search across all conversations for matching messages.
 
@@ -345,20 +347,32 @@ def search_conversations(
     byte-for-byte identical ``SearchResult`` objects for whole-word
     queries.
 
-    Scope filters (manual finding 2026-05-04):
+    Scope filters (manual finding 2026-05-04 + sidebar-scope propagation
+    2026-05-14):
       - ``conversation_uuid``: restrict to a single conversation. Most
-        specific filter; wins over ``project_path`` / ``bookmarks`` when
-        all three are passed.
+        specific filter; wins over ``project_path`` / ``bookmarks`` /
+        ``conversation_uuids`` when more than one is passed.
       - ``project_path``: restrict to conversations whose project_path
         matches exactly (CC sessions grouped by their cwd).
       - ``bookmarks``: restrict to a set of conversation UUIDs (the
         client passes the bookmark set when the sidebar's Starred filter
         is active).
+      - ``organization_id`` (sidebar Workspace dropdown, 2026-05-14):
+        restrict to conversations whose organization_id matches exactly.
+        ``None`` matches only None on the conv side — a UUID filter never
+        incidentally surfaces untagged data (mirrors
+        ``ConversationStore.list_conversations``).
+      - ``conversation_uuids`` (active-filter set, 2026-05-14): restrict
+        to a set of UUIDs. The frontend computes this from the active
+        filter graph (atoms/groups under
+        ``frontend/src/lib/filterEngine.ts``); MCP does not use this.
+        ``None`` means "no constraint"; the empty set means "filter
+        excludes everything" — caller short-circuits to ``[]``.
 
-    All three are AND'd with the existing ``source`` filter and with each
-    other (when more than one is set). Backend-side because tool_use /
-    tool_result payloads are large; client-side post-filtering would
-    waste bandwidth and break ranking.
+    All filters AND-compose with each other and with the existing
+    ``source`` filter. Backend-side because tool_use / tool_result
+    payloads are large; client-side post-filtering would waste bandwidth
+    and break ranking.
 
     ``include_tool_calls`` (2026-05-11): when False, search ignores
     tool_use / tool_result / thinking content. Hit messages whose only
@@ -380,6 +394,26 @@ def search_conversations(
     if not query or len(query.strip()) < 1:
         return []
 
+    # Empty-set short-circuit: an active filter that excludes everything
+    # passes ``conversation_uuids=set()``. Same semantic as ``bookmarks``
+    # — distinct from ``None`` (no constraint). Spec §2 (2026-05-14).
+    # We DON'T short-circuit on empty bookmarks here for backward compat
+    # with the existing router contract; that path's empty handling lives
+    # in ``_search_via_linear_scan`` and ``SearchIndex.query``. The
+    # conversation_uuids check is hoisted up so we don't waste a query on
+    # the FTS5 index either.
+    if conversation_uuids is not None and not conversation_uuids:
+        return []
+
+    # ``conversation_uuid`` (singular pin scope) is most-specific; when
+    # set, it overrides ``project_path``, ``bookmarks``, AND
+    # ``conversation_uuids``. We strip the latter three here so the
+    # downstream paths only ever see the pin gate.
+    if conversation_uuid is not None:
+        conversation_uuids = None
+        bookmarks = None
+        project_path = None
+
     # Fast path: FTS5 inverted index when ready. Imported lazily so the
     # test suite can patch get_search_index() without import cycles.
     try:
@@ -396,6 +430,8 @@ def search_conversations(
                     project_path=project_path,
                     bookmarks=bookmarks,
                     include_tool_calls=include_tool_calls,
+                    organization_id=organization_id,
+                    conversation_uuids=conversation_uuids,
                 )
             except sqlite3.Error:
                 logger.exception(
@@ -414,6 +450,8 @@ def search_conversations(
         project_path=project_path,
         bookmarks=bookmarks,
         include_tool_calls=include_tool_calls,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
     )
 
 
@@ -428,6 +466,8 @@ def _search_via_linear_scan(
     project_path: str | None = None,
     bookmarks: set[str] | None = None,
     include_tool_calls: bool = True,
+    organization_id: str | None = None,
+    conversation_uuids: set[str] | None = None,
 ) -> list[SearchResult]:
     """Original linear-scan implementation; now the fallback path.
 
@@ -435,6 +475,13 @@ def _search_via_linear_scan(
     flattened searchable text. Slow on large corpora (~0.8-2.3s on Ray's
     1.5GB corpus) but always correct and never depends on an index file
     being present.
+
+    Sidebar-scope params (2026-05-14):
+      * ``organization_id`` — workspace gate; mirrors
+        ConversationStore.list_conversations behavior. None on the conv
+        side does NOT match a UUID filter (and vice versa).
+      * ``conversation_uuids`` — active-filter set gate; ANDs with the
+        other scope filters. None means "no constraint".
     """
     phrase, tokens = parse_user_query(query)
     if not tokens:
@@ -451,7 +498,9 @@ def _search_via_linear_scan(
 
     for conv in store.get_all_conversations_raw(source=source):
         if conversation_uuid:
-            # Most specific filter; wins over project_path / bookmarks.
+            # Most specific filter; wins over project_path / bookmarks /
+            # conversation_uuids. (We also strip those three at the
+            # search_conversations entry point — this is defense in depth.)
             if conv.get("uuid") != conversation_uuid:
                 continue
         else:
@@ -459,6 +508,17 @@ def _search_via_linear_scan(
                 continue
             if bookmarks is not None and conv.get("uuid") not in bookmarks:
                 continue
+            if (
+                conversation_uuids is not None
+                and conv.get("uuid") not in conversation_uuids
+            ):
+                continue
+        # Workspace filter ANDs always (not part of the most-specific
+        # override). None on the filter side means "no constraint";
+        # otherwise an exact-equality gate matches conv organization_id
+        # (None on the conv side is NOT a wildcard match).
+        if organization_id is not None and conv.get("organization_id") != organization_id:
+            continue
         matching_messages: list[MessageSnippet] = []
 
         # Search in conversation name. Title-match policy:
@@ -597,6 +657,8 @@ def _search_via_index(
     project_path: str | None,
     bookmarks: set[str] | None,
     include_tool_calls: bool = True,
+    organization_id: str | None = None,
+    conversation_uuids: set[str] | None = None,
 ) -> list[SearchResult]:
     """FTS5 fast path: scatter-gather over the inverted index.
 
@@ -626,6 +688,8 @@ def _search_via_index(
         conversation_uuid=conversation_uuid,
         project_path=project_path,
         bookmarks=bookmarks,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
     )
     body_matched_uuids: set[str] = {m["conv_uuid"] for m in matches}
 
@@ -652,6 +716,13 @@ def _search_via_index(
     title_matched_uuids: set[str] = set()
     title_sql_clauses = ["title LIKE ?"]
     title_sql_params: list[Any] = [f"%{title_needle}%"]
+    # Sidebar-scope (2026-05-14): the title sweep needs the conversation_uuids
+    # gate too, so a title-only hit on an excluded conversation doesn't bleed
+    # in via this code path. We use the same TEMP TABLE that SearchIndex.query
+    # populates (under the per-thread read connection); see
+    # SearchIndex._populate_allowed_conv. If conversation_uuids is None we
+    # don't emit the JOIN at all.
+    use_allowed_join = conversation_uuids is not None
     if conversation_uuid is not None:
         title_sql_clauses.append("conv_uuid = ?")
         title_sql_params.append(conversation_uuid)
@@ -667,12 +738,26 @@ def _search_via_index(
                 placeholders = ",".join("?" * len(bookmarks))
                 title_sql_clauses.append(f"conv_uuid IN ({placeholders})")
                 title_sql_params.extend(sorted(bookmarks))
+        if use_allowed_join:
+            title_sql_clauses.append(
+                "conv_uuid IN (SELECT uuid FROM allowed_conv)"
+            )
     if source != "all":
         title_sql_clauses.append("source = ?")
         title_sql_params.append(source)
+    if organization_id is not None:
+        title_sql_clauses.append("organization_id = ?")
+        title_sql_params.append(organization_id)
     if title_sql_clauses:
         try:
             conn = idx._get_read_conn()
+            # If we're using the allowed_conv TEMP table here, populate it
+            # on this same read connection. SearchIndex.query already did
+            # this for the main MATCH query, but the TEMP table is per-
+            # connection — we're guaranteed the same conn since both
+            # threading.local lookups happen inside one request thread.
+            if use_allowed_join:
+                idx._populate_allowed_conv(conn, conversation_uuids)
             sql = (
                 "SELECT DISTINCT conv_uuid FROM messages "
                 f"WHERE {' AND '.join(title_sql_clauses)} "
@@ -694,6 +779,8 @@ def _search_via_index(
         candidate_uuids &= bookmarks
     if conversation_uuid is not None:
         candidate_uuids &= {conversation_uuid}
+    if conversation_uuids is not None:
+        candidate_uuids &= conversation_uuids
 
     if not candidate_uuids:
         return []

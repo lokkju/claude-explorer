@@ -1,14 +1,45 @@
-"""Search router."""
+"""Search router.
+
+Two transports supported (2026-05-14, sidebar-scope propagation):
+
+  * **GET /api/search?...** — existing query-string contract. All scope
+    knobs accepted as query params. CSV (``conversation_uuids=a,b,c``)
+    is supported but kept for small scopes; large active-filter sets
+    blow past h11 / proxy URL-length limits.
+
+  * **POST /api/search** — new variant. Same scope knobs in a JSON body.
+    The frontend defaults to POST when it has a ``conversation_uuids``
+    list to send; this avoids 414/431 at proxies and dodges SQLite's
+    ``SQLITE_MAX_VARIABLE_NUMBER`` (often 999) on the underlying
+    ``IN (...)`` clauses.
+
+Both methods delegate to :func:`backend.search.search_conversations` with
+identical kwargs — only the transport differs.
+"""
 
 from typing import Literal
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel, Field
 
 from ..models import SearchResult
 from ..store import ConversationStore
 from ..search import search_conversations
 
 router = APIRouter(tags=["search"])
+
+
+def _parse_csv_uuid_set(raw: str | None) -> set[str] | None:
+    """Parse a CSV string into a set of UUIDs, mirroring the bookmarks parser.
+
+    * ``None`` → ``None`` (no constraint)
+    * ``""`` → ``set()`` (filter excludes everything; caller short-circuits)
+    * ``"a,b,c"`` → ``{"a", "b", "c"}``
+    * Whitespace around tokens is stripped; empty tokens are dropped.
+    """
+    if raw is None:
+        return None
+    return {u.strip() for u in raw.split(",") if u.strip()} if raw.strip() else set()
 
 
 @router.get("/search", response_model=list[SearchResult])
@@ -36,6 +67,24 @@ async def search(
         None,
         description="Comma-separated UUIDs to restrict search to bookmarked conversations",
     ),
+    organization_id: str | None = Query(
+        None,
+        description=(
+            "Workspace UUID — restrict to conversations whose organization_id "
+            "matches exactly. None means no constraint."
+        ),
+    ),
+    conversation_uuids: str | None = Query(
+        None,
+        description=(
+            "Comma-separated UUIDs to restrict search to a specific set "
+            "(used by the UI to honor the active-filter graph). "
+            "None means no constraint; empty string means the active "
+            "filter excludes everything (returns []). For large sets, "
+            "prefer POST /api/search with a JSON body — GET has URL-length "
+            "limits at proxies and h11."
+        ),
+    ),
     include_tool_calls: bool = Query(
         True,
         description=(
@@ -47,13 +96,10 @@ async def search(
         ),
     ),
 ) -> list[SearchResult]:
-    """Search across all conversations."""
+    """Search across all conversations (GET form)."""
     store = ConversationStore()
-    bookmark_set = (
-        {u.strip() for u in bookmarks.split(",") if u.strip()}
-        if bookmarks
-        else None
-    )
+    bookmark_set = _parse_csv_uuid_set(bookmarks)
+    conversation_uuids_set = _parse_csv_uuid_set(conversation_uuids)
     return search_conversations(
         store,
         q,
@@ -65,4 +111,59 @@ async def search(
         project_path=project_path,
         bookmarks=bookmark_set,
         include_tool_calls=include_tool_calls,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids_set,
+    )
+
+
+class SearchRequest(BaseModel):
+    """JSON body for ``POST /api/search``.
+
+    Mirrors the GET query params, but with native types: ``bookmarks``
+    and ``conversation_uuids`` are JSON arrays (not CSV) — that's the
+    whole point of having a POST variant. Spec §2 (2026-05-14, Council
+    convergence): GET CSV blows past URL-length limits at ~1500 UUIDs.
+    """
+
+    q: str = Field(..., min_length=1, description="Search query")
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all"
+    context_size: Literal["snippet", "full"] = "snippet"
+    sort: Literal["updated_at", "created_at", "name", "project"] = "updated_at"
+    sort_order: Literal["asc", "desc"] = "desc"
+    conversation_uuid: str | None = None
+    project_path: str | None = None
+    bookmarks: list[str] | None = None
+    organization_id: str | None = None
+    conversation_uuids: list[str] | None = None
+    include_tool_calls: bool = True
+
+
+@router.post("/search", response_model=list[SearchResult])
+async def search_post(body: SearchRequest) -> list[SearchResult]:
+    """Search across all conversations (POST form).
+
+    Identical semantics to the GET endpoint; the only difference is
+    transport. Used by the UI when the active-filter set is large
+    enough that GET CSV would risk a 414/431 at proxies. The same
+    `search_conversations()` internals back both paths so any
+    per-method drift is caught by ``test_post_search_get_parity_*``.
+    """
+    store = ConversationStore()
+    return search_conversations(
+        store,
+        body.q,
+        source=body.source,
+        context_size=body.context_size,
+        sort=body.sort,
+        sort_order=body.sort_order,
+        conversation_uuid=body.conversation_uuid,
+        project_path=body.project_path,
+        bookmarks=set(body.bookmarks) if body.bookmarks is not None else None,
+        include_tool_calls=body.include_tool_calls,
+        organization_id=body.organization_id,
+        conversation_uuids=(
+            set(body.conversation_uuids)
+            if body.conversation_uuids is not None
+            else None
+        ),
     )

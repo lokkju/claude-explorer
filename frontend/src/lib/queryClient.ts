@@ -32,7 +32,17 @@ export const queryKeys = {
     contextSize?: string,
     sort?: string,
     sortOrder?: string,
-    scope?: { conversationUuid?: string; projectPath?: string; bookmarks?: string[] },
+    scope?: {
+      conversationUuid?: string
+      projectPath?: string
+      bookmarks?: string[]
+      // 2026-05-14 sidebar-scope propagation. organizationId + conversationUuids
+      // are part of the queryKey so toggling the workspace dropdown OR the
+      // active filter automatically re-fires the search without manual
+      // re-issue (spec invariant I4).
+      organizationId?: string | null
+      conversationUuids?: string[]
+    },
     // 2026-05-11: include_tool_calls toggles search scope. Must be part
     // of the key so toggling the UI's "Show tool calls" pref re-fires
     // the network request and the cache doesn't return stale results.
