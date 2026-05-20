@@ -314,7 +314,16 @@ class ConversationStore:
 
     def _make_summary(self, data: dict[str, Any], include_subagents: bool = False) -> ConversationSummary:
         """Create a ConversationSummary from raw conversation data."""
-        chat_messages = data.get("chat_messages", [])
+        # `data.get(k, default)` returns `default` only when the key is
+        # MISSING; an explicit `null` value reaches downstream consumers.
+        # The current control flow happens to avoid crashing on a null
+        # chat_messages (the `if chat_messages:` branch falls through
+        # and `has_branches(chat_messages)` is gated by `if not chat_messages
+        # else`), but the same shape WOULD crash if a future refactor
+        # moved a `for m in chat_messages` outside the guard. Normalize
+        # at the boundary for parity with get_conversation /
+        # get_conversation_tree (fixed in f9a2fd2).
+        chat_messages = data.get("chat_messages") or []
         # Use pre-computed counts if available (from fast reader), else calculate
         if chat_messages:
             message_count = len(chat_messages)
@@ -337,14 +346,22 @@ class ConversationStore:
                     message_count=agent_data.get("message_count", 0),
                 ))
 
+        # ``data.get(k, fallback_str)`` returns the fallback ONLY when the
+        # key is MISSING. If the key is present with value ``None`` (legacy
+        # / partial-write JSON), ``.get`` returns ``None``, which the
+        # Pydantic ``str``-typed fields on ``ConversationSummary`` reject
+        # with a ValidationError → HTTP 500. Same bug-class as 8ab36fc;
+        # ``(value or fallback)`` collapses both None and missing into the
+        # safe fallback. Pinned by
+        # ``test_list_conversations_handles_null_name_summary_model_without_crashing``.
         return ConversationSummary(
-            uuid=data.get("uuid", ""),
-            name=data.get("name", "Untitled"),
-            summary=data.get("summary", ""),
-            model=data.get("model", ""),
+            uuid=data.get("uuid") or "",
+            name=data.get("name") or "Untitled",
+            summary=data.get("summary") or "",
+            model=data.get("model") or "",
             created_at=_parse_datetime(data.get("created_at")),
             updated_at=_parse_datetime(data.get("updated_at")),
-            is_starred=data.get("is_starred", False),
+            is_starred=bool(data.get("is_starred") or False),
             message_count=message_count,
             human_message_count=human_count,
             # See `get_conversation` for the CC branch-flag rationale —
@@ -353,9 +370,9 @@ class ConversationStore:
             has_branches=(
                 False
                 if data.get("source") == "CLAUDE_CODE"
-                else (data.get("has_branches", False) if not chat_messages else has_branches(chat_messages))
+                else (bool(data.get("has_branches") or False) if not chat_messages else has_branches(chat_messages))
             ),
-            source=data.get("source", "CLAUDE_AI"),
+            source=data.get("source") or "CLAUDE_AI",
             project_path=data.get("project_path"),
             git_branch=data.get("git_branch"),
             organization_id=data.get("organization_id"),
@@ -439,9 +456,19 @@ class ConversationStore:
                 continue
             if search:
                 search_lower = search.lower()
-                name_match = search_lower in data.get("name", "").lower()
-                summary_match = search_lower in data.get("summary", "").lower()
-                project_match = search_lower in data.get("project_path", "").lower()
+                # `dict.get(key, "")` is unsafe when the key exists but
+                # the value is `None` — `None.lower()` raises
+                # AttributeError and the route crashes mid-iteration.
+                # CC sessions sometimes have `project_path: null` for
+                # the original cwd; Desktop conversations sometimes have
+                # `summary: null` for short threads. `(value or "")`
+                # collapses both None and missing to the empty string,
+                # which `.lower()` handles safely. Regression test:
+                # backend/tests/test_conversations.py::
+                # test_sidebar_search_filters_by_name (and siblings).
+                name_match = search_lower in (data.get("name") or "").lower()
+                summary_match = search_lower in (data.get("summary") or "").lower()
+                project_match = search_lower in (data.get("project_path") or "").lower()
                 if not (name_match or summary_match or project_match):
                     continue
 
@@ -502,9 +529,14 @@ class ConversationStore:
         if not data:
             return None
 
-        chat_messages = data.get("chat_messages", [])
-        stored_leaf = data.get("current_leaf_message_uuid", "")
-        source = data.get("source", "CLAUDE_AI")
+        # See _make_summary for the (value or fallback) rationale —
+        # an explicit null on chat_messages used to crash every
+        # downstream iteration (any/len/for-in/has_branches) with a
+        # TypeError. Same fix shape applied to the str-typed fields
+        # below at the ConversationDetail construction.
+        chat_messages = data.get("chat_messages") or []
+        stored_leaf = data.get("current_leaf_message_uuid") or ""
+        source = data.get("source") or "CLAUDE_AI"
         is_cc = source == "CLAUDE_CODE"
 
         # Bug-fix (2026-05-12): Claude Code JSONLs are append-only
@@ -543,14 +575,18 @@ class ConversationStore:
         messages = [_parse_message(m) for m in branch]
         human_count = sum(1 for m in chat_messages if m.get("sender") == "human")
 
+        # ``data.get(k, fallback)`` returns the fallback ONLY when the key
+        # is MISSING; an explicit ``None`` value reaches Pydantic and is
+        # rejected by str/bool/list-typed fields with HTTP 500. See
+        # _make_summary for the matching fix on the list path.
         return ConversationDetail(
-            uuid=data.get("uuid", ""),
-            name=data.get("name", "Untitled"),
-            summary=data.get("summary", ""),
-            model=data.get("model", ""),
+            uuid=data.get("uuid") or "",
+            name=data.get("name") or "Untitled",
+            summary=data.get("summary") or "",
+            model=data.get("model") or "",
             created_at=_parse_datetime(data.get("created_at")),
             updated_at=_parse_datetime(data.get("updated_at")),
-            is_starred=data.get("is_starred", False),
+            is_starred=bool(data.get("is_starred") or False),
             message_count=len(chat_messages),
             human_message_count=human_count,
             has_branches=branches_flag,
@@ -560,10 +596,10 @@ class ConversationStore:
             messages=messages,
             current_leaf_message_uuid=leaf_uuid,
             file_path=str(file_path) if file_path else None,
-            compact_markers=data.get("compact_markers", []),
+            compact_markers=data.get("compact_markers") or [],
             # V1 polish (2026-05-12): CC reader's `_flag_leading_prelude_markers`
             # emits this; Desktop data dicts won't contain it, so default 0.
-            prelude_hidden_count=data.get("prelude_hidden_count", 0),
+            prelude_hidden_count=int(data.get("prelude_hidden_count") or 0),
         )
 
     def get_conversation_tree(self, uuid: str) -> ConversationTree | None:
@@ -572,9 +608,11 @@ class ConversationStore:
         if not data:
             return None
 
-        chat_messages = data.get("chat_messages", [])
-        leaf_uuid = data.get("current_leaf_message_uuid", "")
-        source = data.get("source", "CLAUDE_AI")
+        # Same None-safety guard as get_conversation; an explicit null
+        # on chat_messages must not reach build_message_tree.
+        chat_messages = data.get("chat_messages") or []
+        leaf_uuid = data.get("current_leaf_message_uuid") or ""
+        source = data.get("source") or "CLAUDE_AI"
         is_cc = source == "CLAUDE_CODE"
 
         # Bug-fix (2026-05-12, follow-up to get_conversation): Claude Code

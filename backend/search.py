@@ -899,7 +899,12 @@ def _search_via_linear_scan(
         #     intended as a title hunt doesn't unexpectedly match more
         #     titles). This is intentionally conservative; revisit if a
         #     user reports title hits being too narrow.
-        name = conv.get("name", "")
+        # `conv.get("name", "")` only defaults when the key is MISSING;
+        # if the key is present with value None (legacy Desktop or
+        # partial-write CC sessions), `.lower()` raises AttributeError.
+        # `or ""` collapses both None and missing to "". Sibling fix to
+        # `backend/store.py:list_conversations`.
+        name = conv.get("name") or ""
         name_lower = name.lower()
         title_needle = (phrase if phrase is not None else query).lower()
         if title_needle and title_needle in name_lower:
@@ -918,8 +923,13 @@ def _search_via_linear_scan(
                     )
                 )
 
-        # Search in messages
-        for msg in conv.get("chat_messages", []):
+        # Search in messages. The `or []` guard handles the case where
+        # the key is present with explicit `None` (legacy / partial-write
+        # Desktop JSON); `data.get(k, [])` returns the default ONLY when
+        # the key is missing. Same bug-class as the 8ab36fc fix on
+        # name/summary/project_path; pinned by
+        # test_search_handles_null_chat_messages_without_crashing.
+        for msg in conv.get("chat_messages", []) or []:
             # Issue #0 — cache the searchable-text projection on the
             # message dict itself. The cached conversation dict is the
             # same instance on every call (via backend.cache.FileCache),
@@ -1212,7 +1222,11 @@ def _search_via_index(
             "__search_text_full__" if include_tool_calls
             else "__search_text_textonly__"
         )
-        for msg in conv.get("chat_messages", []):
+        # See the linear-scan callsite above for the `or []` rationale —
+        # explicit-None chat_messages must not crash the FTS5 fast path
+        # either. Pinned by
+        # test_search_handles_null_chat_messages_without_crashing.
+        for msg in conv.get("chat_messages", []) or []:
             if msg.get("uuid") not in wanted_msg_uuids:
                 continue
             text = msg.get(cache_key)

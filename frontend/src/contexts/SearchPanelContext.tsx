@@ -45,6 +45,60 @@ export interface SearchMatch {
 
 export type SearchContextSize = 'snippet' | 'full'
 
+/**
+ * Pure narrow-the-stale-results helper extracted from SearchPanelProvider
+ * (2026-05-18 council audit). Returns the subset of `rawResults` whose
+ * conversation name OR at least one message snippet matches every
+ * needle parsed from `query`. Quoted-phrase queries match the inner
+ * literal phrase; whitespace-separated queries enforce AND-of-tokens
+ * (V1 polish 2026-05-14 semantics).
+ *
+ * Null-safety (mirror of backend H1-H4): `r.conversation_name` and
+ * `m.snippet` are typed `string` but the wire format can drift
+ * (older on-disk JSONs, partial serialization) and surface `null` at
+ * runtime. Without the `?? ''` guards, the unguarded `.toLowerCase()`
+ * calls threw `TypeError: Cannot read properties of null` and
+ * white-screened the search panel. Mirrors the backend
+ * `(data.get(k) or "").lower()` invariant.
+ */
+export function narrowSearchResults(
+  rawResults: SearchResult[] | undefined,
+  query: string,
+): SearchResult[] {
+  if (!rawResults) return []
+  if (!query || query.length < 2) return rawResults
+  const trimmed = query.trim()
+  let needles: string[]
+  if (
+    trimmed.length >= 3 &&
+    trimmed.startsWith('"') &&
+    trimmed.endsWith('"')
+  ) {
+    // Phrase mode — strip quotes; match the literal inner phrase.
+    const inner = trimmed.slice(1, -1).trim().toLowerCase()
+    needles = inner ? [inner] : []
+  } else {
+    needles = trimmed.toLowerCase().split(/\s+/).filter(Boolean)
+  }
+  if (needles.length === 0) return rawResults
+  const filtered: SearchResult[] = []
+  for (const r of rawResults) {
+    const nameLower = (r.conversation_name ?? '').toLowerCase()
+    const nameHit = needles.every((n) => nameLower.includes(n))
+    const msgMatches = (r.matching_messages ?? []).filter((m) => {
+      const snippetLower = (m.snippet ?? '').toLowerCase()
+      return needles.every((n) => snippetLower.includes(n))
+    })
+    if (msgMatches.length > 0 || nameHit) {
+      filtered.push({
+        ...r,
+        matching_messages: msgMatches.length > 0 ? msgMatches : r.matching_messages,
+      })
+    }
+  }
+  return filtered
+}
+
 interface SearchPanelContextType {
   isOpen: boolean
   query: string
@@ -243,40 +297,18 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // In snippet mode this can still produce false negatives (one token may live
   // outside the ±150 char snippet window). Those matches reappear once the
   // debounced backend call resolves. Acceptable tradeoff for instant feel.
-  const results = useMemo<SearchResult[]>(() => {
-    if (!rawResults) return []
-    if (!query || query.length < 2) return rawResults
-    const trimmed = query.trim()
-    let needles: string[]
-    if (
-      trimmed.length >= 3 &&
-      trimmed.startsWith('"') &&
-      trimmed.endsWith('"')
-    ) {
-      // Phrase mode — strip quotes; match the literal inner phrase.
-      const inner = trimmed.slice(1, -1).trim().toLowerCase()
-      needles = inner ? [inner] : []
-    } else {
-      needles = trimmed.toLowerCase().split(/\s+/).filter(Boolean)
-    }
-    if (needles.length === 0) return rawResults
-    const filtered: SearchResult[] = []
-    for (const r of rawResults) {
-      const nameLower = r.conversation_name.toLowerCase()
-      const nameHit = needles.every((n) => nameLower.includes(n))
-      const msgMatches = r.matching_messages.filter((m) => {
-        const snippetLower = m.snippet.toLowerCase()
-        return needles.every((n) => snippetLower.includes(n))
-      })
-      if (msgMatches.length > 0 || nameHit) {
-        filtered.push({
-          ...r,
-          matching_messages: msgMatches.length > 0 ? msgMatches : r.matching_messages,
-        })
-      }
-    }
-    return filtered
-  }, [rawResults, query])
+  //
+  // Extracted as exported pure function `narrowSearchResults` for direct
+  // unit testing of the null-safety contract (2026-05-18 council audit,
+  // mirror of backend H1-H4): `r.conversation_name.toLowerCase()` and
+  // `m.snippet.toLowerCase()` previously crashed if the wire format
+  // surfaced null for those fields despite the TypeScript type saying
+  // `string`. The exported function lets the test feed null fixtures
+  // without standing up the full SearchPanelProvider dependency graph.
+  const results = useMemo<SearchResult[]>(
+    () => narrowSearchResults(rawResults, query),
+    [rawResults, query],
+  )
 
   // Envelope passthroughs — exposed via context so SearchPanel can
   // render the truncation footer. Defaults match the "no response yet"
@@ -312,15 +344,26 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   const flatMatches = useMemo<SearchMatch[]>(() => {
     const matches: SearchMatch[] = []
     for (const result of results) {
-      const messageMatches = result.matching_messages.filter(
+      // 2026-05-18 council audit: defensive `?? []` mirrors the
+      // narrowSearchResults guard. Even when the query is short and
+      // narrowSearchResults short-circuits to rawResults unchanged, a
+      // wire-format drift surfacing matching_messages=null would
+      // crash here at `.filter(...)`. Same mirror of backend
+      // `(data.get(k) or "").lower()` pattern.
+      const allMatches = result.matching_messages ?? []
+      const messageMatches = allMatches.filter(
         (m) => m.message_uuid !== 'title'
       )
+      // 2026-05-18: conversation_name may surface null at runtime
+      // despite the TypeScript type; coalesce to '' so downstream
+      // string consumers (SearchPanel render path) get a string.
+      const conversationName = result.conversation_name ?? ''
       if (messageMatches.length > 0) {
         for (const msg of messageMatches) {
           matches.push({
             conversationUuid: result.conversation_uuid,
             messageUuid: msg.message_uuid,
-            conversationName: result.conversation_name,
+            conversationName,
             snippet: msg.snippet,
             matchStart: msg.match_start,
             matchEnd: msg.match_end,
@@ -332,14 +375,14 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
           })
         }
       } else {
-        const titleMatch = result.matching_messages.find(
+        const titleMatch = allMatches.find(
           (m) => m.message_uuid === 'title'
         )
         matches.push({
           conversationUuid: result.conversation_uuid,
           messageUuid: 'title',
-          conversationName: result.conversation_name,
-          snippet: titleMatch?.snippet ?? result.conversation_name,
+          conversationName,
+          snippet: titleMatch?.snippet ?? conversationName,
           matchStart: titleMatch?.match_start ?? 0,
           matchEnd: titleMatch?.match_end ?? 0,
           sender: titleMatch?.sender ?? '',

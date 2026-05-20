@@ -8,8 +8,33 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatDate(date: string | Date): string {
+// 2026-05-18 council audit (mirror of backend H1-H4): all four date
+// formatters previously accepted `string | Date` non-null. But the
+// nullable wire fields (MessageSnippet.created_at: string | null;
+// any drift on Message/ConversationSummary date fields) and bad-string
+// inputs (e.g. backend serialization regression) could reach these
+// helpers and:
+//   - `new Date(null)` returns 1970-01-01 — silently renders epoch
+//     dates that look like data corruption ("Jan 1, 1970" in UI).
+//   - `new Date('bad-string')` returns Invalid Date, and date-fns
+//     `format(invalidDate, ...)` throws RangeError, crashing the page.
+//
+// All four now accept `null | undefined | invalid-Date` and return the
+// industry-standard em-dash placeholder. Preserves layout (the span
+// still has content) and surfaces the absent-date case to the user
+// without crashing. Aligns with the backend `(data.get(k) or "")`
+// "missing is empty, don't crash" invariant.
+const ABSENT_DATE_PLACEHOLDER = '—'
+
+function toValidDate(date: string | Date | null | undefined): Date | null {
+  if (date == null) return null
   const d = typeof date === 'string' ? new Date(date) : date
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+export function formatDate(date: string | Date | null | undefined): string {
+  const d = toValidDate(date)
+  if (!d) return ABSENT_DATE_PLACEHOLDER
 
   if (isToday(d)) {
     return format(d, 'h:mm a')
@@ -20,8 +45,9 @@ export function formatDate(date: string | Date): string {
   return format(d, 'MMM d')
 }
 
-export function formatMessageTimestamp(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date
+export function formatMessageTimestamp(date: string | Date | null | undefined): string {
+  const d = toValidDate(date)
+  if (!d) return ABSENT_DATE_PLACEHOLDER
 
   if (isToday(d)) {
     return format(d, 'h:mm:ss a')
@@ -32,13 +58,15 @@ export function formatMessageTimestamp(date: string | Date): string {
   return format(d, 'MMM d, yyyy h:mm:ss a')
 }
 
-export function formatRelativeDate(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date
+export function formatRelativeDate(date: string | Date | null | undefined): string {
+  const d = toValidDate(date)
+  if (!d) return ABSENT_DATE_PLACEHOLDER
   return formatDistanceToNow(d, { addSuffix: true })
 }
 
-export function formatFullDate(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date
+export function formatFullDate(date: string | Date | null | undefined): string {
+  const d = toValidDate(date)
+  if (!d) return ABSENT_DATE_PLACEHOLDER
   return format(d, 'PPpp')
 }
 
@@ -130,7 +158,12 @@ export function messageToMarkdown(message: Message, showToolCalls: boolean): str
       .map((block) => contentBlockToMarkdown(block, showToolCalls))
       .join('')
   } else {
-    content = message.text
+    // 2026-05-18 council audit: `message.text` is typed `string` but
+    // can surface null/undefined on partial wire-format drift. The
+    // subsequent `content.trim()` at the bottom of this function would
+    // throw `TypeError: Cannot read properties of null (reading
+    // 'trim')` and crash the export pipeline. Coalesce defensively.
+    content = message.text ?? ''
   }
 
   // Filter out tool placeholders if showToolCalls is false

@@ -36,11 +36,19 @@ export function useConversations(
   // and projects" input expect the placeholder's promise: matches must
   // come from the title or the project path, not the body summary.
   // (P1.2, 2026-05-04.)
+  //
+  // Null-safety (2026-05-18 council audit, mirror of backend H1-H4):
+  // `c.name` is typed `string` but the backend can drift (older on-disk
+  // JSONs, partial Pydantic serialization) and surface `null` at
+  // runtime. Without `?? ''` here, the unguarded `.toLowerCase()` call
+  // throws `TypeError: Cannot read properties of null (reading
+  // 'toLowerCase')` and white-screens the sidebar on every keystroke.
+  // This mirrors the backend `(data.get(k) or "").lower()` invariant.
   const data = useMemo(() => {
     if (!search?.trim() || !query.data) return query.data
     const lower = search.toLowerCase()
     return query.data.filter(c =>
-      c.name.toLowerCase().includes(lower) ||
+      (c.name ?? '').toLowerCase().includes(lower) ||
       (c.project_path ?? '').toLowerCase().includes(lower)
     )
   }, [query.data, search])

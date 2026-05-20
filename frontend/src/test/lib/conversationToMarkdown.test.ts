@@ -318,3 +318,44 @@ describe('conversationToMarkdown — argless-marker exclusion', () => {
     expect(md).not.toContain('Session: /clear')
   })
 })
+
+/**
+ * Null-safety regression for `messageToMarkdown` (2026-05-18 council
+ * audit, mirror of backend H1-H4).
+ *
+ * The fallback branch at utils.ts:135 — when a message has no
+ * `content[]` blocks — previously assigned `content = message.text`
+ * unconditionally. The TypeScript type says `Message.text: string`,
+ * but the same wire-drift class the backend just hardened against
+ * could surface null here. The subsequent `content.trim()` at line
+ * 167 would then throw `TypeError: Cannot read properties of null
+ * (reading 'trim')` and crash the export pipeline.
+ *
+ * Fix mirrors the backend `(data.get(k) or "")` pattern with
+ * `message.text ?? ''`.
+ */
+describe('messageToMarkdown — null-text safety (mirrors backend H1-H4)', () => {
+  it('does NOT throw when message.text is null and content[] is absent', () => {
+    // @ts-expect-error — deliberate type-system bypass to simulate API drift
+    const m = makeMessage({ uuid: 'u1', sender: 'human', text: null, content: [] })
+    // Pre-fix: TypeError: Cannot read properties of null (reading 'trim')
+    expect(() => messageToMarkdown(m, false)).not.toThrow()
+    const md = messageToMarkdown(m, false)
+    expect(md).toContain('**You:**')
+  })
+
+  it('does NOT throw when message.text is undefined and content[] is absent', () => {
+    // @ts-expect-error — deliberate type-system bypass to simulate API drift
+    const m = makeMessage({ uuid: 'u1', sender: 'assistant', text: undefined, content: [] })
+    expect(() => messageToMarkdown(m, false)).not.toThrow()
+    const md = messageToMarkdown(m, false)
+    expect(md).toContain('**Claude:**')
+  })
+
+  it('renders body normally when message.text is a real string', () => {
+    const m = makeMessage({ uuid: 'u1', sender: 'human', text: 'hello world', content: [] })
+    const md = messageToMarkdown(m, false)
+    expect(md).toContain('**You:**')
+    expect(md).toContain('hello world')
+  })
+})
