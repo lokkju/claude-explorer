@@ -20,10 +20,13 @@ export function useConversations(
   // Chromium's net::ERR_NETWORK_CHANGED on reload in headless
   // Playwright (2026-05-15 regression diagnosis). Gating the fetch
   // avoids both costs.
+  // staleTime/gcTime are inherited from queryClient.setQueryDefaults
+  // for the ['conversations', 'list'] key prefix (see lib/queryClient.ts).
+  // Task A6 (2026-05-18): list is 30s — refresh aggressively now that the
+  // backend warm path is ~87ms.
   const query = useQuery({
     queryKey: queryKeys.conversations.list(serverFilters),
     queryFn: () => api.getConversations(serverFilters),
-    staleTime: 5 * 60 * 1000, // 5 minutes
     enabled: options?.enabled ?? true,
   })
 
@@ -46,13 +49,17 @@ export function useConversations(
 }
 
 export function useConversation(uuid: string, leaf?: string) {
+  // staleTime is inherited from queryClient.setQueryDefaults for the
+  // ['conversations', 'detail'] key prefix (see lib/queryClient.ts).
+  // Task A6 (2026-05-18): detail is 5min — previously Infinity, which
+  // suppressed refetchOnWindowFocus and let the fetch pipeline's new
+  // messages stay invisible until a hard refresh.
   return useQuery({
     queryKey: leaf
       ? [...queryKeys.conversations.detail(uuid), 'leaf', leaf]
       : queryKeys.conversations.detail(uuid),
     queryFn: () => api.getConversation(uuid, leaf),
     enabled: !!uuid,
-    staleTime: Infinity, // Conversation content doesn't change
   })
 }
 

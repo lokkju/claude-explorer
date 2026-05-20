@@ -14,14 +14,14 @@ is exposed for completeness / future use.
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 from pathlib import Path
 from typing import Any
 
+import orjson
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import get_settings
 
@@ -52,8 +52,8 @@ def _read_blob() -> dict[str, Any]:
     if not path.exists():
         return {"version": PREFS_VERSION, "data": {}}
     try:
-        raw = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        raw = orjson.loads(path.read_bytes())
+    except (OSError, orjson.JSONDecodeError):
         return {"version": PREFS_VERSION, "data": {}}
     if not isinstance(raw, dict):
         return {"version": PREFS_VERSION, "data": {}}
@@ -67,8 +67,9 @@ def _write_atomic(blob: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     try:
-        with open(tmp, "w") as f:
-            json.dump(blob, f, indent=2)
+        tmp.write_bytes(
+            orjson.dumps(blob, option=orjson.OPT_INDENT_2 | orjson.OPT_APPEND_NEWLINE)
+        )
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     except BaseException:
@@ -88,6 +89,15 @@ class PreferencesEnvelope(BaseModel):
 
 
 class PreferencesWrite(BaseModel):
+    # ``extra='forbid'`` turns a typo'd top-level field (e.g. a frontend bug
+    # writing ``themee`` at the root instead of inside ``data``) into a 422
+    # at the wire boundary instead of a silent no-op write. The ``data``
+    # field itself stays ``dict[str, Any]`` so unknown KEYS INSIDE ``data``
+    # keep working — forward-compat for future preference keys is preserved
+    # while the envelope shape is locked. See
+    # ``test_preferences.test_patch_preferences_{unknown,typo}_field_returns_422``.
+    model_config = ConfigDict(extra="forbid")
+
     data: dict[str, Any] = Field(default_factory=dict)
 
 

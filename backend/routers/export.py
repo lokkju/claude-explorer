@@ -1,11 +1,13 @@
 """Export router."""
 
+import asyncio
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 import io
 
+from ..deps import get_store
 from ..store import ConversationStore
 from ..export import (
     conversation_to_markdown,
@@ -18,10 +20,26 @@ from ..export import (
 router = APIRouter(tags=["export"])
 
 
+# WeasyPrint PDF renders take 2-10s for typical conversations and can
+# spike higher on very long ones with many images. 30s is a generous
+# ceiling that surfaces pathological cases as a 504 (frontend Task A5
+# turns this into a toast) rather than hanging the request indefinitely.
+#
+# Concurrency note: ``asyncio.to_thread`` uses the event loop's default
+# ThreadPoolExecutor (~32 workers). For the V1 single-user local-hosted
+# deployment model this is fine. If telemetry ever shows concurrent PDF
+# renders in the wild, swap to a dedicated bounded executor to prevent
+# CPU/RAM exhaustion from timeout-and-abandoned render threads.
+PDF_RENDER_TIMEOUT_SECONDS = 30.0
+
+
 @router.get("/conversations/{uuid}/export/markdown")
-async def export_markdown(uuid: str, include_tools: bool = True) -> Response:
+async def export_markdown(
+    uuid: str,
+    include_tools: bool = True,
+    store: ConversationStore = Depends(get_store),
+) -> Response:
     """Export a conversation as Markdown."""
-    store = ConversationStore()
     conversation = store.get_conversation(uuid)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -44,6 +62,7 @@ async def export_markdown_bundle(
         "commonmark",
         description="Markdown dialect: 'commonmark' for ![alt](path), 'obsidian' for ![[path]] wikilinks",
     ),
+    store: ConversationStore = Depends(get_store),
 ) -> Response:
     """Issue #4 — Bundle a conversation as a self-contained zip
     (Markdown + ``images/`` directory).
@@ -58,7 +77,6 @@ async def export_markdown_bundle(
     previews require an authenticated proxy fetch and remain
     out-of-scope; the bundled .md surfaces them as a footnote.
     """
-    store = ConversationStore()
     conversation = store.get_conversation(uuid)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -77,15 +95,46 @@ async def export_markdown_bundle(
 
 
 @router.get("/conversations/{uuid}/export/pdf")
-async def export_pdf(uuid: str, include_tools: bool = True) -> Response:
-    """Export a conversation as PDF."""
-    store = ConversationStore()
+async def export_pdf(
+    uuid: str,
+    include_tools: bool = True,
+    store: ConversationStore = Depends(get_store),
+) -> Response:
+    """Export a conversation as PDF.
+
+    WeasyPrint renders are CPU-bound (CFFI to libpango/libcairo, which
+    releases the GIL during the heavy native work) and take 2-10s for
+    typical conversations. Running ``create_pdf`` directly inside the
+    async route handler would pin the event loop for the full render
+    and queue every other request behind it. We offload to a worker
+    thread via ``asyncio.to_thread`` and bound the wait with
+    ``asyncio.timeout`` so a runaway render returns ``504`` instead of
+    hanging the client indefinitely.
+
+    Cancellation caveat: ``asyncio.timeout`` cancels the awaiting task
+    but cannot kill the worker thread. The thread keeps running until
+    WeasyPrint returns; its result and the captured ``conversation`` /
+    HTML buffer are then GC'd. We do not own any tempfile or BytesIO
+    handle at this layer, so there is no caller-side cleanup needed on
+    the timeout path.
+    """
     conversation = store.get_conversation(uuid)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     try:
-        pdf_bytes = create_pdf(conversation, include_tools)
+        async with asyncio.timeout(PDF_RENDER_TIMEOUT_SECONDS):
+            pdf_bytes = await asyncio.to_thread(
+                create_pdf, conversation, include_tools
+            )
+    except TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"PDF render exceeded {PDF_RENDER_TIMEOUT_SECONDS:.0f}s timeout. "
+                "Try exporting as Markdown instead."
+            ),
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -99,19 +148,23 @@ async def export_pdf(uuid: str, include_tools: bool = True) -> Response:
 
 
 @router.get("/export/all/markdown")
-async def export_all_markdown() -> StreamingResponse:
-    """Export all conversations as a ZIP of Markdown files."""
-    store = ConversationStore()
+async def export_all_markdown(
+    store: ConversationStore = Depends(get_store),
+) -> StreamingResponse:
+    """Export all conversations as a ZIP of Markdown files.
 
+    Empty-corpus contract (C6 (c)): the route never 404s on an empty
+    data dir. The fresh-install state (no fetches yet) is a legitimate
+    user path — clicking "Export all" before the first fetch should
+    download a self-explanatory zip (single README) instead of an
+    error. ``create_markdown_zip([])`` owns that stub.
+    """
     # Get all conversations with full details
     conversations = []
     for summary in store.list_conversations():
         detail = store.get_conversation(summary.uuid)
         if detail:
             conversations.append(detail)
-
-    if not conversations:
-        raise HTTPException(status_code=404, detail="No conversations found")
 
     zip_bytes = create_markdown_zip(conversations)
 

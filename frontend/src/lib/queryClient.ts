@@ -1,9 +1,27 @@
 import { QueryClient } from '@tanstack/react-query'
 
+// 2026-05-18 (Task A6): React Query staleTime/gcTime tuning.
+//
+// Backend warm `/api/conversations` is now ~87ms (was 5s). Refetching
+// is cheap, so we want the sidebar to feel fresh on return-to-app
+// rather than holding 5-min-stale data.
+//
+//   - Default staleTime: 30s. Any unrouted query inherits this.
+//   - Default gcTime:    10min. Keeps inactive data warm across normal
+//     conversation-pane navigation; bias is toward instant back-nav.
+//   - conversations.list staleTime:   30s (redundant w/ default; explicit).
+//   - conversations.detail staleTime: 5min. Detail rarely changes within a
+//     session; Infinity would have suppressed refetchOnWindowFocus, which
+//     we want when the fetch pipeline adds new messages out-of-band.
+//
+// Per-key staleTimes are hoisted to queryClient.setQueryDefaults below
+// rather than inlined at the useQuery call sites. Single source of truth,
+// statically testable via queryClient.getQueryDefaults().
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      staleTime: 30 * 1000, // 30 seconds
+      gcTime: 10 * 60 * 1000, // 10 minutes — React Query v5 (renamed from cacheTime).
       retry: (failureCount, error) => {
         // Don't retry 404s
         if (error instanceof Error && 'status' in error && (error as any).status === 404) {
@@ -15,6 +33,16 @@ export const queryClient = new QueryClient({
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000), // Exponential backoff, max 10s
     },
   },
+})
+
+// Per-key staleTime defaults. setQueryDefaults matches by key prefix, so
+// `['conversations', 'list', { filters }]` and
+// `[...detail(uuid), 'leaf', leaf]` both inherit correctly.
+queryClient.setQueryDefaults(['conversations', 'list'], {
+  staleTime: 30 * 1000, // 30 seconds
+})
+queryClient.setQueryDefaults(['conversations', 'detail'], {
+  staleTime: 5 * 60 * 1000, // 5 minutes
 })
 
 // Query keys factory

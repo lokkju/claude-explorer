@@ -20,15 +20,18 @@ Claude Explorer data directory. Schema:
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import orjson
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
 
@@ -88,8 +91,8 @@ def _read_all() -> list[Bookmark]:
     if not path.exists():
         return []
     try:
-        data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        data = orjson.loads(path.read_bytes())
+    except (OSError, orjson.JSONDecodeError):
         return []
     raw_list = data.get("bookmarks", []) if isinstance(data, dict) else []
     out: list[Bookmark] = []
@@ -97,6 +100,14 @@ def _read_all() -> list[Bookmark]:
         try:
             out.append(Bookmark(**item))
         except Exception:
+            # Single malformed entry (e.g., user hand-edited the JSON
+            # file or schema drift across versions) — skip and keep
+            # the rest. WARNING level rather than ERROR because the
+            # bookmarks file is user-managed: ERROR would trigger
+            # operator alerting on what is really a user-side typo.
+            logger.warning(
+                "bookmarks: skipping malformed entry %r", item, exc_info=True
+            )
             continue
     return out
 
@@ -107,7 +118,9 @@ def _write_all(bookmarks: list[Bookmark]) -> None:
     payload = {"bookmarks": [b.model_dump() for b in bookmarks]}
     tmp = path.with_suffix(path.suffix + ".tmp")
     try:
-        tmp.write_text(json.dumps(payload, indent=2))
+        tmp.write_bytes(
+            orjson.dumps(payload, option=orjson.OPT_INDENT_2 | orjson.OPT_APPEND_NEWLINE)
+        )
         tmp.replace(path)
     except BaseException:
         try:

@@ -1,5 +1,18 @@
 """SQLite FTS5 inverted index for full-text search.
 
+Backend caches at a glance (Cache landscape, 2026-05-18):
+  * ``FileCache`` (``backend/cache.py``) — in-memory, per-path
+    mtime-keyed cache of parsed conversation dicts; LRU-bounded;
+    lost on process restart.
+  * ``SummaryCache`` (``backend/summary_cache.py``) — SQLite-persisted
+    sidebar summaries; mtime+size invalidation per row; full table
+    wipe on ``claude_code_reader.LOGIC_VERSION`` mismatch at lifespan
+    startup.
+  * ``SearchIndex`` (this module) — SQLite FTS5 inverted index;
+    drift-first incremental rebuild keyed on ``indexed_files`` mtime;
+    full drop+rebuild on ``SCHEMA_VERSION`` bump or column-set drift
+    in the ``messages`` virtual table.
+
 Replaces the linear-scan search path (``backend/search.py``) for queries that
 can be answered by a token-based inverted index. The linear-scan code remains
 as the fallback whenever the index is unavailable, not yet built, or returns
@@ -20,8 +33,8 @@ Lifecycle:
     1. **Initial build**: a background task in the FastAPI lifespan calls
        :func:`build_full_index`, which walks every JSON/JSONL file via
        ``store.get_all_conversations_raw()`` and inserts rows.
-    2. **Incremental updates**: the existing CC image watcher
-       (``backend/cc_image_watcher.py``) calls :func:`update_drifted_files`
+    2. **Incremental updates**: the existing CC watcher
+       (``backend/cc_watcher.py``) calls :func:`update_drifted_files`
        once per scan pass (5s). Mtime check short-circuits no-op cases.
     3. **Drift safety**: every search query, if the index is ready, queries
        it directly. The watcher catches any drift on its next pass.
@@ -277,6 +290,39 @@ class SearchIndex:
 
     One instance per index file. The module-level :func:`get_search_index`
     singleton wraps this for the canonical location.
+
+    Invalidation policy:
+      * **Trigger (per file)**: :func:`update_drifted_files` /
+        :func:`_drift_first_scan` compare each live file's ``os.stat``
+        mtime against the value stamped in ``indexed_files``; any
+        mismatch (or missing row) re-upserts the conversation in a
+        single transaction. Files in ``indexed_files`` whose paths are
+        gone from disk get dropped via :meth:`delete_by_path`.
+        :meth:`upsert_conversation` wraps DELETE+INSERT in
+        ``with self._write_conn:`` so a partial failure rolls back —
+        no half-deleted conversations.
+      * **Persists across restart**: yes — the FTS5 tables, the
+        ``indexed_files`` mtime ledger, and the ``schema_version`` row
+        all live in the SQLite file. A warm restart picks up where the
+        last process left off; the lifespan task runs a drift pass to
+        absorb any edits that happened while the process was down.
+      * **Full rebuild**: :meth:`_init_schema` drops and recreates the
+        tables on ANY of (a) ``schema_version`` row missing,
+        (b) stored version ≠ :data:`SCHEMA_VERSION`, or (c) the
+        on-disk ``messages`` column set ≠ ``_EXPECTED_MESSAGES_COLS``
+        (defends against the historical "version stamped but rebuild
+        failed" bug). ``_schema_ok=False`` during the rebuild so
+        in-flight queries fall back. The manual escape hatch
+        ``claude-explorer reindex-search`` forces a rebuild without
+        bumping the version.
+      * **Failure mode**: builds without FTS5 return ``None`` from
+        :func:`get_search_index`. ``is_ready()`` stays False until the
+        first :func:`build_full_index` pass completes, and flips back
+        to False during a destructive migration. In all these cases
+        :func:`backend.search.search_conversations` falls back to the
+        linear scan — search never goes "down". A ``sqlite3.Error``
+        at query time is caught at the dispatcher layer and also
+        falls back to linear scan.
     """
 
     def __init__(self, path: Path) -> None:
@@ -1162,6 +1208,23 @@ class SearchIndex:
             [(u,) for u in uuids],
         )
 
+    def run_pragma_optimize(self) -> None:
+        """Run ``PRAGMA optimize`` on the write connection.
+
+        SQLite recommends this after large schema changes / bulk inserts —
+        the pragma checks whether per-table statistics are stale and runs
+        ``ANALYZE`` selectively where it would help the query planner. On
+        a fresh full FTS5 rebuild the gain is real: the first search after
+        a cold restart otherwise plans against empty stats.
+
+        Goes through ``_write_lock`` because the pragma may write to
+        ``sqlite_stat1``; running it without the lock could race with a
+        concurrent upsert and trigger ``database is locked``.
+        """
+        with self._write_lock:
+            self._write_conn.execute("PRAGMA optimize")
+            self._write_conn.commit()
+
     def stats(self) -> dict[str, int]:
         """Return basic index size counters for diagnostics."""
         cur = self._write_conn.execute("SELECT COUNT(*) FROM messages")
@@ -1453,6 +1516,16 @@ def build_full_index(
             logger.exception("search_index: upsert failed for %s", path)
         if on_progress is not None:
             on_progress(i + 1, total)
+
+    # Refresh query-planner statistics now that the inverted lists have
+    # their final shape. Cheap (~ms on a small index; SQLite skips the
+    # work for tables it deems already-analyzed) and pays back on every
+    # search until the next big drift pass. Runs BEFORE mark_ready() so
+    # the first query post-build sees fresh stats. (perf-polish A3.)
+    try:
+        index.run_pragma_optimize()
+    except sqlite3.Error:
+        logger.exception("search_index: PRAGMA optimize failed (non-fatal)")
 
     index.mark_ready()
     logger.info(

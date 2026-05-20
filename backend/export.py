@@ -840,15 +840,49 @@ def create_pdf(conversation: ConversationDetail, include_tools: bool = True) -> 
     return pdf_bytes
 
 
+# Stub content the empty-corpus zip ships. Two reasons we don't return a
+# byte-empty zip on an empty corpus:
+#   1. File managers render a zero-entry zip as "0 items" / "empty"
+#      with no further context — a user who clicked "Export all" can't
+#      tell whether the export succeeded or failed.
+#   2. A README inside the zip is self-documenting: it explains the
+#      "fresh install" state (no fetches run yet) and points the user
+#      at the next step. The "Refresh" button in the sidebar is the V1
+#      flow that owns capture + fetch (see CLAUDE.md "Web UI Refresh
+#      button"), so we name it explicitly.
+_EMPTY_CORPUS_README = (
+    "# Claude Explorer — Empty export\n"
+    "\n"
+    "This zip contains no conversations because the local data directory is\n"
+    "empty. That's the fresh-install state: credentials have not been\n"
+    "captured yet, or no fetch has completed.\n"
+    "\n"
+    "Open Claude Explorer and click **Refresh** in the sidebar to capture\n"
+    "credentials and fetch your conversations, then export again.\n"
+)
+
+
 def create_markdown_zip(conversations: list[ConversationDetail]) -> bytes:
-    """Create a ZIP file containing all conversations as Markdown."""
+    """Create a ZIP file containing all conversations as Markdown.
+
+    Empty-corpus contract (C6 (c), PLANS/2026.05.18-test-hardening.md):
+    when ``conversations`` is empty we still return a valid, well-formed
+    zip containing a single ``README.md`` stub. The route
+    ``/api/export/all/markdown`` calls into this on every export — a
+    byte-empty zip would surface in the user's file manager as "0
+    items" with no explanation, indistinguishable from a corrupt
+    download.
+    """
     buffer = io.BytesIO()
 
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for conv in conversations:
-            filename = f"{sanitize_filename(conv.name)}.md"
-            content = conversation_to_markdown(conv)
-            zf.writestr(filename, content.encode("utf-8"))
+        if not conversations:
+            zf.writestr("README.md", _EMPTY_CORPUS_README.encode("utf-8"))
+        else:
+            for conv in conversations:
+                filename = f"{sanitize_filename(conv.name)}.md"
+                content = conversation_to_markdown(conv)
+                zf.writestr(filename, content.encode("utf-8"))
 
     buffer.seek(0)
     return buffer.read()

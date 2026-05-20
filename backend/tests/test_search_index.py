@@ -646,6 +646,90 @@ def test_build_full_index_marks_index_ready(tmp_path):
     idx.close()
 
 
+def test_build_full_index_runs_pragma_optimize_at_end(tmp_path):
+    """build_full_index runs ``PRAGMA optimize`` after the inserts complete
+    so SQLite's query planner picks up fresh statistics before the index
+    goes live (perf-polish A3).
+
+    Bug it would surface: the first search after a cold restart used the
+    planner's default cost model and picked a bad path; running ``PRAGMA
+    optimize`` once at the end of the build refreshes ANALYZE statistics
+    cheaply.
+
+    Pin: among the SQL statements executed on the index's write connection
+    during ``build_full_index``, at least one is ``PRAGMA optimize`` and
+    it appears AFTER the last ``INSERT INTO messages`` (so it sees a fully
+    populated table).
+    """
+    by_org = tmp_path / "by-org" / "org-1"
+    _write_desktop_conv(by_org, _conv("a", "A", body="alpha"))
+    _write_desktop_conv(by_org, _conv("b", "B", body="bravo"))
+    cc_dir = tmp_path / "claude-empty"
+    cc_dir.mkdir()
+    store = ConversationStore(data_dir=tmp_path, claude_dir=cc_dir)
+
+    idx = si.SearchIndex(tmp_path / "index.sqlite")
+    executed_sql: list[str] = []
+
+    real_conn = idx._write_conn
+
+    class _SpyConn:
+        """Thin proxy: records every ``execute`` and ``executemany`` SQL
+        string (the index uses both — single-row writes go through
+        ``execute``, bulk inserts through ``executemany``), delegates
+        everything else (commit, __enter__, __exit__, ...) to the real
+        sqlite3.Connection unchanged."""
+
+        def execute(self, sql, *args, **kwargs):
+            executed_sql.append(sql)
+            return real_conn.execute(sql, *args, **kwargs)
+
+        def executemany(self, sql, *args, **kwargs):
+            executed_sql.append(sql)
+            return real_conn.executemany(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(real_conn, name)
+
+        def __enter__(self):
+            return real_conn.__enter__()
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return real_conn.__exit__(exc_type, exc_val, exc_tb)
+
+    idx._write_conn = _SpyConn()  # type: ignore[assignment]
+
+    try:
+        si.build_full_index(store, index=idx)
+    finally:
+        idx._write_conn = real_conn
+
+    # Locate the last INSERT INTO messages and assert a PRAGMA optimize
+    # follows it.
+    pragma_idx = next(
+        (i for i, s in enumerate(executed_sql) if "PRAGMA optimize" in s),
+        None,
+    )
+    assert pragma_idx is not None, (
+        "build_full_index must call PRAGMA optimize so the FTS5 query "
+        "planner has fresh stats on the first post-build query; "
+        f"observed SQL: {executed_sql!r}"
+    )
+    last_insert_idx = max(
+        (i for i, s in enumerate(executed_sql) if "INSERT INTO messages" in s),
+        default=-1,
+    )
+    assert last_insert_idx >= 0, (
+        "test setup error: no INSERT INTO messages observed during build"
+    )
+    assert pragma_idx > last_insert_idx, (
+        "PRAGMA optimize must run AFTER the last INSERT so SQLite has "
+        f"the final row distribution when it analyzes; pragma at "
+        f"index {pragma_idx}, last insert at {last_insert_idx}"
+    )
+    idx.close()
+
+
 # ----- 10. update_drifted_files ------------------------------
 
 

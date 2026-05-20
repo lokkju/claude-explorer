@@ -168,8 +168,15 @@ export const api = {
       `${BASE_URL}/conversations/${uuid}/export/markdown-bundle?include_tools=${showToolCalls}&dialect=${dialect}`,
     ),
 
-  exportPdf: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
-    fetch(`${BASE_URL}/conversations/${uuid}/export/pdf?include_tools=${showToolCalls}`),
+  exportPdf: (
+    uuid: string,
+    showToolCalls: boolean = true,
+    signal?: AbortSignal,
+  ): Promise<Response> =>
+    fetch(
+      `${BASE_URL}/conversations/${uuid}/export/pdf?include_tools=${showToolCalls}`,
+      { signal },
+    ),
 
   exportAllMarkdown: (): Promise<Response> =>
     fetch(`${BASE_URL}/export/all/markdown`),

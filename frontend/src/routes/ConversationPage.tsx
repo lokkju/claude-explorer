@@ -75,6 +75,24 @@ export function ConversationPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
+  // Task A5 — PDF export spinner toast state.
+  // `isExportingPdf` drives the `disabled` attribute on the button (needs
+  // to trigger re-render). `isExportingPdfRef` is a synchronous re-entry
+  // guard against rapid double-clicks before React commits the state.
+  // `exportPdfAbortRef` lets us cancel the in-flight fetch on unmount —
+  // otherwise the browser holds the connection slot and the backend
+  // continues spending CPU on WeasyPrint for up to 30s after the user
+  // navigates away. See PLANS/2026.05.18-perf-polish.md task A5.
+  const [isExportingPdf, setIsExportingPdf] = useState(false)
+  const isExportingPdfRef = useRef(false)
+  const exportPdfAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    return () => {
+      exportPdfAbortRef.current?.abort()
+    }
+  }, [])
+
   const compactMarkers = useMemo(
     () => (hideCompactMarkers ? [] : conversation?.compact_markers ?? []),
     [conversation?.compact_markers, hideCompactMarkers]
@@ -309,9 +327,93 @@ export function ConversationPage() {
   }
 
   const handleExportPdf = async () => {
-    const response = await api.exportPdf(conversation.uuid, showToolCalls)
-    const blob = await response.blob()
-    downloadBlob(blob, `${sanitizeFilename(conversation.name)}.pdf`)
+    // Task A5 — spinner toast UX during PDF export.
+    //
+    // Why all the moving parts:
+    //   * `isExportingPdfRef` is a synchronous re-entry guard. The
+    //     button is `disabled` on `isExportingPdf` state, but rapid
+    //     double-clicks can fire before React commits the state.
+    //   * `toastId` from `toast.loading()` is sonner's auto-generated
+    //     unique id — passing it back into subsequent `toast.loading()`
+    //     calls replaces the toast in place, and avoids collisions if
+    //     the user has two browser tabs of the same conversation open.
+    //   * The JSX body wraps the elapsed-seconds counter in
+    //     `aria-hidden="true"` so screen readers only announce
+    //     "Generating PDF…" once, not every tick.
+    //   * `lastSec` throttles `toast.loading()` to once per visible
+    //     change; the 250 ms interval ticks faster only to catch the
+    //     second boundary promptly when the user clicks mid-second.
+    //   * `AbortController` cancels the in-flight fetch on unmount.
+    if (isExportingPdfRef.current) return
+    isExportingPdfRef.current = true
+    setIsExportingPdf(true)
+
+    const controller = new AbortController()
+    exportPdfAbortRef.current = controller
+
+    const toastId = toast.loading(
+      <span>
+        Generating PDF… <span aria-hidden="true">0s</span>
+      </span>,
+      { duration: Infinity },
+    )
+
+    const startedAt = Date.now()
+    let lastSec = 0
+    const interval = window.setInterval(() => {
+      const sec = Math.floor((Date.now() - startedAt) / 1000)
+      if (sec === lastSec) return
+      lastSec = sec
+      toast.loading(
+        <span>
+          Generating PDF… <span aria-hidden="true">{sec}s</span>
+        </span>,
+        { id: toastId, duration: Infinity },
+      )
+    }, 250)
+
+    try {
+      const response = await api.exportPdf(
+        conversation.uuid,
+        showToolCalls,
+        controller.signal,
+      )
+      clearInterval(interval)
+      if (!response.ok) {
+        toast.dismiss(toastId)
+        if (response.status === 504) {
+          // Backend wraps WeasyPrint in `asyncio.to_thread(...)` with a
+          // 30-second timeout (commit 0be9395) and returns 504 on
+          // overrun. Surface a user-readable workaround (Markdown
+          // export still works for huge conversations).
+          errorToast(
+            'PDF generation timed out (>30s). The conversation may be too large to render. Try exporting Markdown instead.',
+          )
+        } else {
+          errorToast(`PDF export failed (${response.status}).`)
+        }
+        return
+      }
+      const blob = await response.blob()
+      toast.dismiss(toastId)
+      downloadBlob(blob, `${sanitizeFilename(conversation.name)}.pdf`)
+    } catch (err) {
+      clearInterval(interval)
+      toast.dismiss(toastId)
+      // AbortError surfaces here when the component unmounts (cleanup
+      // effect calls controller.abort()). That's intentional — no toast.
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return
+      }
+      errorToast('PDF export failed: network error.')
+    } finally {
+      clearInterval(interval)
+      isExportingPdfRef.current = false
+      setIsExportingPdf(false)
+      if (exportPdfAbortRef.current === controller) {
+        exportPdfAbortRef.current = null
+      }
+    }
   }
 
   const handleForceRefetch = async () => {
@@ -530,7 +632,13 @@ export function ConversationPage() {
             <FileText className="h-4 w-4" />
             <span className="ml-2">Markdown</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExportPdf}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportPdf}
+            disabled={isExportingPdf}
+            aria-busy={isExportingPdf}
+          >
             <FileType className="h-4 w-4" />
             <span className="ml-2">PDF</span>
           </Button>

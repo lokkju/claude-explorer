@@ -248,3 +248,121 @@ def test__patch_preferences__empty_data__no_op_preserves_all(client_with_prefs):
     assert r.status_code == 200
     after = client.get("/api/preferences").json()["data"]
     assert before == after, f"empty PATCH must not change state; before={before!r} after={after!r}"
+
+
+# ---------------------------------------------------------------------------
+# C6 (a) — PATCH /api/preferences with extra top-level fields → 422.
+#
+# Pydantic v2's default is ``extra='ignore'``, which would silently swallow a
+# misnamed top-level field (e.g. a frontend typo writing ``themee`` at the
+# root instead of inside ``data``). That's a silent data-loss footgun: the
+# write looks successful but the value never persists. ``extra='forbid'`` on
+# ``PreferencesWrite`` turns the typo into a 422 so the caller learns at the
+# wire boundary.
+#
+# Scope: forbid applies at the *top level* only. The ``data`` field is
+# ``dict[str, Any]`` so unknown KEYS INSIDE ``data`` keep working — see
+# ``test_unknown_key_tolerated`` above. That's deliberate: the envelope
+# shape is the public contract; the data blob is intentionally
+# forward-compatible for future preference keys.
+# ---------------------------------------------------------------------------
+
+
+def test_patch_preferences_unknown_field_returns_422(client_with_prefs):
+    """PATCH with an unknown TOP-LEVEL field must return 422.
+
+    A request body whose only key is an unknown field is the canonical
+    "client sending garbage" case. Pydantic with ``extra='forbid'`` rejects
+    the body before the handler runs, so FastAPI surfaces 422 with the
+    field name in the detail.
+    """
+    client, prefs_file = client_with_prefs
+    r = client.patch(
+        "/api/preferences",
+        json={"unknown_field_xyz": "anything"},
+    )
+    assert r.status_code == 422, (
+        f"expected 422 for unknown top-level field; got {r.status_code}: {r.text}"
+    )
+    # The 422 detail should mention the rejected field name so the
+    # frontend can show a useful error. Pydantic v2 emits one error per
+    # extra field with type ``extra_forbidden``.
+    body = r.json()
+    detail = body.get("detail", [])
+    assert any(
+        "unknown_field_xyz" in str(e) or "extra_forbidden" in str(e).lower()
+        for e in (detail if isinstance(detail, list) else [detail])
+    ), f"422 detail should reference unknown_field_xyz: {body!r}"
+
+
+def test_patch_preferences_typo_field_returns_422(client_with_prefs):
+    """PATCH with a valid ``data`` envelope AND a typo'd sibling key returns 422.
+
+    The interesting failure mode is the SIBLING-typo case: a request that
+    LOOKS half-right (real ``data`` plus a typo'd top-level key). Without
+    ``extra='forbid'`` the valid ``data`` slice would silently apply and
+    the typo would silently vanish. With forbid, the whole request is
+    rejected and NOTHING is written — atomic, no half-applied state.
+
+    Verifies both the 422 AND the non-application of the valid slice by
+    GET'ing afterwards: ``theme`` MUST NOT have been set, because the
+    PATCH was rejected as a whole.
+    """
+    client, prefs_file = client_with_prefs
+    r = client.patch(
+        "/api/preferences",
+        json={"data": {"theme": "dark"}, "themee": "oops"},
+    )
+    assert r.status_code == 422, (
+        f"expected 422 for typo'd top-level field alongside valid data; "
+        f"got {r.status_code}: {r.text}"
+    )
+    # Atomic-reject contract: NONE of the body's keys must have been
+    # applied. A GET should still see the empty/default blob.
+    g = client.get("/api/preferences")
+    assert g.status_code == 200
+    data = g.json().get("data", {})
+    assert "theme" not in data, (
+        f"theme must not have been applied from a rejected PATCH; got data={data!r}"
+    )
+
+
+def test__write_uses_orjson__unicode_preserved_and_trailing_newline(client_with_prefs):
+    """PREF-ORJSON (perf-polish A2). On-disk preferences match orjson output.
+
+    Same byte-level invariants as the bookmarks orjson test:
+
+      1. Non-ASCII characters in preference values (e.g. user-chosen labels,
+         display names, or future i18n strings) are written as native
+         UTF-8 bytes — not ``\\uXXXX`` escape sequences as stdlib's
+         ``json.dumps(..., indent=2)`` default would produce.
+
+      2. The file ends with a single trailing newline (orjson's
+         ``OPT_APPEND_NEWLINE``) so the file plays nicely with cat /
+         diff / git.
+
+    Fails with stdlib json; passes with orjson + OPT_INDENT_2 |
+    OPT_APPEND_NEWLINE.
+    """
+    client, prefs_file = client_with_prefs
+    r = client.patch(
+        "/api/preferences",
+        json={"data": {"displayName": "Café 📖", "theme": "dark"}},
+    )
+    assert r.status_code == 200
+
+    raw_bytes = prefs_file.read_bytes()
+    # Native UTF-8 bytes for the book emoji (U+1F4D6 = F0 9F 93 96).
+    assert b"\xf0\x9f\x93\x96" in raw_bytes, (
+        "orjson must emit emoji as native UTF-8, not stdlib's \\uXXXX escapes"
+    )
+    # No ASCII-escaped \\u sequences in the on-disk file.
+    assert b"\\u" not in raw_bytes, (
+        "found ASCII-escaped unicode in preferences.json — stdlib json writer "
+        "still active?"
+    )
+    # Trailing newline.
+    assert raw_bytes.endswith(b"\n"), (
+        "preferences file must end with a single trailing newline "
+        "(orjson OPT_APPEND_NEWLINE)"
+    )

@@ -178,3 +178,53 @@ def test__post_bookmark__os_replace_fails__no_tmp_leak(client_with_bookmarks, mo
 
     leaked = list(path.parent.glob("bookmarks.json.tmp*"))
     assert leaked == [], f"leaked tmp files after failed atomic write: {leaked}"
+
+
+def test__write_uses_orjson__unicode_preserved_and_trailing_newline(
+    client_with_bookmarks,
+):
+    """BKM-ORJSON (perf-polish A1). On-disk file matches orjson output.
+
+    Two byte-level invariants pin the migration from stdlib json to orjson:
+
+      1. Non-ASCII characters (emoji, accented prose) are written as native
+         UTF-8 bytes, NOT as ``\\uXXXX`` escape sequences. stdlib
+         ``json.dumps(..., indent=2)`` defaults to ``ensure_ascii=True`` and
+         would emit ``\\ud83d\\udcd6`` for a book emoji; orjson emits the
+         four-byte UTF-8 sequence directly.
+
+      2. The file ends with a single trailing newline (``OPT_APPEND_NEWLINE``)
+         so the artifact stays POSIX-friendly (cat / diff / git ergonomics).
+
+    Together these two checks fail for any stdlib-json writer and pass only
+    for the orjson writer with ``OPT_INDENT_2 | OPT_APPEND_NEWLINE``.
+    """
+    client, path = client_with_bookmarks
+    r = client.post(
+        "/api/bookmarks",
+        json={
+            "conversation_id": "c-unicode",
+            "message_uuid": "m-unicode",
+            "source": "claude_code",
+            "snippet": "café",
+            "note": "Notes with emoji 📖 and accent é",
+        },
+    )
+    assert r.status_code == 201
+
+    raw_bytes = path.read_bytes()
+    # Native UTF-8 bytes for the emoji (book = U+1F4D6 = F0 9F 93 96).
+    assert b"\xf0\x9f\x93\x96" in raw_bytes, (
+        "orjson must emit emoji as native UTF-8 bytes, not stdlib's "
+        "\\uXXXX escape sequences"
+    )
+    # No ASCII-escaped \\u sequences (stdlib default would emit \\ud83d\\udcd6).
+    assert b"\\u" not in raw_bytes, (
+        "found ASCII-escaped unicode in on-disk file — stdlib json writer "
+        "still active?"
+    )
+    # Trailing newline (OPT_APPEND_NEWLINE).
+    assert raw_bytes.endswith(b"\n"), (
+        "bookmarks file must end with a single trailing newline "
+        "(orjson OPT_APPEND_NEWLINE)"
+    )
