@@ -82,6 +82,7 @@ def minimal_lifespan_env(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.serial
 async def test_shutdown_completes_under_500ms_with_inflight_summary_fill(
     minimal_lifespan_env: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -225,6 +226,7 @@ async def test_shutdown_does_not_leak_cancellederror(
     await asyncio.sleep(0.05)
 
 
+@pytest.mark.serial
 async def test_watcher_shutdown_under_500ms_when_observer_join_is_slow(
     minimal_lifespan_env: Path,
     monkeypatch: pytest.MonkeyPatch,

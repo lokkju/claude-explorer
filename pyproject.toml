@@ -68,6 +68,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-httpx>=0.30",
+    "pytest-xdist>=3.5",
     "respx>=0.21",
     "pypdf>=4.0",
 ]
@@ -129,3 +130,21 @@ path = "hatch_build.py"
 [tool.pytest.ini_options]
 testpaths = ["fetcher/tests", "backend/tests"]
 asyncio_mode = "auto"
+# Parallel execution via pytest-xdist (PLANS/2026.05.18-test-hardening.md
+# task C3). Cuts the full backend suite from ~98 s single-threaded to
+# ~45 s on a typical laptop. Tests are already worker-safe via pytest's
+# per-worker `tmp_path` (the `isolated_data_dir` fixture is built on top
+# of `tmp_path`, so each worker gets its own data dir).
+#
+# `-m "not serial"` deselects wall-clock-sensitive tests (benchmarks +
+# shutdown-latency assertions). Those need to run without CPU contention
+# from sibling workers — see `make test` for the two-pass runner that
+# does parallel + serial in one invocation.
+#
+# Override for interactive debugging:
+#   uv run pytest -n0 --pdb backend/tests/test_foo.py
+# `-n0` runs in the main process so `--pdb` / `breakpoint()` work.
+addopts = "-n auto -m 'not serial'"
+markers = [
+    "serial: wall-clock-sensitive test; runs only outside `-n auto` to avoid CPU-contention flakes. `make test` runs the parallel pass + a follow-up serial pass via `-n0 -m serial`.",
+]

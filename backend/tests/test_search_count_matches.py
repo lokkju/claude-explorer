@@ -190,6 +190,7 @@ def test_count_matches_honors_include_tool_calls(tmp_path) -> None:
 # ----- 16. count_matches cost (soft latency check) ----------------------
 
 
+@pytest.mark.serial
 def test_count_matches_is_cheap(count_idx) -> None:
     """count_matches should be substantially cheaper than
     query_with_snippets on any non-trivial corpus — no snippet() walk,

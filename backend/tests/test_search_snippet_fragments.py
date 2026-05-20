@@ -43,9 +43,6 @@ Bidirectional verification per CLAUDE-TESTING.md §2:
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from backend import search_index as si
@@ -56,49 +53,14 @@ from backend.search import (
     search_conversations,
 )
 from backend.store import ConversationStore
+from backend.tests import builders as B
 
 
 # ----- fixture ---------------------------------------------------------
-
-
-def _conv(
-    uuid: str,
-    name: str,
-    *,
-    body: str,
-    source: str = "CLAUDE_AI",
-    project_path: str | None = None,
-) -> dict:
-    return {
-        "uuid": uuid,
-        "name": name,
-        "summary": "",
-        "model": "claude-sonnet-4-6",
-        "created_at": "2026-05-01T12:00:00Z",
-        "updated_at": "2026-05-01T13:00:00Z",
-        "is_starred": False,
-        "current_leaf_message_uuid": f"{uuid}-m1",
-        "project_path": project_path,
-        "source": source,
-        "chat_messages": [
-            {
-                "uuid": f"{uuid}-m1",
-                "sender": "human",
-                "text": body,
-                "content": [{"type": "text", "text": body}],
-                "created_at": "2026-05-01T12:00:00Z",
-                "updated_at": "2026-05-01T12:00:00Z",
-                "parent_message_uuid": None,
-            },
-        ],
-    }
-
-
-def _write_conv(by_org: Path, conv: dict) -> Path:
-    by_org.mkdir(parents=True, exist_ok=True)
-    path = by_org / f"{conv['uuid']}.json"
-    path.write_text(json.dumps(conv))
-    return path
+# Conversation builders moved to ``backend.tests.builders`` (C4 in
+# PLANS/2026.05.18-test-hardening.md). The previous inline helpers
+# were byte-equivalent to ``B.build_desktop_conv`` /
+# ``B.write_desktop_conv``.
 
 
 @pytest.fixture
@@ -122,14 +84,14 @@ def fixture_store(tmp_path, monkeypatch):
         + "Lorem ipsum more padding text " * 10
     )
     convs = [
-        _conv("conv-py", "Notebook A", body="the pythonic prose I love"),
-        _conv("conv-py2", "Notebook B", body="running a python script today"),
-        _conv("conv-budget", "budget review", body="spend less this quarter"),
-        _conv("conv-misc", "Unrelated title", body="nothing of interest"),
-        _conv("conv-long", "Long content sample", body=long_body),
+        B.build_desktop_conv(uuid="conv-py", name="Notebook A", body="the pythonic prose I love"),
+        B.build_desktop_conv(uuid="conv-py2", name="Notebook B", body="running a python script today"),
+        B.build_desktop_conv(uuid="conv-budget", name="budget review", body="spend less this quarter"),
+        B.build_desktop_conv(uuid="conv-misc", name="Unrelated title", body="nothing of interest"),
+        B.build_desktop_conv(uuid="conv-long", name="Long content sample", body=long_body),
     ]
     for c in convs:
-        _write_conv(by_org, c)
+        B.write_desktop_conv(by_org, c)
 
     cc_dir = tmp_path / "claude-empty"
     cc_dir.mkdir()

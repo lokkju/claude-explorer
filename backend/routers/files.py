@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -204,16 +205,29 @@ def get_cc_image(path: str = Query(..., description="Absolute path under ~/.clau
     candidate = Path(path).expanduser()
     try:
         candidate = candidate.resolve(strict=False)
-    except OSError as exc:
-        raise HTTPException(status_code=404, detail=f"image not found: {exc}") from exc
+    except (OSError, ValueError) as exc:
+        # CWE-754: Path.resolve() raises ValueError("embedded null
+        # character in path") on null-byte injection (foo%00.png), in
+        # addition to OSError for ELOOP / ENAMETOOLONG / etc. All of
+        # these are malformed-input conditions per RFC 7231 §6.5.1,
+        # not server faults, so unify under a 400 with a static detail
+        # (CWE-200: don't leak the raw exception text).
+        logger.warning("path resolve failed for %r: %s", path, exc)
+        raise HTTPException(status_code=400, detail="invalid path") from exc
 
     root = _image_cache_root().resolve()
     try:
         candidate.relative_to(root)
     except ValueError as exc:
+        # CWE-200: don't echo the resolved root path back to the
+        # client — that leaks the server's on-disk layout. Log the
+        # real values so operators can still debug from server logs.
+        logger.info(
+            "cc-image refused (outside root): candidate=%s root=%s", candidate, root
+        )
         raise HTTPException(
             status_code=403,
-            detail=f"refused: path is outside the Claude Code image-cache ({root})",
+            detail="refused: path is outside the cc-image cache root",
         ) from exc
 
     if candidate.suffix.lower() not in _ALLOWED_IMAGE_SUFFIXES:
@@ -242,6 +256,14 @@ def get_cc_image(path: str = Query(..., description="Absolute path under ~/.clau
             copy_marker_image_to_cache(str(candidate), candidate.parent.name)
         except Exception:  # noqa: BLE001
             logger.exception("lazy cc-image cache copy failed for %s", candidate)
+        # CWE-732: bail out before FileResponse opens the file so a
+        # 0o000-mode (or otherwise unreadable) cache entry surfaces as a
+        # static 403 instead of a 500 leak. There is a small TOCTOU
+        # window between this check and FileResponse.open(), acceptable
+        # for a local single-user app.
+        if not os.access(candidate, os.R_OK):
+            logger.warning("readable check failed: %s", candidate)
+            raise HTTPException(status_code=403, detail="file not readable")
         return FileResponse(candidate, media_type=media_type, headers=cache_headers)
 
     # P4b: original is gone — try the permanent cache. The cached
@@ -259,9 +281,17 @@ def get_cc_image(path: str = Query(..., description="Absolute path under ~/.clau
         candidates = list(cache_root.glob(f"*/{sess}--{n}.*.{ext}"))
         if candidates:
             best = max(candidates, key=lambda x: x.stat().st_mtime)
+            # CWE-732: same readable check as the live-file branch above.
+            if not os.access(best, os.R_OK):
+                logger.warning("readable check failed: %s", best)
+                raise HTTPException(status_code=403, detail="file not readable")
             return FileResponse(best, media_type=media_type, headers=cache_headers)
 
-    raise HTTPException(status_code=404, detail=f"image not found: {candidate}")
+    # CWE-200: don't echo the resolved candidate path back to the
+    # client — that leaks the server's on-disk layout. Log it
+    # server-side for operator diagnostics.
+    logger.info("cc-image not found: %s", candidate)
+    raise HTTPException(status_code=404, detail="image not found")
 
 
 # ----------------------------------------------------------------------
@@ -354,4 +384,10 @@ def get_attachment(conv_uuid: str, file_uuid: str, variant: str) -> FileResponse
     cache_headers = {
         "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
     }
+    # CWE-732: see cc-image branch above for TOCTOU rationale. Pre-check
+    # readability so a 0o000-mode cached attachment surfaces as a static
+    # 403 instead of a 500 leaking the absolute on-disk path.
+    if not os.access(chosen, os.R_OK):
+        logger.warning("readable check failed: %s", chosen)
+        raise HTTPException(status_code=403, detail="file not readable")
     return FileResponse(chosen, media_type=media_type, headers=cache_headers)

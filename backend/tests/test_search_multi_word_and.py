@@ -23,9 +23,6 @@ Out-of-scope (documented):
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from backend import search_index as si
@@ -38,43 +35,12 @@ from backend.search import (
     search_conversations,
 )
 from backend.store import ConversationStore
+from backend.tests import builders as B
 
 
 # ----- helpers ----------------------------------------------------
-
-
-def _conv(uuid: str, name: str, *, body: str, source: str = "CLAUDE_AI") -> dict:
-    """Mirror the helper in test_search_equivalence.py for consistency."""
-    return {
-        "uuid": uuid,
-        "name": name,
-        "summary": "",
-        "model": "claude-sonnet-4-6",
-        "created_at": "2026-05-01T12:00:00Z",
-        "updated_at": "2026-05-01T13:00:00Z",
-        "is_starred": False,
-        "current_leaf_message_uuid": f"{uuid}-m1",
-        "project_path": None,
-        "source": source,
-        "chat_messages": [
-            {
-                "uuid": f"{uuid}-m1",
-                "sender": "human",
-                "text": body,
-                "content": [{"type": "text", "text": body}],
-                "created_at": "2026-05-01T12:00:00Z",
-                "updated_at": "2026-05-01T12:00:00Z",
-                "parent_message_uuid": None,
-            },
-        ],
-    }
-
-
-def _write_conv(by_org: Path, conv: dict) -> Path:
-    by_org.mkdir(parents=True, exist_ok=True)
-    path = by_org / f"{conv['uuid']}.json"
-    path.write_text(json.dumps(conv))
-    return path
+# Conversation builders moved to ``backend.tests.builders`` (C4 in
+# PLANS/2026.05.18-test-hardening.md).
 
 
 @pytest.fixture
@@ -96,26 +62,26 @@ def store_with_phrase_corpus(tmp_path, monkeypatch):
     """
     by_org = tmp_path / "by-org" / "org-1"
     convs = [
-        _conv(
-            "has-all-adjacent",
-            "All adjacent",
+        B.build_desktop_conv(
+            uuid="has-all-adjacent",
+            name="All adjacent",
             body="please write a comprehensive medium article about FTS5",
         ),
-        _conv(
-            "has-all-scattered",
-            "Scattered tokens",
+        B.build_desktop_conv(
+            uuid="has-all-scattered",
+            name="Scattered tokens",
             body=(
                 "I want a medium-format piece that's clear. "
                 "Stretch into a deeper article on the topic. "
                 "Make it comprehensive and well-cited."
             ),
         ),
-        _conv("has-two", "Two", body="comprehensive article without the M-word"),
-        _conv("has-one", "One", body="just comprehensive nothing else"),
-        _conv("has-none", "None", body="totally unrelated text content"),
+        B.build_desktop_conv(uuid="has-two", name="Two", body="comprehensive article without the M-word"),
+        B.build_desktop_conv(uuid="has-one", name="One", body="just comprehensive nothing else"),
+        B.build_desktop_conv(uuid="has-none", name="None", body="totally unrelated text content"),
     ]
     for c in convs:
-        _write_conv(by_org, c)
+        B.write_desktop_conv(by_org, c)
     cc_dir = tmp_path / "claude-empty"
     cc_dir.mkdir()
     store = ConversationStore(data_dir=tmp_path, claude_dir=cc_dir)

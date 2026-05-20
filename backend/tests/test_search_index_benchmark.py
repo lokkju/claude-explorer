@@ -127,6 +127,7 @@ def benchmark_corpus(tmp_path, monkeypatch):
     clear_cache()
 
 
+@pytest.mark.serial
 @pytest.mark.skipif(_bench_skip(), reason="Set RUN_SEARCH_BENCHMARK=1 to run; skipped on CI")
 def test_fts5_path_beats_linear_scan(benchmark_corpus):
     """The FTS5 fast path must be ≥2x faster than linear scan on a
@@ -207,6 +208,7 @@ def test_fts5_path_beats_linear_scan(benchmark_corpus):
     assert results[0].conversation_uuid == "bench-conv-0042"
 
 
+@pytest.mark.serial
 @pytest.mark.skipif(_bench_skip(), reason="Set RUN_SEARCH_BENCHMARK=1 to run; skipped on CI")
 def test_fts5_query_itself_is_sub_10ms(benchmark_corpus):
     """The raw FTS5 query (the inverted-index lookup) is the fast part.

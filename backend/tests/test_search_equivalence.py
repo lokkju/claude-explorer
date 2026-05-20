@@ -20,9 +20,6 @@ Bidirectional verification:
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from backend import search_index as si
@@ -33,43 +30,16 @@ from backend.search import (
     search_conversations,
 )
 from backend.store import ConversationStore
+from backend.tests import builders as B
 
 
 # ----- fixtures ---------------------------------------------------
-
-
-def _conv(uuid: str, name: str, *, body: str, source: str = "CLAUDE_AI",
-          project_path: str | None = None) -> dict:
-    return {
-        "uuid": uuid,
-        "name": name,
-        "summary": "",
-        "model": "claude-sonnet-4-6",
-        "created_at": "2026-05-01T12:00:00Z",
-        "updated_at": "2026-05-01T13:00:00Z",
-        "is_starred": False,
-        "current_leaf_message_uuid": f"{uuid}-m1",
-        "project_path": project_path,
-        "source": source,
-        "chat_messages": [
-            {
-                "uuid": f"{uuid}-m1",
-                "sender": "human",
-                "text": body,
-                "content": [{"type": "text", "text": body}],
-                "created_at": "2026-05-01T12:00:00Z",
-                "updated_at": "2026-05-01T12:00:00Z",
-                "parent_message_uuid": None,
-            },
-        ],
-    }
-
-
-def _write_conv(by_org: Path, conv: dict) -> Path:
-    by_org.mkdir(parents=True, exist_ok=True)
-    path = by_org / f"{conv['uuid']}.json"
-    path.write_text(json.dumps(conv))
-    return path
+# Conversation/message builders moved to ``backend.tests.builders``
+# (PLANS/2026.05.18-test-hardening.md C4). The previous inline
+# ``_conv()`` / ``_write_conv()`` helpers were byte-equivalent to
+# ``B.build_desktop_conv()`` / ``B.write_desktop_conv()`` (same
+# timestamps, same model, same single-human-message body) — see
+# ``test_builders.py`` for the contract tests.
 
 
 @pytest.fixture
@@ -91,19 +61,19 @@ def fixture_store(tmp_path, monkeypatch):
     """
     by_org = tmp_path / "by-org" / "org-1"
     convs = [
-        _conv("conv-c", "Cron job notes", body="unrelated body content"),
-        _conv("conv-p", "Untitled", body="here is some pythonic prose"),
-        _conv("conv-b1", "budget review", body="unrelated body content"),
-        _conv("conv-b2", "Untitled", body="our budget is tight this quarter"),
-        _conv("conv-z", "Unrelated title", body="totally unrelated text"),
+        B.build_desktop_conv(uuid="conv-c", name="Cron job notes", body="unrelated body content"),
+        B.build_desktop_conv(uuid="conv-p", name="Untitled", body="here is some pythonic prose"),
+        B.build_desktop_conv(uuid="conv-b1", name="budget review", body="unrelated body content"),
+        B.build_desktop_conv(uuid="conv-b2", name="Untitled", body="our budget is tight this quarter"),
+        B.build_desktop_conv(uuid="conv-z", name="Unrelated title", body="totally unrelated text"),
         # conv-mid: name has 'scheduled' which contains 'edul' as a
         # mid-token substring. FTS5 with porter+unicode61 prefix-match
         # WILL NOT find "edul" (prefix only matches leading). The
         # linear scan WILL find "edul" via Python `in` substring.
         # This row pins the title-substring sweep behavior.
-        _conv("conv-mid", "scheduled-task notes", body="totally unrelated"),
+        B.build_desktop_conv(uuid="conv-mid", name="scheduled-task notes", body="totally unrelated"),
     ]
-    paths = [_write_conv(by_org, c) for c in convs]
+    paths = [B.write_desktop_conv(by_org, c) for c in convs]
     cc_dir = tmp_path / "claude-empty"
     cc_dir.mkdir()
     store = ConversationStore(data_dir=tmp_path, claude_dir=cc_dir)
