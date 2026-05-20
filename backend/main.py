@@ -214,13 +214,25 @@ async def lifespan(app: FastAPI):
     # copy at /api/cc-image only triggers on view). Runs in the
     # background — non-blocking, so the server is up immediately.
     # User can never lose images to "I forgot to run warm-cc-cache".
+    #
+    # 5-second head-start so the first /api/conversations request
+    # lands before this scan starts walking every JSONL byte for
+    # `[Image: source: ...]` markers. The scan is ~10s of contended
+    # disk reads on a ~1k-session corpus and competes directly with
+    # the request's metadata read. Same trade as the FTS5 build:
+    # image protection latency shifts from t≈0 to t≈5s, invisible
+    # against typical user behavior. See PLANS/OPTIMIZE_COLD_START.md.
     warm_task: asyncio.Task | None = None
     if read_env(
         "CLAUDE_EXPLORER_DISABLE_CC_WARM", "CLAUDE_EXPORTER_DISABLE_CC_WARM"
     ) != "1":
-        from backend.cc_image_cache import warm_all_sessions_async
+        async def _delayed_warm_all_sessions() -> None:
+            await asyncio.sleep(5.0)
+            from backend.cc_image_cache import warm_all_sessions_async
 
-        warm_task = asyncio.create_task(warm_all_sessions_async())
+            await warm_all_sessions_async()
+
+        warm_task = asyncio.create_task(_delayed_warm_all_sessions())
 
     # Build the FTS5 search index in the background. Search falls back
     # to the linear-scan path until this completes, so the server is
@@ -239,6 +251,25 @@ async def lifespan(app: FastAPI):
         "CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX",
     ) != "1":
         async def _build_search_index() -> None:
+            # 5-second head-start so the first /api/conversations request
+            # (~85ms warm, ~225ms even on cold restart with the other
+            # heavy tasks deferred) lands BEFORE the FTS5 build starts
+            # hogging disk + CPU. The FTS5 build's
+            # `get_all_conversations_raw(source="all", full_content=True)`
+            # is the dominant cold-start contention source: it loads
+            # every message of every conversation into memory and the
+            # walk takes ~10s of contended disk reads. With a 500ms
+            # delay the request lands during peak contention (~10s
+            # observed); with a 5s delay the request gets clear runway.
+            #
+            # UX trade: search readiness shifts from t≈10s post-restart
+            # to t≈15s — invisible against typical user behavior (people
+            # don't ⌘+K within 10 seconds of opening the app). Search
+            # falls back to the linear-scan path until the build
+            # completes, so search never goes "down".
+            #
+            # See PLANS/OPTIMIZE_COLD_START.md.
+            await asyncio.sleep(5.0)
             try:
                 from backend.search_index import build_full_index, get_search_index
                 from backend.store import ConversationStore
@@ -292,6 +323,82 @@ async def lifespan(app: FastAPI):
             flush=True,
         )
 
+    # Eagerly populate the summary cache. Without this, the first
+    # /api/conversations request after a cold start (or after the
+    # logic-version wipe above) pays the full parallel JSONL re-parse
+    # cost — ~1.5s on a ~1,000-session corpus — inline with the
+    # request. Spawning the fill at lifespan startup means the first
+    # request lands on a warm cache (or, if it races the fill, only
+    # pays for the still-unparsed subset).
+    #
+    # The entire body runs in asyncio.to_thread so the ~1,200 os.stat
+    # calls and the ProcessPoolExecutor join don't stall the event
+    # loop while other lifespan tasks are still spinning up. Failures
+    # are logged and swallowed: a missing cache row just means the
+    # request takes the legacy path, same as before this change.
+    #
+    # Skip via CLAUDE_EXPLORER_DISABLE_SUMMARY_CACHE_WARM=1 (or legacy
+    # CLAUDE_EXPORTER_*). See PLANS/OPTIMIZE_COLD_START.md.
+    summary_cache_task: asyncio.Task | None = None
+    if read_env(
+        "CLAUDE_EXPLORER_DISABLE_SUMMARY_CACHE_WARM",
+        "CLAUDE_EXPORTER_DISABLE_SUMMARY_CACHE_WARM",
+    ) != "1":
+        def _sync_build_summary_cache() -> None:
+            import os
+            import time
+            from backend import claude_code_reader as ccr
+            from backend.summary_cache import get_summary_cache
+
+            cache = get_summary_cache()
+            if cache is None:
+                # FTS5 unavailable; fall through to the legacy path on
+                # demand. Same gate as the cache singleton itself.
+                return
+            paths = list(ccr.discover_jsonl_files(get_settings().claude_dir))
+            if not paths:
+                return
+            stat_index: dict = {}
+            for p in paths:
+                try:
+                    stat_index[p] = os.stat(p)
+                except OSError:
+                    # Vanished between discover and stat; on-demand
+                    # path will skip it via the same OSError handler.
+                    continue
+            cached = cache.get_many(paths, stat_index)
+            misses = [p for p in paths if p not in cached and p in stat_index]
+            if not misses:
+                return
+            t0 = time.monotonic()
+            # NOTE: resolve _read_summaries_parallel via the module
+            # attribute (not a `from … import` at the top of the
+            # function) so tests that `patch(...)._read_summaries_parallel`
+            # actually see the patched version.
+            fresh = ccr._read_summaries_parallel(misses)
+            cache.upsert_many(fresh, stat_index)
+            elapsed = time.monotonic() - t0
+            print(
+                f"summary cache: filled {len(fresh)} entries in {elapsed:.2f}s",
+                flush=True,
+            )
+
+        async def _build_summary_cache() -> None:
+            try:
+                await asyncio.to_thread(_sync_build_summary_cache)
+            except asyncio.CancelledError:
+                # Cooperative cancellation during shutdown is fine —
+                # any rows already upserted survive in SQLite; the
+                # next startup picks up the misses idempotently.
+                raise
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"summary cache: eager fill failed: {exc!r}",
+                    flush=True,
+                )
+
+        summary_cache_task = asyncio.create_task(_build_summary_cache())
+
     try:
         yield
     finally:
@@ -326,6 +433,19 @@ async def lifespan(app: FastAPI):
             search_index_task.cancel()
             try:
                 await search_index_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        # Cancel the eager summary-cache fill if still running.
+        # Idempotent: any rows already upserted survive in SQLite, and
+        # the next startup picks up the remaining misses. The
+        # ProcessPoolExecutor inside _read_summaries_parallel is a
+        # `with` block, so its __exit__ joins workers before the
+        # threadpool thread returns to asyncio (worst case shutdown
+        # blocks for ~1.5s on a cold-corpus startup-then-shutdown).
+        if summary_cache_task is not None and not summary_cache_task.done():
+            summary_cache_task.cancel()
+            try:
+                await summary_cache_task
             except (asyncio.CancelledError, Exception):
                 pass
 
