@@ -568,3 +568,163 @@ def test_starred_and_model_filters_compose(starred_model_data_dir):
     assert r.status_code == 200
     uuids = sorted(c["uuid"] for c in r.json())
     assert uuids == ["conv-star-sonnet"], uuids
+
+
+# ---------------------------------------------------------------------------
+# Coercion-audit hardening: corrupt-JSON-on-disk regression tests.
+#
+# Same bug-class as the null-safety hunt (8ab36fc) and the parse_datetime
+# widening (this commit's sibling change). The on-disk JSON files under
+# ``~/.claude-explorer/conversations/`` are producer-controlled in the
+# happy path but a hand-edit / partial-write / corrupted-fetch can leave
+# fields with the WRONG TYPE (not just None). Each of these tests writes
+# a single conversation with a poisoned field, hits the route, and asserts
+# 200 — proving the route degrades gracefully instead of returning 500
+# and breaking the entire UI.
+#
+# The blast-radius rationale: ``list_conversations`` iterates and calls
+# ``_make_summary`` on every file. ONE corrupt file's unhandled exception
+# = sidebar empty for ALL conversations. Pinning the 200 outcome here
+# blocks any future "just propagate the exception" refactor.
+# ---------------------------------------------------------------------------
+
+
+def _seed_corrupt_conv(tmp_path, monkeypatch, conv: dict) -> None:
+    """Helper: seed a SINGLE Desktop conversation JSON and point the
+    backend at the isolated data dir. Mirrors the fixture-setup in
+    ``test_get_conversation_handles_null_chat_messages_without_crashing``
+    but as a callable so each test gets its own poisoned shape without
+    needing N fixtures.
+    """
+    by_org = tmp_path / "by-org" / "org-1"
+    by_org.mkdir(parents=True)
+    (by_org / f"{conv['uuid']}.json").write_text(json.dumps(conv))
+    empty_claude = tmp_path / "claude-empty"
+    empty_claude.mkdir()
+    monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_DIR", str(empty_claude))
+    cfg.get_settings.cache_clear()  # type: ignore[attr-defined]
+    _conversation_cache.clear()
+
+
+def test_list_conversations_handles_int_created_at_without_500(
+    tmp_path, monkeypatch
+):
+    """A conversation with ``created_at: 12345`` (int instead of ISO
+    string) must not 500 the sidebar list endpoint.
+
+    Pre-fix: ``parse_datetime(12345)`` raised AttributeError on
+    ``.endswith("Z")`` because the widening had not happened. Because
+    ``_make_summary`` is called inside the ``list_conversations`` loop,
+    that single bad row took out the entire sidebar.
+    """
+    conv = {
+        "uuid": "conv-int-created-at",
+        "name": "corrupt timestamp",
+        "summary": "",
+        "model": "claude-sonnet-4-6",
+        "created_at": 12345,  # poisoned: int, not ISO string
+        "updated_at": "2026-05-01T13:00:00Z",
+        "is_starred": False,
+        "source": "CLAUDE_AI",
+        "chat_messages": [],
+    }
+    _seed_corrupt_conv(tmp_path, monkeypatch, conv)
+
+    client = TestClient(app)
+    r = client.get("/api/conversations")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # The conversation IS included — the corrupt-timestamp fallback
+    # produces a now-UTC stamp, NOT a row drop.
+    uuids = [c["uuid"] for c in body]
+    assert "conv-int-created-at" in uuids
+
+
+def test_list_conversations_handles_dict_updated_at_without_500(
+    tmp_path, monkeypatch
+):
+    """A conversation with ``updated_at: {"weird": "shape"}`` must not 500."""
+    conv = {
+        "uuid": "conv-dict-updated-at",
+        "name": "corrupt updated stamp",
+        "summary": "",
+        "model": "claude-sonnet-4-6",
+        "created_at": "2026-05-01T12:00:00Z",
+        "updated_at": {"nested": "object"},  # poisoned
+        "is_starred": False,
+        "source": "CLAUDE_AI",
+        "chat_messages": [],
+    }
+    _seed_corrupt_conv(tmp_path, monkeypatch, conv)
+
+    client = TestClient(app)
+    r = client.get("/api/conversations")
+    assert r.status_code == 200, r.text
+
+
+def test_get_conversation_handles_non_numeric_prelude_hidden_count(
+    tmp_path, monkeypatch
+):
+    """``GET /api/conversations/{uuid}`` with a non-numeric
+    ``prelude_hidden_count`` value (corrupt JSON: string ``"foo"``)
+    must not 500.
+
+    Pre-fix: ``int(data.get("prelude_hidden_count") or 0)`` raised
+    ``ValueError: invalid literal for int() with base 10: 'foo'``
+    because the ``or 0`` collapses None / 0 but NOT a non-numeric
+    truthy string. Council coercion-audit MED finding (store.py:602).
+
+    The fix is a try/except that defaults to 0 on either ValueError
+    or TypeError (covers list/dict shapes too). The route should
+    return 200 with ``prelude_hidden_count`` absent from the wire
+    shape (it's not exposed on ConversationDetail's public fields
+    other than internally) OR present as 0 — we don't assert on the
+    exact wire shape, only on the non-crash contract.
+    """
+    conv = {
+        "uuid": "conv-bad-prelude",
+        "name": "corrupt prelude count",
+        "summary": "",
+        "model": "claude-sonnet-4-6",
+        "created_at": "2026-05-01T12:00:00Z",
+        "updated_at": "2026-05-01T13:00:00Z",
+        "is_starred": False,
+        "source": "CLAUDE_AI",
+        "chat_messages": [],
+        "prelude_hidden_count": "foo",  # poisoned: non-numeric string
+    }
+    _seed_corrupt_conv(tmp_path, monkeypatch, conv)
+
+    client = TestClient(app)
+    r = client.get("/api/conversations/conv-bad-prelude")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["uuid"] == "conv-bad-prelude"
+
+
+def test_get_conversation_handles_list_prelude_hidden_count(
+    tmp_path, monkeypatch
+):
+    """Same as above but with a list value (``[1, 2]``) which raises
+    ``TypeError: int() argument must be a string... not 'list'`` rather
+    than ValueError. Ensures both exception types are guarded."""
+    conv = {
+        "uuid": "conv-list-prelude",
+        "name": "corrupt prelude count list",
+        "summary": "",
+        "model": "claude-sonnet-4-6",
+        "created_at": "2026-05-01T12:00:00Z",
+        "updated_at": "2026-05-01T13:00:00Z",
+        "is_starred": False,
+        "source": "CLAUDE_AI",
+        "chat_messages": [],
+        "prelude_hidden_count": [1, 2],  # poisoned: list
+    }
+    _seed_corrupt_conv(tmp_path, monkeypatch, conv)
+
+    client = TestClient(app)
+    r = client.get("/api/conversations/conv-list-prelude")
+    assert r.status_code == 200, r.text
+
+

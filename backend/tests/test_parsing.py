@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 
+import pytest
+
 import backend.parsing as parsing
 from backend import claude_code_reader, store
 
@@ -122,3 +124,76 @@ def test_aliases_are_same_object_as_parsing_function():
     """
     assert claude_code_reader._parse_datetime is parsing.parse_datetime
     assert store._parse_datetime is parsing.parse_datetime
+
+
+# ---------------------------------------------------------------------------
+# Coercion-audit hardening: widen the catch beyond ``ValueError``.
+#
+# Background: the original implementation caught only ``ValueError`` to
+# preserve bit-for-bit parity with the pre-refactor duplicates. Module
+# docstring documented this as "exception-widening is deferred follow-up
+# work". The unsafe-primitive-coercion audit (council bug-class #1)
+# promoted this from deferred to HIGH after empirical reproduction:
+#
+#   parse_datetime(12345)        → AttributeError on .endswith("Z")
+#   parse_datetime(["x"])        → AttributeError on .endswith("Z")
+#   parse_datetime({"a": 1})     → AttributeError on .endswith("Z")
+#
+# All three are reachable via a corrupt-on-disk ``created_at`` /
+# ``updated_at`` field in any conversation JSON file, and the loop in
+# ``store.list_conversations`` makes a single bad row 500 the entire
+# sidebar (not just that one conversation). Same blast-radius profile
+# as 8ab36fc's null-safety bug.
+#
+# The contract these tests pin: any "wrong-type" truthy input falls
+# back to ``datetime.now(timezone.utc)``, identical to the existing
+# "unparseable string" behavior. Documented behavior unchanged; the
+# set of inputs that trigger the fallback is widened.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_datetime_int_input_falls_back_to_now_utc():
+    """Int input (corrupt JSON: ``"created_at": 12345``) must not raise.
+
+    Before the fix, this raised ``AttributeError: 'int' object has no
+    attribute 'endswith'`` because the ``"Z"``-suffix rewrite assumes
+    a string. The widened catch (``ValueError``, ``AttributeError``,
+    ``TypeError``) collapses every non-string-and-not-None truthy
+    input into the documented now-UTC fallback.
+    """
+    result = parsing.parse_datetime(12345)  # type: ignore[arg-type]
+    assert isinstance(result, datetime)
+    assert _is_close_to_now_utc(result)
+
+
+def test_parse_datetime_list_input_falls_back_to_now_utc():
+    """List input (corrupt JSON: ``"created_at": ["x"]``) must not raise."""
+    result = parsing.parse_datetime(["2025-01-15"])  # type: ignore[arg-type]
+    assert isinstance(result, datetime)
+    assert _is_close_to_now_utc(result)
+
+
+def test_parse_datetime_dict_input_falls_back_to_now_utc():
+    """Dict input (corrupt JSON: ``"created_at": {"a": 1}``) must not raise."""
+    result = parsing.parse_datetime({"year": 2025})  # type: ignore[arg-type]
+    assert isinstance(result, datetime)
+    assert _is_close_to_now_utc(result)
+
+
+def test_parse_datetime_float_input_falls_back_to_now_utc():
+    """Float input (e.g. epoch-seconds in a corrupt file) must not raise."""
+    result = parsing.parse_datetime(1736900000.0)  # type: ignore[arg-type]
+    assert isinstance(result, datetime)
+    assert _is_close_to_now_utc(result)
+
+
+def test_parse_datetime_bool_input_falls_back_to_now_utc():
+    """Bool input (``"created_at": true``) must not raise.
+
+    NB: ``True`` is truthy, so the ``if not dt_str`` short-circuit
+    doesn't catch it. ``True.endswith(...)`` raises AttributeError
+    before the widening fix.
+    """
+    result = parsing.parse_datetime(True)  # type: ignore[arg-type]
+    assert isinstance(result, datetime)
+    assert _is_close_to_now_utc(result)

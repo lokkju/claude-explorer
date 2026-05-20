@@ -1,6 +1,7 @@
 """Store module for reading conversation JSON files from disk."""
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any, Literal
@@ -29,6 +30,9 @@ from .models import (
     ContentBlock,
     SubagentSummary,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 # Top-level files that should be considered conversation JSONs.
@@ -475,19 +479,45 @@ class ConversationStore:
             conversations.append(self._make_summary(data, include_subagents=include_subagents))
 
         # Sort
+        # Hunt #12 — Unstable sort tiebreakers. Timsort is stable, but
+        # only on input order, which here depends on
+        # _get_all_conversations_data() iteration of FileCache + glob
+        # walk — both non-deterministic across cache rebuilds. Two
+        # conversations with identical primary keys (e.g., the same
+        # auto-title "Untitled", or the same fetch-time-rounded
+        # updated_at) would silently flip order between sidebar
+        # refreshes. Append c.uuid as the final tiebreaker; for
+        # string-primary sorts (name, project) slot c.updated_at
+        # BETWEEN the primary key and the UUID so same-name
+        # conversations cluster by time within the name group rather
+        # than UUID-scattering.
         reverse = sort_order == "desc"
         if sort == "name":
-            conversations.sort(key=lambda c: c.name.lower(), reverse=reverse)
+            conversations.sort(
+                key=lambda c: (c.name.lower(), c.updated_at, c.uuid),
+                reverse=reverse,
+            )
         elif sort == "created_at":
-            conversations.sort(key=lambda c: c.created_at, reverse=reverse)
+            conversations.sort(
+                key=lambda c: (c.created_at, c.uuid),
+                reverse=reverse,
+            )
         elif sort == "project":
             # Sort by project_name (None values go last)
             conversations.sort(
-                key=lambda c: (c.project_name is None, (c.project_name or "").lower()),
+                key=lambda c: (
+                    c.project_name is None,
+                    (c.project_name or "").lower(),
+                    c.updated_at,
+                    c.uuid,
+                ),
                 reverse=reverse,
             )
         else:  # updated_at (default)
-            conversations.sort(key=lambda c: c.updated_at, reverse=reverse)
+            conversations.sort(
+                key=lambda c: (c.updated_at, c.uuid),
+                reverse=reverse,
+            )
 
         return conversations
 
@@ -575,6 +605,25 @@ class ConversationStore:
         messages = [_parse_message(m) for m in branch]
         human_count = sum(1 for m in chat_messages if m.get("sender") == "human")
 
+        # Council coercion-audit (bug-class #1) MED finding: ``int(x)`` raises
+        # ValueError on non-numeric truthy strings (e.g. ``"foo"``) and
+        # TypeError on list/dict shapes. The ``or 0`` collapses None/0 but
+        # NOT a corrupt non-numeric value. A hand-edited / partial-write
+        # JSON file with ``"prelude_hidden_count": "foo"`` would 500 the
+        # detail route. Try/except + default-to-0 mirrors the documented
+        # fallback semantics of ``parse_datetime`` for the same root cause.
+        raw_prelude = data.get("prelude_hidden_count")
+        try:
+            prelude_count = int(raw_prelude) if raw_prelude is not None else 0
+        except (ValueError, TypeError):
+            logger.warning(
+                "Conversation %s has non-numeric prelude_hidden_count %r; "
+                "defaulting to 0",
+                data.get("uuid"),
+                raw_prelude,
+            )
+            prelude_count = 0
+
         # ``data.get(k, fallback)`` returns the fallback ONLY when the key
         # is MISSING; an explicit ``None`` value reaches Pydantic and is
         # rejected by str/bool/list-typed fields with HTTP 500. See
@@ -599,7 +648,7 @@ class ConversationStore:
             compact_markers=data.get("compact_markers") or [],
             # V1 polish (2026-05-12): CC reader's `_flag_leading_prelude_markers`
             # emits this; Desktop data dicts won't contain it, so default 0.
-            prelude_hidden_count=int(data.get("prelude_hidden_count") or 0),
+            prelude_hidden_count=prelude_count,
         )
 
     def get_conversation_tree(self, uuid: str) -> ConversationTree | None:
