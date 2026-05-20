@@ -18,7 +18,6 @@ with token boundaries (e.g., ``"py"`` matching the substring inside
 prefix-matches only.
 """
 
-import json
 import logging
 import re
 import sqlite3
@@ -220,20 +219,57 @@ def _extract_searchable_text(
 
 
 def _stringify_tool_input(tool_input: dict[str, Any]) -> str:
-    """Render a tool_use input dict so its string-valued fields are searchable.
+    """Render a tool_use input dict so its keys AND string values are
+    searchable, WITHOUT duplicating any value-text.
 
-    JSON-dumps the whole dict (so nested values are reachable) and also
-    appends each top-level string value verbatim so a user search like
-    "echo foo" matches without quoting concerns.
+    Two search axes, no overlap (Option C, SCHEMA_VERSION v8→v9):
+
+      * **Keys axis** — every dict key reachable (top-level and nested)
+        is emitted once, space-joined into a single line. A user query
+        like ``command`` or ``file_path`` hits this line via the FTS5
+        unicode61 tokenizer.
+      * **Values axis** — every unique string value at any depth is
+        emitted on its own line. A user query like ``echo hello`` hits
+        a value line directly.
+
+    Pre-v9 implementation used ``json.dumps(tool_input)`` (which already
+    contained both keys AND values, including nested) AND ALSO appended
+    each top-level string value verbatim. The overlap surfaced as
+    user-visible doubled snippets on every tool-call search hit (e.g.
+    ``"echo hello\\necho hello"``). FTS5's ``snippet()`` echoed the
+    duplication faithfully. See:
+      backend/tests/test_search_extract_no_double_index.py::
+        test_tool_input_value_appears_once_in_body
+
+    Set-based dedupe across the value axis (rare but possible: an
+    ``Edit`` block with ``old_string == new_string``, a tool that
+    repeats the same path across multiple keys) preserves the
+    one-occurrence contract that the bidirectional tests pin.
     """
+    keys: list[str] = []
+    values: list[str] = []
+    seen_values: set[str] = set()
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(k, str):
+                    keys.append(k)
+                walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+        elif isinstance(obj, str):
+            if obj and obj not in seen_values:
+                seen_values.add(obj)
+                values.append(obj)
+
+    walk(tool_input)
+
     parts: list[str] = []
-    try:
-        parts.append(json.dumps(tool_input, ensure_ascii=False))
-    except (TypeError, ValueError):
-        pass
-    for v in tool_input.values():
-        if isinstance(v, str):
-            parts.append(v)
+    if keys:
+        parts.append(" ".join(keys))
+    parts.extend(values)
     return "\n".join(parts)
 
 

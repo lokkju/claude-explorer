@@ -143,7 +143,16 @@ logger = logging.getLogger(__name__)
 #     image:\nGood! Now deploy this image:"). Bumping forces a one-
 #     time rebuild so existing rows get the deduped projection;
 #     query path falls back to linear scan during the rebuild.
-SCHEMA_VERSION = 8
+#   * v9 (2026-05-19, doubled-snippet bug, tool-arg sibling): no
+#     schema change, but ``_stringify_tool_input`` switched from
+#     ``json.dumps + per-value append`` (which doubled every
+#     value-text) to ``keys-line + deduped values`` (Option C). The
+#     visible cost on pre-v9 rows was the same doubled-snippet UX
+#     on every tool-call search hit (e.g. a search for "echo hello"
+#     against a Bash tool_use rendered as two identical rows).
+#     Bumping forces a one-time rebuild so existing rows get the
+#     deduped projection.
+SCHEMA_VERSION = 9
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata
