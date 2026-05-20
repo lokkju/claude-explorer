@@ -39,10 +39,36 @@ interface PreferencesEnvelope {
   data: Record<string, unknown>;
 }
 
+// 2026-05-18 (type-assertion-lies audit): the previous `(await r.json())
+// as PreferencesEnvelope` cast was a runtime lie. If the backend ever
+// returns a malformed shape (null, an array, missing `version`, …) we'd
+// hand the caller a value typed PreferencesEnvelope that would either
+// crash downstream or silently coerce to undefined via `?.`. This guard
+// surfaces the malformation as a query error instead. `typeof === 'object'`
+// alone is not enough: `typeof [] === 'object'` and `typeof null ===
+// 'object'`, so both `!== null` and `!Array.isArray(...)` are
+// load-bearing.
+function isPrefsEnvelope(v: unknown): v is PreferencesEnvelope {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    'version' in v &&
+    typeof (v as { version: unknown }).version === 'number' &&
+    'data' in v &&
+    typeof (v as { data: unknown }).data === 'object' &&
+    (v as { data: unknown }).data !== null &&
+    !Array.isArray((v as { data: unknown }).data)
+  );
+}
+
 async function fetchPrefs(): Promise<PreferencesEnvelope> {
   const r = await fetch('/api/preferences');
   if (!r.ok) throw new Error(`prefs GET ${r.status}`);
-  return (await r.json()) as PreferencesEnvelope;
+  const body: unknown = await r.json();
+  if (!isPrefsEnvelope(body)) {
+    throw new Error('prefs GET: malformed response envelope');
+  }
+  return body;
 }
 
 async function patchPrefs(
@@ -54,9 +80,21 @@ async function patchPrefs(
     body: JSON.stringify({ data: patch }),
   });
   if (!r.ok) throw new Error(`prefs PATCH ${r.status}`);
-  return (await r.json()) as PreferencesEnvelope;
+  const body: unknown = await r.json();
+  if (!isPrefsEnvelope(body)) {
+    throw new Error('prefs PATCH: malformed response envelope');
+  }
+  return body;
 }
 
+// Trust boundary: `JSON.parse(raw) as T` is a runtime lie. We catch
+// parse errors (returns undefined) but cannot validate the parsed shape
+// against the generic T — that would require a per-key schema, which we
+// deliberately do not adopt (council rejected wholesale Zod). Downstream
+// consumers should defend against "valid JSON, wrong shape" via their
+// own fallbacks. Server-of-record is the canonical store; localStorage
+// is a transient mirror that may legitimately hold stale shapes during
+// migrations.
 function readLocalStorage<T>(key: string): T | undefined {
   try {
     const raw = window.localStorage.getItem(key);

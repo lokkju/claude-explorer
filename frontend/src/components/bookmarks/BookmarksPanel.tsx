@@ -105,7 +105,13 @@ export function BookmarksPanel() {
                   key={b.id}
                   data-bookmark-item
                   onClick={(e) => {
-                    if ((e.target as HTMLElement).closest('button, input')) return
+                    // Hunt #2: e.target is EventTarget; .closest() lives on
+                    // Element. Guard with instanceof so a non-Element target
+                    // doesn't crash the click handler. If the target isn't
+                    // an Element, treat the click as a row-open (the
+                    // button/input child guard exists to prevent re-opening
+                    // when those inner controls are the actual target).
+                    if (e.target instanceof Element && e.target.closest('button, input')) return
                     handleOpen(b)
                   }}
                   className="cursor-pointer rounded-md border border-zinc-200 bg-white p-2.5 text-xs shadow-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"

@@ -29,6 +29,17 @@ function allowsShortcuts(target: EventTarget | null): boolean {
   return target.closest('[data-allow-shortcuts]') !== null
 }
 
+// Hunt #2: replaces two `document.querySelector(...) as HTMLInputElement`
+// casts at the Vim '/' and Emacs Ctrl+S sites. querySelector returns
+// `Element | null`; the placeholder selector could match a future
+// non-input element, and the cast would silently call .focus() on
+// something that may lack it. Guard with `instanceof HTMLInputElement`
+// and no-op if the match isn't an actual input. Exported for testing.
+export function focusSearchInput(): void {
+  const el = document.querySelector('input[placeholder*="Search"]')
+  if (el instanceof HTMLInputElement) el.focus()
+}
+
 export function useKeyboardShortcuts() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -377,7 +388,7 @@ export function useKeyboardShortcuts() {
               return
             case '/':
               e.preventDefault()
-              ;(document.querySelector('input[placeholder*="Search"]') as HTMLInputElement)?.focus()
+              focusSearchInput()
               return
           }
         }
@@ -430,7 +441,7 @@ export function useKeyboardShortcuts() {
                 return
               case 's':
                 e.preventDefault()
-                ;(document.querySelector('input[placeholder*="Search"]') as HTMLInputElement)?.focus()
+                focusSearchInput()
                 return
             }
           }

@@ -20,7 +20,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn, formatDate } from '@/lib/utils'
-import type { SortField } from '@/lib/types'
+import { isSortField, type SortField } from '@/lib/types'
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
   { value: 'updated_at', label: 'Last Activity' },
@@ -310,7 +310,12 @@ export function SearchPanel() {
           <Select
             value={sortField}
             onValueChange={(v: string) => {
-              setSortField(v as SortField)
+              // shadcn Select hands us a string; only accept SortField
+              // values. Unknown values are silently rejected (defense
+              // in depth — the SelectItem children only supply known
+              // values). See lib/types.ts for the predicate.
+              if (!isSortField(v)) return
+              setSortField(v)
               // Restore focus so Enter still navigates after changing sort.
               window.setTimeout(() => inputRef.current?.focus(), 0)
             }}

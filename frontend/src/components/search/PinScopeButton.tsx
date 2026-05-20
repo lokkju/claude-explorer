@@ -29,7 +29,16 @@ export function PinScopeButton({
   useEffect(() => {
     if (!open) return
     const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      // Hunt #2: global mousedown listener — e.target is EventTarget,
+      // which doesn't satisfy Node.contains(). Guard with instanceof
+      // instead of `as Node` so a non-Node target (shouldn't happen in
+      // practice, but the type system can't rule it out) is treated as
+      // "outside the popover" and closes it.
+      if (!(e.target instanceof Node)) {
+        setOpen(false)
+        return
+      }
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)

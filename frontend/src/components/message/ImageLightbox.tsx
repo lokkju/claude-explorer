@@ -95,7 +95,7 @@ export function ImageLightbox({ files, index, onIndexChange }: ImageLightboxProp
                 <span className="truncate font-mono">{file.file_name}</span>
                 {files.length > 1 && (
                   <span className="shrink-0 rounded bg-zinc-800 px-2 py-0.5 text-xs">
-                    {index! + 1} / {files.length}
+                    {(index ?? 0) + 1} / {files.length}
                   </span>
                 )}
               </div>

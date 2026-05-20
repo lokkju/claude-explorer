@@ -183,7 +183,11 @@ function wouldCreateCycle(state: FiltersState, groupId: FilterId, candidateId: F
   const stack: FilterId[] = [candidateId]
   const seen = new Set<FilterId>()
   while (stack.length > 0) {
-    const cur = stack.pop()!
+    // Hunt #2: while-guard proves stack.length > 0, but Array.pop is
+    // typed `T | undefined` regardless. Explicit narrowing instead of
+    // the old `stack.pop()!` lie.
+    const cur = stack.pop()
+    if (cur === undefined) break
     if (seen.has(cur)) continue
     seen.add(cur)
     if (cur === groupId) return true
@@ -248,7 +252,7 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
       setDraft({ ...draft, enabled: !draft.enabled })
       return
     }
-    updateNode(node.id, { enabled: !node.enabled } as Partial<FilterNode>)
+    updateNode(node.id, { enabled: !node.enabled })
   }
 
   const handleRequestDelete = (node: FilterNode) => {
@@ -318,7 +322,7 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
     if (draft.isNew) {
       addNode(prospective)
     } else {
-      updateNode(prospective.id, prospective as Partial<FilterNode>)
+      updateNode(prospective.id, prospective)
     }
     setDraft(null)
     setSaveError(null)
@@ -643,7 +647,7 @@ function DraftEditor({ draft, state, onChange, onSave, onCancel, saveError }: Dr
           name="type"
           value="atom"
           current={draft.type}
-          onPick={(v) => onChange({ ...draft, type: v as 'atom' | 'group' })}
+          onPick={(v) => onChange({ ...draft, type: v })}
           testId="filter-editor-type-atom"
         >
           Atom
@@ -652,7 +656,7 @@ function DraftEditor({ draft, state, onChange, onSave, onCancel, saveError }: Dr
           name="type"
           value="group"
           current={draft.type}
-          onPick={(v) => onChange({ ...draft, type: v as 'atom' | 'group' })}
+          onPick={(v) => onChange({ ...draft, type: v })}
           testId="filter-editor-type-group"
         >
           Group
@@ -720,14 +724,14 @@ function AtomEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) =>
             name="behavior"
             value="hide"
             current={draft.behavior}
-            onPick={(v) => onChange({ ...draft, behavior: v as Behavior })}
+            onPick={(v) => onChange({ ...draft, behavior: v })}
             testId="filter-editor-behavior-hide"
           >Hide matches</RadioPill>
           <RadioPill
             name="behavior"
             value="show-only"
             current={draft.behavior}
-            onPick={(v) => onChange({ ...draft, behavior: v as Behavior })}
+            onPick={(v) => onChange({ ...draft, behavior: v })}
             testId="filter-editor-behavior-show-only"
           >Show only matches</RadioPill>
         </div>
@@ -739,14 +743,14 @@ function AtomEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) =>
             name="mode"
             value="glob"
             current={draft.mode}
-            onPick={(v) => onChange({ ...draft, mode: v as FilterMode })}
+            onPick={(v) => onChange({ ...draft, mode: v })}
             testId="filter-editor-mode-glob"
           >glob</RadioPill>
           <RadioPill
             name="mode"
             value="regex"
             current={draft.mode}
-            onPick={(v) => onChange({ ...draft, mode: v as FilterMode })}
+            onPick={(v) => onChange({ ...draft, mode: v })}
             testId="filter-editor-mode-regex"
           >regex</RadioPill>
         </div>
@@ -842,14 +846,14 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
             name="match"
             value="all"
             current={draft.match}
-            onPick={(v) => onChange({ ...draft, match: v as 'all' | 'any' })}
+            onPick={(v) => onChange({ ...draft, match: v })}
             testId="filter-editor-match-all"
           >all of these</RadioPill>
           <RadioPill
             name="match"
             value="any"
             current={draft.match}
-            onPick={(v) => onChange({ ...draft, match: v as 'all' | 'any' })}
+            onPick={(v) => onChange({ ...draft, match: v })}
             testId="filter-editor-match-any"
           >any of these</RadioPill>
         </div>
@@ -930,7 +934,7 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
 // Small helpers
 // ---------------------------------------------------------------------------
 
-function RadioPill({
+function RadioPill<T extends string>({
   value,
   current,
   onPick,
@@ -939,9 +943,9 @@ function RadioPill({
 }: {
   /** Reserved for future native-radio rendering; currently unused. */
   name?: string
-  value: string
-  current: string
-  onPick: (v: string) => void
+  value: T
+  current: T
+  onPick: (v: T) => void
   testId: string
   children: ReactNode
 }) {

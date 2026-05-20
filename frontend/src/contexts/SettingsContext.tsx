@@ -6,6 +6,28 @@ export type Theme = 'light' | 'dark' | 'system'
 export type KeyboardMode = 'emacs' | 'vim'
 export type MarkdownDialect = 'commonmark' | 'obsidian'
 
+// Runtime predicates for the closed string unions above. Radix
+// `RadioGroup.onValueChange` hands callers a `string`, not the
+// narrow union — the old `setX(value as Theme)` callsites in
+// SettingsPage were runtime lies. These predicates let SettingsPage
+// (and any other consumer of an `(value: string)` callback) reject
+// unknown values instead of writing garbage to a typed setter.
+const THEMES: readonly Theme[] = ['light', 'dark', 'system']
+const KEYBOARD_MODES: readonly KeyboardMode[] = ['emacs', 'vim']
+const MARKDOWN_DIALECTS: readonly MarkdownDialect[] = ['commonmark', 'obsidian']
+
+export function isTheme(v: unknown): v is Theme {
+  return typeof v === 'string' && (THEMES as readonly string[]).includes(v)
+}
+
+export function isKeyboardMode(v: unknown): v is KeyboardMode {
+  return typeof v === 'string' && (KEYBOARD_MODES as readonly string[]).includes(v)
+}
+
+export function isMarkdownDialect(v: unknown): v is MarkdownDialect {
+  return typeof v === 'string' && (MARKDOWN_DIALECTS as readonly string[]).includes(v)
+}
+
 interface SettingsContextType {
   // Display settings
   showToolCalls: boolean

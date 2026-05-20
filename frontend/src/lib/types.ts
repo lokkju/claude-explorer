@@ -289,6 +289,29 @@ export type SourceFilter = 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE'
 export type SortField = 'updated_at' | 'created_at' | 'name' | 'project'
 export type SortOrder = 'asc' | 'desc'
 
+// Runtime predicates for the closed string unions above. shadcn
+// `<Select>` (and Radix RadioGroup) hand callers a `string` from
+// onValueChange, not the narrow union — the old `setX(v as SortField)`
+// callsites in Sidebar / SearchPanel were runtime lies. Use these
+// predicates to silently reject unknown values instead of writing
+// garbage to a typed setter (which would propagate into the backend
+// query string, e.g. `?source=garbage`).
+const SOURCE_FILTERS: readonly SourceFilter[] = ['all', 'CLAUDE_AI', 'CLAUDE_CODE']
+const SORT_FIELDS: readonly SortField[] = [
+  'updated_at',
+  'created_at',
+  'name',
+  'project',
+]
+
+export function isSourceFilter(v: unknown): v is SourceFilter {
+  return typeof v === 'string' && (SOURCE_FILTERS as readonly string[]).includes(v)
+}
+
+export function isSortField(v: unknown): v is SortField {
+  return typeof v === 'string' && (SORT_FIELDS as readonly string[]).includes(v)
+}
+
 export interface ConversationFilters {
   search?: string
   starred?: boolean

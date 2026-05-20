@@ -41,6 +41,24 @@ export type MarkdownExportMode =
   | 'bundle-commonmark'
   | 'bundle-obsidian'
 
+// Runtime predicate — Radix `RadioGroup.onValueChange` hands callers a
+// `string`, not the narrow MarkdownExportMode union. Used by the
+// onValueChange callback below to reject unknown values (defense in
+// depth — the RadioGroupItem children below only ever supply known
+// values, so the guard catches drift, not normal usage).
+const MARKDOWN_EXPORT_MODES: readonly MarkdownExportMode[] = [
+  'inline',
+  'bundle-commonmark',
+  'bundle-obsidian',
+]
+
+export function isMarkdownExportMode(v: unknown): v is MarkdownExportMode {
+  return (
+    typeof v === 'string' &&
+    (MARKDOWN_EXPORT_MODES as readonly string[]).includes(v)
+  )
+}
+
 interface MarkdownExportDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -115,7 +133,9 @@ export function MarkdownExportDialog({
 
         <RadioGroup
           value={mode}
-          onValueChange={(v) => setMode(v as MarkdownExportMode)}
+          onValueChange={(v) => {
+            if (isMarkdownExportMode(v)) setMode(v)
+          }}
           className="gap-3"
         >
           <label className="flex items-start gap-3 rounded border border-zinc-200 p-3 dark:border-zinc-800">

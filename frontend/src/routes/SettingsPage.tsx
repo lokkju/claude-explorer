@@ -2,7 +2,12 @@ import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { Sun, Moon, Monitor, Settings, Keyboard, Database, Info, ExternalLink, FileText } from 'lucide-react'
-import { useSettings, type Theme, type KeyboardMode, type MarkdownDialect } from '@/contexts/SettingsContext'
+import {
+  useSettings,
+  isTheme,
+  isKeyboardMode,
+  isMarkdownDialect,
+} from '@/contexts/SettingsContext'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { api } from '@/lib/api'
 
@@ -68,7 +73,12 @@ export function SettingsPage() {
               </label>
               <RadioGroup
                 value={theme}
-                onValueChange={(value) => setTheme(value as Theme)}
+                onValueChange={(value) => {
+                  // Radix hands us a `string`; only accept values in the
+                  // Theme union. Unknown values (corrupted persisted
+                  // state, future Radix change) are silently rejected.
+                  if (isTheme(value)) setTheme(value)
+                }}
                 className="grid grid-cols-3 gap-3"
               >
                 <label
@@ -120,7 +130,9 @@ export function SettingsPage() {
               </label>
               <RadioGroup
                 value={keyboardMode}
-                onValueChange={(value) => setKeyboardMode(value as KeyboardMode)}
+                onValueChange={(value) => {
+                  if (isKeyboardMode(value)) setKeyboardMode(value)
+                }}
                 className="grid grid-cols-2 gap-3"
               >
                 <label
@@ -194,7 +206,9 @@ export function SettingsPage() {
                 </p>
                 <RadioGroup
                   value={markdownDialect}
-                  onValueChange={(value) => setMarkdownDialect(value as MarkdownDialect)}
+                  onValueChange={(value) => {
+                    if (isMarkdownDialect(value)) setMarkdownDialect(value)
+                  }}
                   className="grid grid-cols-2 gap-3"
                 >
                   <label

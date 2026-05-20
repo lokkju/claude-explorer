@@ -25,7 +25,7 @@ import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
 import { cn } from '@/lib/utils'
-import type { SourceFilter, SortField } from '@/lib/types'
+import { isSourceFilter, isSortField, type SortField } from '@/lib/types'
 
 interface SidebarProps {
   className?: string
@@ -184,7 +184,16 @@ export function Sidebar({ className }: SidebarProps) {
             </SelectItem>
           </SelectContent>
         </Select>
-        <Select value={sourceFilter} onValueChange={(v: string) => setSourceFilter(v as SourceFilter)}>
+        <Select
+          value={sourceFilter}
+          onValueChange={(v: string) => {
+            // shadcn Select hands us a string; only accept values in the
+            // SourceFilter union. Unknown values are silently rejected
+            // (defense in depth — the SelectItem children below only
+            // ever supply known values).
+            if (isSourceFilter(v)) setSourceFilter(v)
+          }}
+        >
           <SelectTrigger className="w-full">
             <SelectValue placeholder="Filter by source" />
           </SelectTrigger>
@@ -234,7 +243,12 @@ export function Sidebar({ className }: SidebarProps) {
         </div>
         {/* Sort controls */}
         <div className="flex items-center gap-1">
-          <Select value={sortField} onValueChange={(v: string) => setSortField(v as SortField)}>
+          <Select
+            value={sortField}
+            onValueChange={(v: string) => {
+              if (isSortField(v)) setSortField(v)
+            }}
+          >
             <SelectTrigger className="flex-1 h-8 text-xs">
               <ArrowUpDown className="h-3 w-3 mr-1 text-zinc-400" />
               <SelectValue />

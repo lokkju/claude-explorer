@@ -28,6 +28,34 @@ interface LegacyFetchProgress {
 
 type FetchState = 'idle' | 'checking' | 'fetching' | 'complete' | 'error'
 
+// Hunt #2: target-union guard for the SSE event type. Replaces
+// `(liveProgress.type as LegacyFetchProgress['type'])` at the
+// FetchProgress -> LegacyFetchProgress mapping site below. The
+// cast was a runtime lie: if the backend ever emits a new SSE
+// event type, the cast lets garbage flow into downstream branches
+// keyed on `type === 'complete'` / `=== 'error'`. Unknown values
+// fall back to 'progress' (benign — drives the spinner, not the
+// state machine). Exported for testing.
+const LEGACY_FETCH_TYPES: readonly LegacyFetchProgress['type'][] = [
+  'start',
+  'progress',
+  'complete',
+  'error',
+]
+const CAPTURE_FETCH_TYPES: readonly string[] = [
+  'capture_start',
+  'capture_waiting_login',
+  'capture_done',
+]
+
+export function mapLiveProgressType(rawType: string): LegacyFetchProgress['type'] {
+  if (CAPTURE_FETCH_TYPES.includes(rawType)) return 'progress'
+  if ((LEGACY_FETCH_TYPES as readonly string[]).includes(rawType)) {
+    return rawType as LegacyFetchProgress['type']
+  }
+  return 'progress'
+}
+
 export function FetchDialog({ isOpen, onClose }: FetchDialogProps) {
   // Build-9 Bug 1: subscribe to the shared pipeline state. When a refresh
   // is in flight (driven by the Sidebar Refresh button), this dialog must
@@ -125,18 +153,8 @@ export function FetchDialog({ isOpen, onClose }: FetchDialogProps) {
       effectiveError = pipeline.errorMessage || ''
     }
     if (liveProgress) {
-      const captureTypes = new Set<string>([
-        'capture_start',
-        'capture_waiting_login',
-        'capture_done',
-      ])
-      const mappedType: LegacyFetchProgress['type'] = captureTypes.has(
-        liveProgress.type,
-      )
-        ? 'progress'
-        : (liveProgress.type as LegacyFetchProgress['type'])
       effectiveProgress = {
-        type: mappedType,
+        type: mapLiveProgressType(liveProgress.type),
         message: liveProgress.message,
         current: liveProgress.current ?? 0,
         total: liveProgress.total ?? 0,

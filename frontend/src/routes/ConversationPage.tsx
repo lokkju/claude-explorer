@@ -21,6 +21,7 @@ import { MarkdownExportDialog } from '@/components/conversation/MarkdownExportDi
 import { SessionPreludeAffordance } from '@/components/conversation/SessionPreludeAffordance'
 import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { ApiError } from '@/lib/types'
 
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
@@ -138,8 +139,12 @@ export function ConversationPage() {
   }, [compactMarkers])
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLDivElement
-    const { scrollTop, scrollHeight, clientHeight } = target
+    // Hunt #2: use currentTarget, which React types as the element the
+    // handler is attached to (HTMLDivElement). e.target is the actual
+    // event target (could be a descendant during bubbling) and was
+    // previously cast with `as HTMLDivElement` — a runtime lie for any
+    // scroll bubbled from a descendant.
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget
     const isNearBottom = scrollHeight - scrollTop - clientHeight < 200
     const isNearTop = scrollTop < 200
     setShowScrollButton(!isNearBottom)
@@ -209,8 +214,12 @@ export function ConversationPage() {
   useEffect(() => {
     if (!conversation) return
     const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      // Hunt #2: e.target is EventTarget; reading .tagName /
+      // .isContentEditable needs an HTMLElement narrowing.
+      if (
+        e.target instanceof HTMLElement &&
+        (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)
+      ) {
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -236,8 +245,11 @@ export function ConversationPage() {
   useEffect(() => {
     if (compactMarkers.length === 0) return
     const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      // Hunt #2: see [/] handler above.
+      if (
+        e.target instanceof HTMLElement &&
+        (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)
+      ) {
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -429,12 +441,21 @@ export function ConversationPage() {
       // for 404 / 401 / 503 (see backend/routers/fetch.py). The api layer
       // surfaces that as ApiError.message, so we can show it verbatim
       // instead of "Re-fetch failed: {\"detail\":\"...\"}".
-      const err = e as Error & { status?: number }
-      const message = err.message || 'Re-download failed.'
+      //
+      // Hunt #2: narrow with `instanceof ApiError` instead of the prior
+      // `as Error & { status?: number }` cast — the cast was a runtime
+      // lie because catch sees `unknown`, and a non-Error throw (e.g.,
+      // a thrown string from a future caller) would have crashed at
+      // `.message` read. ApiError is the only typed throw site in
+      // api.ts, so this also tightens the contract.
+      const isApiErr = e instanceof ApiError
+      const message = isApiErr
+        ? e.message
+        : (e instanceof Error ? e.message : 'Re-download failed.')
       // 404/401/503 messages are already actionable; don't offer Retry on
       // 404 (the conversation isn't coming back) or 401 (user must run
       // capture). Retry only on 5xx-ish unknown failures.
-      const status = (e as { status?: number }).status
+      const status = isApiErr ? e.status : undefined
       const allowRetry = status === undefined || (status >= 500 && status !== 503)
       errorToast(message, {
         retry: allowRetry ? handleForceRefetch : undefined,
@@ -550,7 +571,15 @@ export function ConversationPage() {
               {conversation.file_path && (
                 <button
                   onClick={async () => {
-                    await navigator.clipboard.writeText(conversation.file_path!)
+                    // Hunt #2: the surrounding `conversation.file_path &&`
+                    // gates rendering, but the closure captures
+                    // `conversation` not the narrowed value, so TS
+                    // doesn't carry the narrowing into the async
+                    // callback. Capture an explicit local instead of
+                    // the old `conversation.file_path!`.
+                    const filePath = conversation.file_path
+                    if (!filePath) return
+                    await navigator.clipboard.writeText(filePath)
                     setCopiedPath(true)
                     setTimeout(() => setCopiedPath(false), 2000)
                   }}

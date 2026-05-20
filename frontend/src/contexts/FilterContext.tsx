@@ -235,9 +235,14 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     }
 
     didMigrateV1Ref.current = true
+    // Hunt #2: hasLegacyFilters / hasLegacyActive already prove these
+    // are non-null arrays (Array.isArray && .length > 0), but TS can't
+    // narrow back to `legacyFilters` / `legacyActive` from the local
+    // booleans. Use `?? []` to make the fallback explicit without the
+    // `!` non-null assertion.
     const migrated = migrateLegacy(
-      hasLegacyFilters ? legacyFilters! : [],
-      hasLegacyActive ? legacyActive! : [],
+      hasLegacyFilters ? legacyFilters ?? [] : [],
+      hasLegacyActive ? legacyActive ?? [] : [],
     )
     // Single atomic PATCH that:
     //   - writes the new `filters` blob (with _migratedV1: true), AND
@@ -308,7 +313,20 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     (id: FilterId, partial: Partial<FilterNode>) => {
       const existing = filtersState.nodes[id]
       if (!existing) return
-      const merged = { ...existing, ...partial } as FilterNode
+      // Hunt #2: discriminated-union spread loses the `type` linkage,
+      // so TS can't prove `{ ...existing, ...partial }` satisfies
+      // FilterNode (the prior code reached for `as FilterNode`).
+      // Switch on the existing node's discriminant and rebuild with
+      // the matching narrow type. Re-asserting `type` last preserves
+      // the invariant that an atom stays an atom and a group stays a
+      // group even if a caller accidentally passes a `partial` with a
+      // mismatched `type` field.
+      let merged: FilterNode
+      if (existing.type === 'atom') {
+        merged = { ...existing, ...partial, type: 'atom' } as AtomFilter
+      } else {
+        merged = { ...existing, ...partial, type: 'group' } as GroupFilter
+      }
       setFiltersState({
         ...filtersState,
         nodes: { ...filtersState.nodes, [id]: merged },
