@@ -614,7 +614,7 @@ claude-explorer install-watcher --uninstall
 | Linux    | systemd **user** unit             | `~/.config/systemd/user/claude-explorer-cc-watcher.service`             |
 | Windows  | Task Scheduler task (logon trigger)| `ClaudeExplorerCCWatcher` (launcher at `%USERPROFILE%\.claude-explorer\cc-watcher.py`) |
 
-All three run the same Python entry point (`backend.cc_image_watcher.run_watcher`), which combines the `watchdog` Observer with the periodic backstop poll. Only the supervisor differs. macOS uses `KeepAlive`, Linux uses `Restart=always`, Windows uses an on-logon trigger — each restarts on crash.
+All three run the same Python entry point (`backend.cc_watcher.run_watcher`), which combines the `watchdog` Observer with the periodic backstop poll. Only the supervisor differs. macOS uses `KeepAlive`, Linux uses `Restart=always`, Windows uses an on-logon trigger — each restarts on crash.
 
 **Where logs go:**
 

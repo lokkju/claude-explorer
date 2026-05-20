@@ -1,9 +1,11 @@
 """Config router."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..deps import get_store
 from ..models import AppConfig, AppConfigStats
 from ..config import get_settings
+from ..store import ConversationStore
 
 router = APIRouter(tags=["config"])
 
@@ -33,16 +35,15 @@ async def get_config() -> AppConfig:
 
 
 @router.get("/config/stats", response_model=AppConfigStats)
-async def get_config_stats() -> AppConfigStats:
+async def get_config_stats(
+    store: ConversationStore = Depends(get_store),
+) -> AppConfigStats:
     """`/config` plus the populated conversation count.
 
     Slow on cold cache; intended for the Settings page where the user
     is willing to wait.
     """
-    from ..store import ConversationStore
-
     settings = get_settings()
-    store = ConversationStore()
     return AppConfigStats(
         data_dir=str(settings.data_dir),
         conversation_count=store.count_conversations(),

@@ -654,7 +654,7 @@ def _build_watcher_inline_script(scan_interval: float) -> str:
         # process is never affected by a stale env from the parent
         # shell.
         f"os.environ['CLAUDE_EXPLORER_CC_WATCHER_INTERVAL_SEC'] = '{scan_interval}'\n"
-        "from backend.cc_image_watcher import run_watcher\n"
+        "from backend.cc_watcher import run_watcher\n"
         "asyncio.run(run_watcher(asyncio.Event()))\n"
     )
 

@@ -1,5 +1,17 @@
 """Persistent SQLite-backed cache of Claude Code session metadata.
 
+Backend caches at a glance (Cache landscape, 2026-05-18):
+  * ``FileCache`` (``backend/cache.py``) — in-memory, per-path
+    mtime-keyed cache of parsed conversation dicts; LRU-bounded;
+    lost on process restart.
+  * ``SummaryCache`` (this module) — SQLite-persisted sidebar
+    summaries; mtime+size invalidation per row; full table wipe on
+    ``claude_code_reader.LOGIC_VERSION`` mismatch at lifespan startup.
+  * ``SearchIndex`` (``backend/search_index.py``) — SQLite FTS5
+    inverted index; drift-first incremental rebuild keyed on
+    ``indexed_files`` mtime; full drop+rebuild on ``SCHEMA_VERSION``
+    bump or column-set drift in the ``messages`` virtual table.
+
 Powers the fast path for :func:`backend.claude_code_reader.
 list_claude_code_conversations`. The fast metadata reader
 (``read_conversation_summary_fast``) opens and re-parses every
@@ -24,7 +36,7 @@ Lifecycle:
        :func:`backend.claude_code_reader._read_summaries_parallel`.
        Misses are then upserted into the cache for next time.
     3. **Drift detection**: the existing CC image watcher's 600 s
-       backstop poll (:func:`backend.cc_image_watcher.scan_once`)
+       backstop poll (:func:`backend.cc_watcher.scan_once`)
        walks the live data directories anyway for FTS5 drift; it now
        also refreshes the summary cache in the same iteration.
     4. **Auto-invalidation on logic change**:
@@ -82,6 +94,33 @@ class SummaryCache:
     One instance per index file. The module-level :func:`get_summary_cache`
     singleton wraps this for the canonical location (which is shared with
     the FTS5 search index).
+
+    Invalidation policy:
+      * **Trigger (per row)**: :meth:`get_many` requires BOTH the
+        on-disk ``mtime`` AND ``size`` to match the values stamped on
+        the cache row; any drift on either drops the row to the miss
+        bucket. ``None``-producing rows are persisted as a sentinel
+        blob so unchanged "phantom" sessions still get negative-cache
+        hits instead of re-reads. :meth:`delete_missing` drops rows
+        whose paths no longer exist on disk (called from the watcher
+        backstop).
+      * **Persists across restart**: yes — rows live in the SQLite file
+        co-located with the FTS5 index, so a warm restart serves the
+        sidebar in one bulk ``SELECT`` plus stat compare.
+      * **Full rebuild**: :meth:`clear_on_logic_mismatch` at lifespan
+        startup compares :data:`backend.claude_code_reader.
+        LOGIC_VERSION` (the first 16 hex chars of a SHA-256 over the
+        fast-reader source) against the value stored in
+        ``conversation_summaries_meta``; any mismatch wipes
+        ``conversation_summaries`` so the next request repopulates from
+        the current reader. Logic changes (including whitespace edits
+        to the fast reader) thus auto-rebuild.
+      * **Failure mode**: builds without FTS5 OR a ``sqlite3.Error``
+        opening the file return ``None`` from :func:`get_summary_cache`;
+        callers fall back to the legacy sequential reader. Query-time
+        ``sqlite3.Error`` in :meth:`get_many` / :meth:`upsert_many` is
+        logged and yields an empty result so the caller takes the
+        miss path — never blocks the sidebar.
     """
 
     def __init__(self, path: Path) -> None:

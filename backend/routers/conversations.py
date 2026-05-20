@@ -2,9 +2,10 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import ORJSONResponse
 
+from ..deps import get_store
 from ..models import (
     ConversationDetail,
     ConversationListItem,
@@ -13,11 +14,6 @@ from ..models import (
 from ..store import ConversationStore
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
-
-
-def get_store() -> ConversationStore:
-    """Get a ConversationStore instance."""
-    return ConversationStore()
 
 
 # ORJSONResponse on the list endpoint cuts serialization of the ~1 MB
@@ -60,9 +56,9 @@ async def list_conversations(
     organization_id: str | None = Query(
         None, description="Filter by organization (workspace) UUID"
     ),
+    store: ConversationStore = Depends(get_store),
 ) -> list[ConversationListItem]:
     """List all conversations with optional filtering."""
-    store = get_store()
     full = store.list_conversations(
         search=search,
         starred=starred,
@@ -89,9 +85,9 @@ async def list_conversations(
 async def get_conversation(
     uuid: str,
     leaf: str | None = Query(None, description="Override active branch leaf UUID"),
+    store: ConversationStore = Depends(get_store),
 ) -> ConversationDetail:
     """Get a single conversation by UUID, optionally on a specific branch."""
-    store = get_store()
     conversation = store.get_conversation(uuid, leaf_override=leaf)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -99,9 +95,11 @@ async def get_conversation(
 
 
 @router.get("/{uuid}/tree", response_model=ConversationTree)
-async def get_conversation_tree(uuid: str) -> ConversationTree:
+async def get_conversation_tree(
+    uuid: str,
+    store: ConversationStore = Depends(get_store),
+) -> ConversationTree:
     """Get the full message tree for a conversation."""
-    store = get_store()
     try:
         tree = store.get_conversation_tree(uuid)
         if not tree:

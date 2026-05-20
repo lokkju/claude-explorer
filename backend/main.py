@@ -185,7 +185,8 @@ async def lifespan(app: FastAPI):
                 _migration_state["attempts"] = 1
                 _migration_state["last_error"] = str(e)
                 migration_task = asyncio.create_task(
-                    _lifespan_migration_task(settings.data_dir, DEFAULT_CREDENTIALS_PATH)
+                    _lifespan_migration_task(settings.data_dir, DEFAULT_CREDENTIALS_PATH),
+                    name="migration_task",
                 )
             except Exception as e:
                 # Any other error — log and continue. Legacy fallback in
@@ -203,9 +204,11 @@ async def lifespan(app: FastAPI):
     if read_env(
         "CLAUDE_EXPLORER_DISABLE_CC_WATCHER", "CLAUDE_EXPORTER_DISABLE_CC_WATCHER"
     ) != "1":
-        from backend.cc_image_watcher import run_watcher
+        from backend.cc_watcher import run_watcher
 
-        watcher_task = asyncio.create_task(run_watcher(watcher_stop))
+        watcher_task = asyncio.create_task(
+            run_watcher(watcher_stop), name="watcher_task"
+        )
 
     # Auto-warm the CC image cache: walk every CC session JSONL and
     # ensure referenced [Image: source: ...] files are copied to the
@@ -250,7 +253,9 @@ async def lifespan(app: FastAPI):
 
             await warm_all_sessions_async()
 
-        warm_task = asyncio.create_task(_warm_all_sessions_fallback())
+        warm_task = asyncio.create_task(
+            _warm_all_sessions_fallback(), name="warm_task"
+        )
 
     # Build the FTS5 search index in the background. Search falls back
     # to the linear-scan path until this completes, so the server is
@@ -316,7 +321,9 @@ async def lifespan(app: FastAPI):
                     flush=True,
                 )
 
-        search_index_task = asyncio.create_task(_build_search_index())
+        search_index_task = asyncio.create_task(
+            _build_search_index(), name="search_index_task"
+        )
 
     # Initialize the sidebar metadata cache and wipe it if the source
     # hash of read_conversation_summary_fast has changed since the last
@@ -419,57 +426,114 @@ async def lifespan(app: FastAPI):
                     flush=True,
                 )
 
-        summary_cache_task = asyncio.create_task(_build_summary_cache())
+        summary_cache_task = asyncio.create_task(
+            _build_summary_cache(), name="summary_cache_task"
+        )
 
     try:
         yield
     finally:
-        # Shutdown: cancel the retry task cleanly.
-        if migration_task is not None and not migration_task.done():
-            migration_task.cancel()
-            try:
-                await migration_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        # Cooperative shutdown for the CC image watcher.
-        if watcher_task is not None and not watcher_task.done():
-            watcher_stop.set()
-            try:
-                await asyncio.wait_for(watcher_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-                watcher_task.cancel()
-        # Cancel the auto-warm task if it's still running at shutdown.
-        # Best-effort — partial warm pass is fine, the next startup
-        # will pick up where it left off (idempotent).
-        if warm_task is not None and not warm_task.done():
-            warm_task.cancel()
-            try:
-                await warm_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        # Cancel the search-index build task if still running.
-        # Idempotent: every conversation it indexed survives in the
-        # SQLite file, and the next startup picks up where it left off
-        # (the drift-detection pass catches any stragglers).
-        if search_index_task is not None and not search_index_task.done():
-            search_index_task.cancel()
-            try:
-                await search_index_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        # Cancel the eager summary-cache fill if still running.
-        # Idempotent: any rows already upserted survive in SQLite, and
-        # the next startup picks up the remaining misses. The
-        # ProcessPoolExecutor inside _read_summaries_parallel is a
-        # `with` block, so its __exit__ joins workers before the
-        # threadpool thread returns to asyncio (worst case shutdown
-        # blocks for ~1.5s on a cold-corpus startup-then-shutdown).
-        if summary_cache_task is not None and not summary_cache_task.done():
-            summary_cache_task.cancel()
-            try:
-                await summary_cache_task
-            except (asyncio.CancelledError, Exception):
-                pass
+        # Explicit, uniform shutdown for every background task spawned
+        # above (PLANS/2026.05.18-backend-architecture-cleanup.md task B4).
+        #
+        # The previous code handled each task individually with five
+        # near-identical cancel/await/swallow blocks. That worked but
+        # had three concrete problems:
+        #
+        #   1. **No hard cap on shutdown latency.** A task that wedged
+        #      its own ``await task`` (e.g. an unawaited cancellation
+        #      that left a coroutine in a non-finalised state) would
+        #      stall the lifespan exit indefinitely.
+        #
+        #   2. **The watcher's cooperative shutdown waited up to 2 s
+        #      synchronously** on ``asyncio.wait_for(watcher_task,
+        #      timeout=2.0)``. With watchdog's Observer threads
+        #      sometimes taking the full 5 s to join, this could span
+        #      the entire 2 s window even when a CancelledError-based
+        #      cleanup would have been instant. The watcher's own
+        #      try/finally cleanup
+        #      (:func:`backend.cc_watcher.run_watcher`) handles
+        #      ``CancelledError`` correctly and offloads blocking
+        #      Observer joins to ``asyncio.to_thread`` — so a hard
+        #      cancel here returns immediately while the OS threads
+        #      finish on their own (Python's ``threading._shutdown``
+        #      waits for them at process exit if necessary).
+        #
+        #   3. **Exception diagnostics varied by task.**
+        #      ``gather(*, return_exceptions=True)`` collects per-task
+        #      results uniformly so we can log non-cancellation
+        #      exceptions explicitly while expected CancelledErrors
+        #      are silently absorbed.
+        #
+        # The 5-second total budget is a diagnostic cap: every task
+        # we spawn is trivially cancellable (``asyncio.to_thread``
+        # abandons its future instantly; the watcher has its own
+        # try/finally). The timeout firing is itself a bug we want
+        # to surface in the logs.
+        background_tasks: list[asyncio.Task] = [
+            t for t in (
+                migration_task,
+                watcher_task,
+                warm_task,
+                search_index_task,
+                summary_cache_task,
+            ) if t is not None and not t.done()
+        ]
+
+        if not background_tasks:
+            return
+
+        log.info(
+            "Lifespan shutdown: cancelling %d background task(s)",
+            len(background_tasks),
+        )
+
+        # Cancel every non-done task. ``Task.cancel`` is idempotent.
+        #
+        # NOTE: we deliberately do NOT set ``watcher_stop`` first. The
+        # cooperative-shutdown path through cc_watcher.run_watcher's
+        # finally block synchronously awaits Observer joins (via
+        # ``asyncio.to_thread``) before completing — bounded but
+        # still O(seconds) for the OS-level thread joins. The
+        # CancelledError path through the SAME finally block exits as
+        # soon as the cancellation is delivered to the to_thread
+        # await; the OS thread keeps running and finishes on its own
+        # without holding up the asyncio shutdown. Cancellation is
+        # therefore strictly faster than cooperative shutdown for
+        # lifespan exit.
+        #
+        # ``watcher_stop`` is still set by the watcher's finally
+        # cleanup (via ``shutdown_projects_drift``) so a pending
+        # debounce Timer doesn't fire post-shutdown.
+        for task in background_tasks:
+            task.cancel()
+
+        # Wait for all cancellations to propagate, with a hard cap on
+        # total shutdown latency. ``return_exceptions=True`` collects
+        # each task's terminal value (or exception) so we can log
+        # anything unexpected without aborting the gather mid-way.
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*background_tasks, return_exceptions=True),
+                timeout=5.0,
+            )
+            for task, result in zip(background_tasks, results):
+                if isinstance(result, asyncio.CancelledError):
+                    # Expected.
+                    continue
+                if isinstance(result, Exception):
+                    log.warning(
+                        "Background task %s raised during shutdown: %r",
+                        task.get_name(), result,
+                    )
+        except asyncio.TimeoutError:
+            still_running = [
+                t.get_name() for t in background_tasks if not t.done()
+            ]
+            log.error(
+                "Lifespan shutdown exceeded 5s budget; tasks still running: %s",
+                still_running,
+            )
 
 
 app = FastAPI(

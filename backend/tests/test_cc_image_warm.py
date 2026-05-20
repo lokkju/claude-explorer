@@ -14,7 +14,7 @@ Spec-driven discipline (CLAUDE-TESTING.md §1):
     Files consulted while authoring this test:
       * ``backend/cc_image_cache.py`` (warm_all_sessions / _async)
       * ``backend/main.py`` (lifespan startup hook)
-      * ``backend/tests/test_cc_image_watcher.py`` (sibling pattern)
+      * ``backend/tests/test_cc_watcher.py`` (sibling pattern)
 """
 
 from __future__ import annotations

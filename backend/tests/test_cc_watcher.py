@@ -1,4 +1,4 @@
-"""Tests for backend.cc_image_watcher.
+"""Tests for backend.cc_watcher.
 
 The watcher polls ``~/.claude/image-cache/`` periodically and copies
 any new files to the permanent cache. Tests cover:
@@ -38,10 +38,10 @@ def watcher_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
     monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
 
-    from backend import config, cc_image_watcher
+    from backend import config, cc_watcher
 
     config.get_settings.cache_clear()
-    cc_image_watcher.reset_seen_for_tests()
+    cc_watcher.reset_seen_for_tests()
 
     yield {
         "claude_dir": claude_dir,
@@ -53,7 +53,7 @@ def watcher_env(tmp_path, monkeypatch):
     }
 
     config.get_settings.cache_clear()
-    cc_image_watcher.reset_seen_for_tests()
+    cc_watcher.reset_seen_for_tests()
 
 
 def _drop_image(image_cache, sess: str, n: str, payload: bytes) -> None:
@@ -69,12 +69,12 @@ def _cached_files(perm_cache_root, sess: str, n: str):
 
 
 def test_cold_scan_picks_up_existing_files(watcher_env):
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     _drop_image(watcher_env["image_cache"], "sess-cold", "1", TINY_PNG_BYTES)
     _drop_image(watcher_env["image_cache"], "sess-cold", "2", TINY_PNG_BYTES)
 
-    handled = cc_image_watcher.scan_once()
+    handled = cc_watcher.scan_once()
     assert handled == 2
 
     cached = _cached_files(watcher_env["perm_cache_root"], "sess-cold", "1")
@@ -83,24 +83,24 @@ def test_cold_scan_picks_up_existing_files(watcher_env):
 
 
 def test_second_scan_is_idempotent_via_seen_set(watcher_env):
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     _drop_image(watcher_env["image_cache"], "sess-seen", "1", TINY_PNG_BYTES)
-    assert cc_image_watcher.scan_once() == 1
+    assert cc_watcher.scan_once() == 1
     # Second pass: same path is already in _seen, so it counts 0 newly
     # handled.
-    assert cc_image_watcher.scan_once() == 0
+    assert cc_watcher.scan_once() == 0
 
 
 def test_files_added_after_first_scan_caught_on_next_pass(watcher_env):
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     _drop_image(watcher_env["image_cache"], "sess-incr", "1", TINY_PNG_BYTES)
-    assert cc_image_watcher.scan_once() == 1
+    assert cc_watcher.scan_once() == 1
 
     # Simulate Claude Code dropping a NEW file after our first sweep.
     _drop_image(watcher_env["image_cache"], "sess-incr", "2", OTHER_PNG_BYTES)
-    assert cc_image_watcher.scan_once() == 1
+    assert cc_watcher.scan_once() == 1
 
     cached_2 = _cached_files(watcher_env["perm_cache_root"], "sess-incr", "2")
     assert len(cached_2) == 1
@@ -108,107 +108,230 @@ def test_files_added_after_first_scan_caught_on_next_pass(watcher_env):
 
 
 def test_non_image_extension_ignored(watcher_env):
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     sess_dir = watcher_env["image_cache"] / "sess-other"
     sess_dir.mkdir(parents=True)
     (sess_dir / "notes.txt").write_bytes(b"not an image")
 
-    handled = cc_image_watcher.scan_once()
+    handled = cc_watcher.scan_once()
     assert handled == 0
     assert not watcher_env["perm_cache_root"].exists() or not list(
         watcher_env["perm_cache_root"].rglob("*.txt")
     )
 
 
-def test_scan_once_runs_search_index_drift_pass(watcher_env, monkeypatch):
-    """scan_once() also runs the search-index drift pass per Phase 3 of
-    PLANS/2026.05.10-search-fts5.md.
+# ---------------------------------------------------------------------------
+# Search-index drift pass — REAL-state tests (C2 hardening, 2026-05-18)
+#
+# These tests previously mocked ``backend.search_index._search_index`` and
+# ``backend.search_index.update_drifted_files`` to verify that scan_once()
+# drives the drift pass. The mocks hid whether the production wiring
+# actually upserts rows into FTS5 — a passing mock-test with broken
+# production code was a real failure mode. The rewrite drops the mocks
+# and asserts against the real on-disk index, so a broken drift pass
+# surfaces as an empty query result.
+# ---------------------------------------------------------------------------
 
-    Setup: replace the singleton with a mock that records whether
-    update_drifted_files was invoked. is_ready=True so the pass actually
-    runs (not bypassed).
+
+@pytest.fixture
+def real_search_index(watcher_env, tmp_path, monkeypatch):
+    """Build a per-test ``SearchIndex`` pointed at a tmp sqlite file
+    and install it as the ``backend.search_index._search_index``
+    singleton.
+
+    Fixture-scope (not inline ``monkeypatch.setattr`` in the test body)
+    so teardown ordering is correct under pytest-xdist: pytest tears
+    fixtures down LIFO, so an inline monkeypatch teardown would null
+    out the singleton BEFORE we get a chance to call ``idx.close()``,
+    leaking a SQLite file handle per test. Here we yield the index,
+    then on teardown explicitly ``idx.close()`` and restore whatever
+    the prior singleton value was (typically ``None``).
+
+    Yields the ``SearchIndex`` instance so tests can call
+    ``mark_ready()`` / ``query()`` / inspect ``list_indexed_paths()``.
+    """
+    from backend import search_index as si
+
+    idx = si.SearchIndex(tmp_path / "real-index.sqlite")
+    prior = si._search_index
+    si._search_index = idx
+
+    try:
+        yield idx
+    finally:
+        # Restore the prior singleton FIRST so any concurrent code
+        # sees the right value, then close our handle. The autouse
+        # ``isolate_search_index_singleton`` conftest fixture will run
+        # its own reset on teardown immediately after; it's a no-op
+        # because ``prior`` is typically None.
+        si._search_index = prior
+        try:
+            idx.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _write_real_cc_session(claude_dir, project: str, session_uuid: str, body: str):
+    """Drop a real CC JSONL session that ``read_claude_code_conversation``
+    can parse.
+
+    CRITICAL: passes ``session_id=session_uuid`` to the user-entry
+    builder. The reader extracts ``conv["uuid"]`` from the first
+    user entry's ``sessionId``, NOT from the filename stem (with the
+    stem as fallback only). If the builder default ``"sess"`` leaks
+    through, the FTS5 ``conv_uuid`` won't match the filename and the
+    by-uuid assertion below would spuriously fail.
+    """
+    from backend.tests import builders as B
+
+    path = claude_dir / "projects" / project / f"{session_uuid}.jsonl"
+    entries = [
+        B.build_cc_user_entry(
+            uuid=f"{session_uuid}-u1",
+            text=body,
+            session_id=session_uuid,
+        ),
+        B.build_cc_assistant_entry(
+            uuid=f"{session_uuid}-a1",
+            msg_id=f"msg_{session_uuid}",
+            text="ack",
+            session_id=session_uuid,
+        ),
+    ]
+    return B.write_cc_jsonl(path, entries)
+
+
+def test_scan_once_runs_search_index_drift_pass(
+    watcher_env, real_search_index,
+):
+    """When ``scan_once()`` runs with a ready index, a newly-written CC
+    JSONL must end up indexed in FTS5 — discoverable by a body-token
+    query and recorded in ``indexed_files``.
 
     Bug it would surface: forgetting to wire the drift pass into the
     watcher → search index never picks up file changes between
-    backend restarts.
+    backend restarts. (The old mock-based test would PASS even if the
+    upsert silently dropped rows, because it only checked that the
+    function was called.)
     """
-    from backend import cc_image_watcher, search_index as si
+    from backend import cc_watcher
 
-    drift_called = {"count": 0}
+    real_search_index.mark_ready()
 
-    class _MockIdx:
-        def is_ready(self):
-            return True
+    session_uuid = "abcdef01-0000-0000-0000-000000000001"
+    body = "needle_real_drift_pass_aardvark"
+    jsonl_path = _write_real_cc_session(
+        watcher_env["claude_dir"], "proj-A", session_uuid, body,
+    )
 
-    def _mock_drift(store, *, index=None):
-        drift_called["count"] += 1
-        return 0
+    cc_watcher.scan_once()
 
-    monkeypatch.setattr(si, "_search_index", _MockIdx())
-    monkeypatch.setattr("backend.search_index.update_drifted_files", _mock_drift)
+    # Direct evidence #1: the file is recorded in indexed_files.
+    indexed = real_search_index.list_indexed_paths()
+    assert jsonl_path in indexed, (
+        f"scan_once() must drive update_drifted_files to upsert the new "
+        f"JSONL into FTS5 indexed_files. Indexed paths: {indexed}"
+    )
 
-    # Even with no images on disk, the watcher pass should still call
-    # the drift function.
-    cc_image_watcher.scan_once()
-    assert drift_called["count"] == 1, (
-        "scan_once() must call update_drifted_files once per pass so the "
-        "search index stays in sync with on-disk file changes."
+    # Direct evidence #2: a real FTS5 query against the body returns
+    # the session, with conv_uuid == session UUID (file stem).
+    hits = real_search_index.query(body)
+    hit_uuids = {row["conv_uuid"] for row in hits}
+    assert session_uuid in hit_uuids, (
+        f"FTS5 query for the freshly-indexed body must hit the new "
+        f"session. Got conv_uuids={hit_uuids}, expected to contain "
+        f"{session_uuid!r}."
     )
 
 
-def test_scan_once_skips_drift_when_index_not_ready(watcher_env, monkeypatch):
-    """If the index is still building (is_ready=False), the drift pass
-    must NOT fire.
+def test_scan_once_skips_drift_when_index_not_ready(
+    watcher_env, real_search_index,
+):
+    """If the index is still building (``is_ready()`` is False), the
+    drift pass must NOT run — no rows should land in ``indexed_files``
+    for the newly-written JSONL.
 
-    Bug it would surface: drift pass running on a half-built index would
-    waste cycles re-indexing files the initial build is about to write.
+    Bug it would surface: drift pass running on a half-built index
+    would waste cycles re-indexing files the initial build is about
+    to write, AND (worse) could race with the initial build's writes.
+    The fixture starts the index in not-ready state (no mark_ready()
+    call), so this directly pins the gate.
     """
-    from backend import cc_image_watcher, search_index as si
+    from backend import cc_watcher
 
-    drift_called = {"count": 0}
+    # Sanity: fresh SearchIndex is not ready until build_full_index
+    # calls mark_ready(). We rely on that default here.
+    assert real_search_index.is_ready() is False
 
-    class _MockIdx:
-        def is_ready(self):
-            return False
+    session_uuid = "abcdef02-0000-0000-0000-000000000002"
+    body = "needle_skipped_pre_ready_zebra"
+    _write_real_cc_session(
+        watcher_env["claude_dir"], "proj-A", session_uuid, body,
+    )
 
-    def _mock_drift(store, *, index=None):
-        drift_called["count"] += 1
-        return 0
+    cc_watcher.scan_once()
 
-    monkeypatch.setattr(si, "_search_index", _MockIdx())
-    monkeypatch.setattr("backend.search_index.update_drifted_files", _mock_drift)
+    # The gate held: no file got indexed.
+    assert real_search_index.list_indexed_paths() == [], (
+        "scan_once() must skip the drift pass while is_ready()=False, "
+        "but indexed_files has rows: "
+        f"{real_search_index.list_indexed_paths()}"
+    )
+    # And the body is not queryable.
+    assert real_search_index.query(body) == [], (
+        "No FTS5 hits should be possible before the initial build "
+        "fires mark_ready()."
+    )
 
-    cc_image_watcher.scan_once()
-    assert drift_called["count"] == 0
 
-
-def test_scan_once_drift_failure_does_not_break_image_pass(watcher_env, monkeypatch):
-    """If update_drifted_files raises, the image-cache pass MUST still
-    complete successfully.
+def test_scan_once_drift_failure_does_not_break_image_pass(
+    watcher_env, real_search_index,
+):
+    """A real drift-pass failure (closed SQLite write-conn → real
+    ``sqlite3.ProgrammingError`` inside ``upsert_conversation``) must
+    NOT prevent the image-cache pass from completing.
 
     Negative-space: pin the failure-domain isolation. An error in the
     search-index pass is not allowed to silently break the image
-    watcher (which is the load-bearing data-loss prevention path).
+    watcher — which is the load-bearing data-loss prevention path.
+
+    Failure-injection mechanism (no mocks): we close the index's
+    write connection. ``_drift_first_scan`` uses the thread-local
+    read connection so it correctly identifies the JSONL as drifted;
+    ``upsert_conversation`` then attempts a write on the closed
+    handle and raises ``sqlite3.ProgrammingError`` — exactly the
+    "real I/O error mid-flight" we want to simulate.
     """
-    from backend import cc_image_watcher, search_index as si
+    from backend import cc_watcher
 
-    class _MockIdx:
-        def is_ready(self):
-            return True
+    real_search_index.mark_ready()
 
-    def _boom(store, *, index=None):
-        raise RuntimeError("simulated drift-pass failure")
+    # Need a drifted file so the upsert path actually fires (and hits
+    # the closed write conn). Without this, _drift_first_scan returns
+    # empty and the failure path never executes.
+    session_uuid = "abcdef03-0000-0000-0000-000000000003"
+    _write_real_cc_session(
+        watcher_env["claude_dir"], "proj-A", session_uuid, "noop_body",
+    )
 
-    monkeypatch.setattr(si, "_search_index", _MockIdx())
-    monkeypatch.setattr("backend.search_index.update_drifted_files", _boom)
+    # Real failure injection: close the write connection. The drift
+    # pass's stat/diff via the per-thread read conn still succeeds,
+    # but the subsequent upsert blows up with sqlite3.ProgrammingError.
+    real_search_index._write_conn.close()
 
+    # Image pass must still complete.
     _drop_image(watcher_env["image_cache"], "sess-isolated", "1", TINY_PNG_BYTES)
-    handled = cc_image_watcher.scan_once()
-    # Image pass completed despite the drift-pass crash.
-    assert handled == 1
+    handled = cc_watcher.scan_once()
+    assert handled == 1, (
+        "Image pass must complete despite the drift-pass SQL failure; "
+        f"got handled={handled}."
+    )
     cached = _cached_files(watcher_env["perm_cache_root"], "sess-isolated", "1")
-    assert len(cached) == 1
+    assert len(cached) == 1, (
+        "Image was not copied into the permanent cache — the drift-pass "
+        "failure leaked into the image pass."
+    )
 
 
 def test_scan_once_refreshes_summary_cache_for_drifted_files(
@@ -222,7 +345,7 @@ def test_scan_once_refreshes_summary_cache_for_drifted_files(
     new mtime AND the row count is unchanged (no duplicates).
     """
     import os
-    from backend import cc_image_watcher, summary_cache as sc
+    from backend import cc_watcher, summary_cache as sc
 
     # Force a per-test SQLite file so we don't touch ~/.claude-explorer.
     cache_path = tmp_path / "search-index.sqlite"
@@ -253,7 +376,7 @@ def test_scan_once_refreshes_summary_cache_for_drifted_files(
     cache._write_conn.commit()
 
     # Run scan_once.
-    cc_image_watcher.scan_once()
+    cc_watcher.scan_once()
 
     # The row should now be stamped with the real mtime+size and the
     # blob should reflect a re-read (not the "stale" placeholder).
@@ -279,7 +402,7 @@ def test_scan_once_drops_summary_cache_rows_for_missing_files(
     """scan_once() removes summary-cache rows for paths that no longer
     exist on disk. Mirrors the FTS5 cleanup pass.
     """
-    from backend import cc_image_watcher, summary_cache as sc
+    from backend import cc_watcher, summary_cache as sc
 
     cache_path = tmp_path / "search-index.sqlite"
     monkeypatch.setattr(sc, "default_index_path", lambda: cache_path)
@@ -298,7 +421,7 @@ def test_scan_once_drops_summary_cache_rows_for_missing_files(
     cache._write_conn.commit()
     assert cache.stats()["rows"] == 1
 
-    cc_image_watcher.scan_once()
+    cc_watcher.scan_once()
 
     assert cache.stats()["rows"] == 0, (
         "scan_once() must drop summary-cache rows whose underlying "
@@ -316,7 +439,7 @@ def test_scan_once_summary_cache_failure_does_not_break_image_pass(
     Same failure-domain isolation pattern as the search-index drift
     pass test above.
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     def _boom(*args, **kwargs):
         raise RuntimeError("simulated summary-cache failure")
@@ -328,7 +451,7 @@ def test_scan_once_summary_cache_failure_does_not_break_image_pass(
     )
 
     _drop_image(watcher_env["image_cache"], "sess-iso2", "1", TINY_PNG_BYTES)
-    handled = cc_image_watcher.scan_once()
+    handled = cc_watcher.scan_once()
     assert handled == 1
     cached = _cached_files(watcher_env["perm_cache_root"], "sess-iso2", "1")
     assert len(cached) == 1
@@ -339,14 +462,14 @@ def test_source_rotated_between_scans_does_not_break_watcher(watcher_env):
     the read, copy_marker_image_to_cache returns None and the watcher
     keeps going without raising.
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     # File exists when scan starts; disappears after the seen-check but
     # before the read. Easiest way to simulate: after the first scan
     # caches it, delete it manually and re-run. The cache copy should
     # survive (proving rotation safety).
     _drop_image(watcher_env["image_cache"], "sess-rot", "1", TINY_PNG_BYTES)
-    cc_image_watcher.scan_once()
+    cc_watcher.scan_once()
 
     src = watcher_env["image_cache"] / "sess-rot" / "1.png"
     src.unlink()
@@ -357,7 +480,7 @@ def test_source_rotated_between_scans_does_not_break_watcher(watcher_env):
     assert cached[0].read_bytes() == TINY_PNG_BYTES
 
     # Subsequent scan does NOT re-handle the missing path.
-    handled = cc_image_watcher.scan_once()
+    handled = cc_watcher.scan_once()
     assert handled == 0
 
 
@@ -382,37 +505,37 @@ def test_handle_one_path_idempotent(watcher_env):
     re-cache. Pins the per-process _seen guarantee that both
     scan_once and the event handler depend on for dedup.
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     _drop_image(watcher_env["image_cache"], "sess-once", "1", TINY_PNG_BYTES)
     src = watcher_env["image_cache"] / "sess-once" / "1.png"
 
-    assert cc_image_watcher.handle_one_path(src) is True
-    assert cc_image_watcher.handle_one_path(src) is False
+    assert cc_watcher.handle_one_path(src) is True
+    assert cc_watcher.handle_one_path(src) is False
     cached = _cached_files(watcher_env["perm_cache_root"], "sess-once", "1")
     assert len(cached) == 1
 
 
 def test_handle_one_path_skips_non_image(watcher_env):
     """Non-image suffixes are remembered as ignored; not retried."""
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     sess_dir = watcher_env["image_cache"] / "sess-skip"
     sess_dir.mkdir(parents=True)
     src = sess_dir / "notes.txt"
     src.write_bytes(b"not an image")
 
-    assert cc_image_watcher.handle_one_path(src) is False
+    assert cc_watcher.handle_one_path(src) is False
     # Marked seen so subsequent calls don't re-stat.
-    assert src in cc_image_watcher._seen
+    assert src in cc_watcher._seen
 
 
 def test_handle_one_path_missing_file_returns_false(watcher_env):
     """A path that doesn't exist returns False without raising."""
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     src = watcher_env["image_cache"] / "sess-gone" / "1.png"
-    assert cc_image_watcher.handle_one_path(src) is False
+    assert cc_watcher.handle_one_path(src) is False
 
 
 def test_event_handler_funnels_create_through_handle_one_path(watcher_env):
@@ -424,14 +547,14 @@ def test_event_handler_funnels_create_through_handle_one_path(watcher_env):
     misroutes events would silently regress the latency win the
     whole watchdog migration is for.
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     sess_dir = watcher_env["image_cache"] / "sess-evt"
     sess_dir.mkdir(parents=True)
     src = sess_dir / "1.png"
     src.write_bytes(TINY_PNG_BYTES)
 
-    handler = cc_image_watcher._build_event_handler()
+    handler = cc_watcher._build_event_handler()
 
     class _FakeEvent:
         def __init__(self, src_path: str, is_directory: bool = False) -> None:
@@ -455,12 +578,12 @@ def test_event_handler_ignores_directory_events(watcher_env):
     handle_one_path attempt path.is_file() → False, so this is a
     cheap-but-real correctness pin.
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     sess_dir = watcher_env["image_cache"] / "sess-dir"
     sess_dir.mkdir(parents=True)
 
-    handler = cc_image_watcher._build_event_handler()
+    handler = cc_watcher._build_event_handler()
 
     class _FakeDirEvent:
         src_path = str(sess_dir)
@@ -468,7 +591,7 @@ def test_event_handler_ignores_directory_events(watcher_env):
 
     handler.on_created(_FakeDirEvent())
     # Dir wasn't added to _seen — it was filtered by is_directory check.
-    assert sess_dir not in cc_image_watcher._seen
+    assert sess_dir not in cc_watcher._seen
 
 
 def test_run_watcher_with_pollingobserver_captures_event(watcher_env, monkeypatch):
@@ -484,7 +607,7 @@ def test_run_watcher_with_pollingobserver_captures_event(watcher_env, monkeypatc
 
     from watchdog.observers.polling import PollingObserver
 
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     # Force PollingObserver with a tight 100ms poll so the test
     # finishes in well under the backstop interval.
@@ -494,29 +617,29 @@ def test_run_watcher_with_pollingobserver_captures_event(watcher_env, monkeypatc
         class _Handler(FileSystemEventHandler):
             def on_created(self, event):
                 if not event.is_directory:
-                    cc_image_watcher.handle_one_path(__import__("pathlib").Path(event.src_path))
+                    cc_watcher.handle_one_path(__import__("pathlib").Path(event.src_path))
             def on_modified(self, event):
                 if not event.is_directory:
-                    cc_image_watcher.handle_one_path(__import__("pathlib").Path(event.src_path))
+                    cc_watcher.handle_one_path(__import__("pathlib").Path(event.src_path))
 
         observer = PollingObserver(timeout=0.1)
-        root = cc_image_watcher._live_image_cache_root()
+        root = cc_watcher._live_image_cache_root()
         root.mkdir(parents=True, exist_ok=True)
         observer.schedule(_Handler(), str(root), recursive=True)
         observer.start()
         return observer
 
     monkeypatch.setattr(
-        cc_image_watcher, "_try_start_observer", _fake_try_start_observer
+        cc_watcher, "_try_start_observer", _fake_try_start_observer
     )
     # Make backstop interval enormous so we know the win came from
     # events, not from a backstop scan.
-    monkeypatch.setattr(cc_image_watcher, "SCAN_INTERVAL_SEC", 3600.0)
+    monkeypatch.setattr(cc_watcher, "SCAN_INTERVAL_SEC", 3600.0)
 
     async def _scenario():
         stop_event = asyncio.Event()
         watcher_task = asyncio.create_task(
-            cc_image_watcher.run_watcher(stop_event)
+            cc_watcher.run_watcher(stop_event)
         )
 
         # Wait briefly for Observer to come up, then drop a file.
@@ -561,11 +684,11 @@ def test_run_watcher_falls_back_to_polling_when_observer_unavailable(
     """
     import asyncio
 
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
-    monkeypatch.setattr(cc_image_watcher, "_try_start_observer", lambda: None)
+    monkeypatch.setattr(cc_watcher, "_try_start_observer", lambda: None)
     # Tight backstop so we don't hang the test.
-    monkeypatch.setattr(cc_image_watcher, "SCAN_INTERVAL_SEC", 0.1)
+    monkeypatch.setattr(cc_watcher, "SCAN_INTERVAL_SEC", 0.1)
 
     _drop_image(
         watcher_env["image_cache"], "sess-poll-only", "1", TINY_PNG_BYTES
@@ -574,7 +697,7 @@ def test_run_watcher_falls_back_to_polling_when_observer_unavailable(
     async def _scenario():
         stop_event = asyncio.Event()
         watcher_task = asyncio.create_task(
-            cc_image_watcher.run_watcher(stop_event)
+            cc_watcher.run_watcher(stop_event)
         )
         # Initial scan is synchronous-within-task; one tick is plenty.
         await asyncio.sleep(0.05)

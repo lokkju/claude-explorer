@@ -17,7 +17,7 @@ events per user message) would trigger 5-20 SQL upserts in rapid
 succession.
 
 These tests use ``PollingObserver`` for determinism, matching the
-pattern in ``test_cc_image_watcher.py`` (the FSEvents/inotify
+pattern in ``test_cc_watcher.py`` (the FSEvents/inotify
 backends fire on the kernel's schedule with macOS-specific
 coalescing latencies that are hard to test reliably).
 """
@@ -85,13 +85,13 @@ def watcher_env(tmp_path, monkeypatch):
     # Force a short debounce so tests don't wait 2 s of real time.
     monkeypatch.setenv("CLAUDE_EXPLORER_SEARCH_DRIFT_DEBOUNCE_SEC", "0.2")
 
-    from backend import config, cc_image_watcher
+    from backend import config, cc_watcher
 
     config.get_settings.cache_clear()
-    cc_image_watcher.reset_seen_for_tests()
+    cc_watcher.reset_seen_for_tests()
     # Reset any drift-related module state introduced by the plan.
-    if hasattr(cc_image_watcher, "reset_projects_drift_for_tests"):
-        cc_image_watcher.reset_projects_drift_for_tests()
+    if hasattr(cc_watcher, "reset_projects_drift_for_tests"):
+        cc_watcher.reset_projects_drift_for_tests()
 
     yield {
         "claude_dir": claude_dir,
@@ -101,9 +101,9 @@ def watcher_env(tmp_path, monkeypatch):
     }
 
     config.get_settings.cache_clear()
-    cc_image_watcher.reset_seen_for_tests()
-    if hasattr(cc_image_watcher, "reset_projects_drift_for_tests"):
-        cc_image_watcher.reset_projects_drift_for_tests()
+    cc_watcher.reset_seen_for_tests()
+    if hasattr(cc_watcher, "reset_projects_drift_for_tests"):
+        cc_watcher.reset_projects_drift_for_tests()
 
 
 # ----- 7. Projects-dir observer exists --------------------------
@@ -123,7 +123,7 @@ def test_run_watcher_schedules_projects_dir_observer(watcher_env, monkeypatch):
     """
     from watchdog.observers.polling import PollingObserver
 
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     captured = {}
 
@@ -148,17 +148,17 @@ def test_run_watcher_schedules_projects_dir_observer(watcher_env, monkeypatch):
         return obs
 
     monkeypatch.setattr(
-        cc_image_watcher, "_try_start_observer", _fake_image_obs
+        cc_watcher, "_try_start_observer", _fake_image_obs
     )
     monkeypatch.setattr(
-        cc_image_watcher, "_try_start_projects_observer", _fake_projects_obs
+        cc_watcher, "_try_start_projects_observer", _fake_projects_obs
     )
-    monkeypatch.setattr(cc_image_watcher, "SCAN_INTERVAL_SEC", 3600.0)
+    monkeypatch.setattr(cc_watcher, "SCAN_INTERVAL_SEC", 3600.0)
 
     async def _scenario():
         stop_event = asyncio.Event()
         watcher_task = asyncio.create_task(
-            cc_image_watcher.run_watcher(stop_event)
+            cc_watcher.run_watcher(stop_event)
         )
         await asyncio.sleep(0.2)
         # Both observers must be alive while run_watcher is running.
@@ -188,7 +188,7 @@ def test_jsonl_modify_event_triggers_debounced_drift(
     event, hammering the SQL writer; OR the debounce never fires, and
     drift is never picked up.
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     drift_calls = {"n": 0}
 
@@ -201,12 +201,12 @@ def test_jsonl_modify_event_triggers_debounced_drift(
     )
     # Bypass image-observer to keep the test focused on projects.
     monkeypatch.setattr(
-        cc_image_watcher, "_try_start_observer", lambda: None
+        cc_watcher, "_try_start_observer", lambda: None
     )
 
     # Build the projects event handler directly so we control event
     # delivery (deterministic; no PollingObserver poll lag).
-    handler = cc_image_watcher._build_projects_event_handler()
+    handler = cc_watcher._build_projects_event_handler()
 
     jsonl = _write_cc_jsonl(
         watcher_env["claude_dir"],
@@ -224,8 +224,8 @@ def test_jsonl_modify_event_triggers_debounced_drift(
     # Wait > debounce window (env-set to 0.2 s above; add headroom).
     time.sleep(0.6)
     # Drain any pending timer threads.
-    if hasattr(cc_image_watcher, "_drain_projects_drift_for_tests"):
-        cc_image_watcher._drain_projects_drift_for_tests()
+    if hasattr(cc_watcher, "_drain_projects_drift_for_tests"):
+        cc_watcher._drain_projects_drift_for_tests()
 
     assert drift_calls["n"] == 1, (
         f"One JSONL modify event must trigger exactly one drift call; "
@@ -245,7 +245,7 @@ def test_event_storm_collapses_to_one_drift_call(watcher_env, monkeypatch):
     per CC keystroke append). Without debouncing, a user typing for
     a minute would generate hundreds of redundant SQL upserts.
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     drift_calls = {"n": 0}
 
@@ -257,7 +257,7 @@ def test_event_storm_collapses_to_one_drift_call(watcher_env, monkeypatch):
         "backend.search_index.update_drifted_files", _fake_drift
     )
 
-    handler = cc_image_watcher._build_projects_event_handler()
+    handler = cc_watcher._build_projects_event_handler()
     jsonl = _write_cc_jsonl(
         watcher_env["claude_dir"],
         "proj-A",
@@ -276,8 +276,8 @@ def test_event_storm_collapses_to_one_drift_call(watcher_env, monkeypatch):
 
     # Wait past debounce window.
     time.sleep(0.6)
-    if hasattr(cc_image_watcher, "_drain_projects_drift_for_tests"):
-        cc_image_watcher._drain_projects_drift_for_tests()
+    if hasattr(cc_watcher, "_drain_projects_drift_for_tests"):
+        cc_watcher._drain_projects_drift_for_tests()
 
     assert drift_calls["n"] == 1, (
         f"5 rapid events must collapse to 1 drift call; got "
@@ -297,7 +297,7 @@ def test_non_jsonl_event_is_ignored(watcher_env, monkeypatch):
     occasional ``.log`` / ``.tmp`` next to its sessions; those should
     be skipped.)
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     drift_calls = {"n": 0}
 
@@ -309,7 +309,7 @@ def test_non_jsonl_event_is_ignored(watcher_env, monkeypatch):
         "backend.search_index.update_drifted_files", _fake_drift
     )
 
-    handler = cc_image_watcher._build_projects_event_handler()
+    handler = cc_watcher._build_projects_event_handler()
     proj = watcher_env["projects"] / "proj-A"
     proj.mkdir(parents=True, exist_ok=True)
     txt = proj / "notes.txt"
@@ -322,8 +322,8 @@ def test_non_jsonl_event_is_ignored(watcher_env, monkeypatch):
 
     handler.on_modified(_FakeEvent(str(txt)))
     time.sleep(0.6)
-    if hasattr(cc_image_watcher, "_drain_projects_drift_for_tests"):
-        cc_image_watcher._drain_projects_drift_for_tests()
+    if hasattr(cc_watcher, "_drain_projects_drift_for_tests"):
+        cc_watcher._drain_projects_drift_for_tests()
 
     assert drift_calls["n"] == 0, (
         f"Non-JSONL events must NOT trigger drift; got "
@@ -344,7 +344,7 @@ def test_shutdown_cancels_pending_debounce_timer(watcher_env, monkeypatch):
     "Cannot operate on a closed database" warnings at shutdown — and
     in tests, leaks threads across tests.
     """
-    from backend import cc_image_watcher
+    from backend import cc_watcher
 
     drift_calls = {"n": 0}
 
@@ -356,7 +356,7 @@ def test_shutdown_cancels_pending_debounce_timer(watcher_env, monkeypatch):
         "backend.search_index.update_drifted_files", _fake_drift
     )
 
-    handler = cc_image_watcher._build_projects_event_handler()
+    handler = cc_watcher._build_projects_event_handler()
     jsonl = _write_cc_jsonl(
         watcher_env["claude_dir"],
         "proj-A",
@@ -372,7 +372,7 @@ def test_shutdown_cancels_pending_debounce_timer(watcher_env, monkeypatch):
     # Immediately invoke shutdown BEFORE the debounce window elapses
     # (debounce env-set to 0.2 s; we shut down at < 50 ms).
     time.sleep(0.02)
-    cc_image_watcher.shutdown_projects_drift()
+    cc_watcher.shutdown_projects_drift()
 
     # Sleep well past the debounce; no drift call must fire.
     time.sleep(0.6)

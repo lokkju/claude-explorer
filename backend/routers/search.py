@@ -19,9 +19,10 @@ identical kwargs — only the transport differs.
 
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
+from ..deps import get_store
 from ..models import SearchResponse
 from ..store import ConversationStore
 from ..search import search_conversations
@@ -104,9 +105,9 @@ async def search(
             "compat for external scripts hitting /api/search directly."
         ),
     ),
+    store: ConversationStore = Depends(get_store),
 ) -> SearchResponse:
     """Search across all conversations (GET form)."""
-    store = ConversationStore()
     bookmark_set = _parse_csv_uuid_set(bookmarks)
     conversation_uuids_set = _parse_csv_uuid_set(conversation_uuids)
     return search_conversations(
@@ -149,7 +150,10 @@ class SearchRequest(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_post(body: SearchRequest) -> SearchResponse:
+async def search_post(
+    body: SearchRequest,
+    store: ConversationStore = Depends(get_store),
+) -> SearchResponse:
     """Search across all conversations (POST form).
 
     Identical semantics to the GET endpoint; the only difference is
@@ -158,7 +162,6 @@ async def search_post(body: SearchRequest) -> SearchResponse:
     `search_conversations()` internals back both paths so any
     per-method drift is caught by ``test_post_search_get_parity_*``.
     """
-    store = ConversationStore()
     return search_conversations(
         store,
         body.q,

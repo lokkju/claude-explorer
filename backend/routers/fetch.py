@@ -698,7 +698,20 @@ async def _fetch_phase_stream(
                                 try:
                                     fetcher._persist_demote(new_primary)
                                 except Exception:
-                                    pass
+                                    # In-memory primary_org_id is already
+                                    # updated above; the persist step is
+                                    # a best-effort write-through. If it
+                                    # fails (disk full, perms) the demotion
+                                    # still takes effect this session and
+                                    # the next persist attempt will retry.
+                                    # Log so the failure isn't silent.
+                                    logger.warning(
+                                        "fetch: failed to persist primary-org "
+                                        "demotion to %s; in-memory state holds "
+                                        "for this session",
+                                        new_primary,
+                                        exc_info=True,
+                                    )
                                 yield (
                                     "event",
                                     _send_event({

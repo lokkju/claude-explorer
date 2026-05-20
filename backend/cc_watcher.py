@@ -1,4 +1,38 @@
-"""Continuous CC image-cache + search-index protection.
+"""Continuous protection for two independent Claude Code on-disk surfaces.
+
+This module runs two cooperating ``watchdog`` observers inside the
+same backend process. The module name covers BOTH jobs; a reader who
+skims past the top will miss the second:
+
+  * **(A) Image-cache mirror.** Watches ``~/.claude/image-cache/`` and
+    copies new files into ``~/.claude-explorer/cc-images/<sess>/...``
+    BEFORE Claude Code rotates them off disk. Without this, the
+    conversation JSONL keeps the ``[Image: source: ...]`` marker but
+    the underlying file is gone, so the viewer breaks.
+  * **(B) Projects JSONL drift detector.** Watches
+    ``~/.claude/projects/*/*.jsonl`` for live append-edits. On each
+    debounced batch, runs the search-index drift pass
+    (``search_index.update_drifted_files``) and the summary-cache
+    upsert in the same iteration so search results and the
+    conversation list reflect the new turns within ~debounce + I/O
+    (default 2 s) instead of waiting up to 600 s for the backstop
+    poll.
+
+Both observers share one periodic backstop poll (default 600 s,
+overridable via ``CLAUDE_EXPLORER_CC_WATCHER_INTERVAL_SEC``) that
+re-runs the full ``scan_once`` walk as a correctness net against OS
+event misses (FSEvents coalescing under load, inotify queue overflow,
+sandboxed/NFS Pythons that fall back to ``PollingObserver``).
+
+Installed OS launchers (launchd plist, systemd user unit, Windows
+Task Scheduler launcher at ``~/.claude-explorer/cc-watcher.py``) bake
+``from backend.cc_watcher import run_watcher`` into the supervised
+script body at install time. If this module ever moves again, the
+launcher template in ``fetcher/cli.py:_build_watcher_inline_script``
+must be updated in the same commit and every installed user must
+re-run ``claude-explorer install-watcher``.
+
+Details of each observer follow.
 
 Claude Code drops image attachments into ``~/.claude/image-cache/<sess>/<N>.<ext>``
 and rotates them off disk on its own schedule (often within minutes
@@ -655,38 +689,115 @@ async def run_watcher(stop_event: asyncio.Event) -> None:
     reset_projects_drift_for_tests()
     projects_observer = _try_start_projects_observer()
 
-    while not stop_event.is_set():
-        try:
-            await asyncio.wait_for(
-                stop_event.wait(), timeout=SCAN_INTERVAL_SEC
-            )
-            # If we exit the wait without TimeoutError, stop_event was set.
-            break
-        except asyncio.TimeoutError:
-            pass
-        try:
-            scan_once()
-        except Exception:  # noqa: BLE001
-            logger.exception("CC image watcher backstop scan failed")
+    cancelled = False
+    try:
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=SCAN_INTERVAL_SEC
+                )
+                # If we exit the wait without TimeoutError, stop_event was set.
+                break
+            except asyncio.TimeoutError:
+                pass
+            try:
+                scan_once()
+            except Exception:  # noqa: BLE001
+                logger.exception("CC image watcher backstop scan failed")
+    except asyncio.CancelledError:
+        # Lifespan teardown (or any caller) called ``task.cancel()``.
+        # Mark and re-raise after the finally cleanup so the parent
+        # gather sees CancelledError, but the finally MUST be allowed
+        # to run first to stop the watchdog observers.
+        cancelled = True
+        raise
+    finally:
+        # Cleanup MUST run even when the task is cancelled mid-loop:
+        # without the try/finally, ``asyncio.CancelledError`` unwinds
+        # the stack past these lines and we leak the Observer threads.
+        #
+        # ``observer.stop()`` is non-blocking — it signals the
+        # watchdog event-loop thread to exit on its next iteration.
+        # ``observer.join()`` is what actually blocks (waiting for
+        # the thread to die). Strategy:
+        #
+        #   * Cooperative path (``stop_event`` was set, no
+        #     CancelledError): do a bounded synchronous join via
+        #     ``asyncio.to_thread`` so we know the threads are gone
+        #     by the time we return. This is the uvicorn graceful-
+        #     reload path: callers want crisp lifecycle ordering.
+        #
+        #   * Cancellation path (``task.cancel()``): call
+        #     ``observer.stop()`` but DO NOT join. The watchdog
+        #     threads are daemons (verified: ``Observer().daemon ==
+        #     True``), so they die with the process. We don't need
+        #     to wait for them, and waiting would block the
+        #     lifespan-shutdown ``asyncio.gather`` for up to
+        #     ``join_timeout`` per observer. Skipping the join
+        #     keeps shutdown latency at O(milliseconds).
+        #
+        # If a future caller needs deterministic Observer teardown
+        # on cancellation, raise this back into design — but the
+        # only current callers are the lifespan teardown (which has
+        # its own hard cap) and the install-watcher script (which
+        # uses cooperative shutdown via stop_event, not cancel).
+        if cancelled:
+            # Best-effort stop, no join. Errors are logged and
+            # swallowed: a transient stop() failure shouldn't block
+            # process shutdown.
+            if observer is not None:
+                try:
+                    observer.stop()
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "CC image watcher Observer stop failed during cancel"
+                    )
+            if projects_observer is not None:
+                try:
+                    projects_observer.stop()
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "search-index watcher Observer stop failed during cancel"
+                    )
+        else:
+            def _shutdown_observers_sync() -> None:
+                join_timeout = 0.5
+                if observer is not None:
+                    try:
+                        observer.stop()
+                        observer.join(timeout=join_timeout)
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "CC image watcher Observer shutdown failed"
+                        )
+                if projects_observer is not None:
+                    try:
+                        projects_observer.stop()
+                        projects_observer.join(timeout=join_timeout)
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "search-index watcher projects Observer shutdown failed"
+                        )
 
-    if observer is not None:
-        try:
-            observer.stop()
-            observer.join(timeout=5)
-        except Exception:  # noqa: BLE001
-            logger.exception("CC image watcher Observer shutdown failed")
+            try:
+                await asyncio.to_thread(_shutdown_observers_sync)
+            except asyncio.CancelledError:
+                # Cooperative shutdown was racing a cancel; treat as
+                # cancellation from here (we already called stop()
+                # via the to_thread but didn't get to join). Re-raise
+                # after the debounce-timer cleanup below.
+                cancelled = True
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "CC image watcher: asyncio.to_thread observer shutdown failed"
+                )
 
-    if projects_observer is not None:
-        try:
-            projects_observer.stop()
-            projects_observer.join(timeout=5)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "search-index watcher projects Observer shutdown failed"
-            )
+        # Cancel any in-flight debounce Timer so a pending event scheduled
+        # just before shutdown doesn't fire drift afterwards.
+        shutdown_projects_drift()
 
-    # Cancel any in-flight debounce Timer so a pending event scheduled
-    # just before stop_event doesn't fire drift after shutdown.
-    shutdown_projects_drift()
-
-    logger.info("CC image watcher stopped")
+        logger.info(
+            "CC image watcher stopped (via %s)",
+            "cancel" if cancelled else "cooperative",
+        )

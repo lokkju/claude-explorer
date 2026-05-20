@@ -348,7 +348,7 @@ The hash lives in a `conversation_summaries_meta` row, gets compared at lifespan
 
 **Serialization: `ORJSONResponse` over FastAPI's default encoder.** A one-line decorator on the `@router.get("")`. On a 1 MB payload this saves around 30 ms — barely visible against a 4.5 s baseline, but visible once the rest of the path got fast enough to make 30 ms a meaningful fraction.
 
-**Drift detection piggybacks on a watcher that already runs.** The image-cache watcher (`backend/cc_image_watcher.py`) was already doing a 600 s "backstop poll" pass that walks the live data directories for the FTS5 search index. The same iteration now upserts the summary cache in the same transaction — two purposes, one walk, single source of truth for *"what files have we re-examined since last mtime change."*
+**Drift detection piggybacks on a watcher that already runs.** The CC watcher (`backend/cc_watcher.py`, formerly `cc_image_watcher.py`) was already doing a 600 s "backstop poll" pass that walks the live data directories for the FTS5 search index. The same iteration now upserts the summary cache in the same transaction — two purposes, one walk, single source of truth for *"what files have we re-examined since last mtime change."*
 
 **The new numbers** (`hyperfine`, 10 runs, warm caches):
 

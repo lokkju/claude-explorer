@@ -195,7 +195,7 @@ uv run claude-explorer reindex-search --drift
   code runs on the matched conversations only (warm via FileCache).
   Result: byte-for-byte identical `SearchResult` shape to the linear
   path for whole-word queries.
-- The CC image watcher (`backend/cc_image_watcher.py:scan_once`) runs
+- The CC watcher (`backend/cc_watcher.py:scan_once`) runs
   the search-index drift pass once per backstop scan (600s default).
   Image-cache events fire instantly via `watchdog` but do NOT trigger
   a drift pass — search picks up new sessions on the next backstop

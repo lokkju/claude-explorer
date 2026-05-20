@@ -3,10 +3,10 @@
 import json
 import re
 from pathlib import Path
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from .config import get_settings
+from .parsing import parse_datetime as _parse_datetime  # noqa: F401  (re-export; backend.search imports _parse_datetime from this module)
 from .claude_code_reader import (
     list_claude_code_conversations,
     # Re-exported so existing tests that patch
@@ -35,23 +35,6 @@ from .models import (
 # UUID-shaped names only — excludes _index.json, .migration_log.json, etc.
 _UUID_FILENAME_RE = re.compile(r"^[0-9a-f-]{36}\.json$", re.IGNORECASE)
 _MIGRATION_SENTINEL = "by-org/.migrated_v2"
-
-
-def _parse_datetime(dt_str: str | None) -> datetime:
-    """Parse datetime string from Claude's JSON format."""
-    if not dt_str:
-        return datetime.now(timezone.utc)
-    try:
-        # Handle ISO format with optional timezone
-        if dt_str.endswith("Z"):
-            dt_str = dt_str[:-1] + "+00:00"
-        dt = datetime.fromisoformat(dt_str)
-        # Ensure timezone-aware
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except ValueError:
-        return datetime.now(timezone.utc)
 
 
 def _extract_text(content: list[dict[str, Any]]) -> str:

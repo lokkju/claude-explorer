@@ -352,7 +352,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
 
 **Module-level singletons need explicit reset.** Examples in this
 codebase: `_refresh_in_progress` flag in `backend/routers/fetch.py`,
-the `_seen` set in `backend/cc_image_watcher.py`, the in-memory cache
+the `_seen` set in `backend/cc_watcher.py`, the in-memory cache
 in `backend/cache.py`. Each has a test-only `reset_for_tests()`
 helper or equivalent — call it from a fixture.
 

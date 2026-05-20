@@ -7,8 +7,20 @@ This module provides:
 3. Fast JSON parsing with orjson
 4. Optional LRU eviction cap (``max_entries``) to bound memory growth
    on long-running servers (see PLANS/PERFORMANCE_PHASE_2.md §C1 R8).
+
+Backend caches at a glance (Cache landscape, 2026-05-18):
+  * ``FileCache`` (this module) — in-memory, per-path mtime-keyed cache
+    of parsed conversation dicts; LRU-bounded; lost on process restart.
+  * ``SummaryCache`` (``backend/summary_cache.py``) — SQLite-persisted
+    sidebar summaries; mtime+size invalidation per row; full table wipe
+    on ``claude_code_reader.LOGIC_VERSION`` mismatch at lifespan startup.
+  * ``SearchIndex`` (``backend/search_index.py``) — SQLite FTS5 inverted
+    index; drift-first incremental rebuild keyed on ``indexed_files``
+    mtime; full drop+rebuild on ``SCHEMA_VERSION`` bump or column-set
+    drift in the ``messages`` virtual table.
 """
 
+import logging
 import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,6 +29,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 import orjson
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -42,6 +56,27 @@ class FileCache:
     and the LRU bookkeeping. ``get`` takes the lock to record the
     use, so concurrent readers serialize briefly. Acceptable for our
     workload (file I/O dominates).
+
+    Invalidation policy:
+      * **Trigger**: every ``get`` re-stats the file and returns
+        ``(data, False)`` when the on-disk mtime no longer matches the
+        cached entry; an ``OSError`` (file gone) yields the same
+        ``(None, False)`` signal but the stale ``CacheEntry`` stays
+        resident until a subsequent ``set``, ``invalidate``, ``clear``,
+        or LRU eviction overwrites it. The caller treats a non-fresh
+        hit as "reload via ``set``", which re-promotes to MRU. Explicit
+        ``invalidate(path)`` and ``clear()`` are available for
+        orchestrated purges.
+      * **Persists across restart**: nothing — the cache is purely
+        in-memory; restart is a cold cache.
+      * **Full rebuild**: not applicable; entries are re-populated
+        lazily on demand. ``clear()`` (or process restart) achieves the
+        same effect.
+      * **Failure mode**: there's no "fallback" — a ``stat()`` failure
+        returns ``(None, False)`` and callers re-load from disk via
+        the supplied loader. A loader exception inside
+        ``load_many_parallel`` logs and stores ``None`` for that slot;
+        ``MemoryError`` propagates so OOM stays visible.
     """
 
     def __init__(
@@ -171,7 +206,21 @@ class FileCache:
                     idx = future_to_idx[future]
                     try:
                         results[idx] = future.result()
+                    except MemoryError:
+                        # Heap is exhausted — logging would allocate and
+                        # compound the failure. Let the OOM propagate so
+                        # callers see it explicitly rather than receive a
+                        # phantom None and limp along on a corrupted heap.
+                        raise
                     except Exception:
+                        # _load_and_cache already logs its own loader/stat
+                        # failures with the path. This block fires only for
+                        # executor-internal errors (broken callable,
+                        # cancellation, etc.) — defense-in-depth log.
+                        logger.exception(
+                            "FileCache.load_many_parallel: worker failed for index %d",
+                            idx,
+                        )
                         results[idx] = None
 
         # Return in order
@@ -182,14 +231,27 @@ class FileCache:
         path: Path,
         loader: Callable[[Path], Any],
     ) -> Any:
-        """Load a file and cache the result."""
+        """Load a file and cache the result.
+
+        Logs unexpected exceptions at ERROR level (with traceback) and
+        returns ``None`` so callers degrade gracefully — the historical
+        bare-except behavior is preserved for normal failures, but the
+        failure is no longer invisible.
+
+        ``MemoryError`` is re-raised rather than logged: building a
+        ``LogRecord`` allocates, and doing that during heap exhaustion
+        risks a secondary failure and masks the original OOM.
+        """
         try:
             mtime = path.stat().st_mtime
             data = loader(path)
             if data is not None:
                 self.set(path, data, mtime)
             return data
+        except MemoryError:
+            raise
         except Exception:
+            logger.exception("FileCache: failed to load %s", path)
             return None
 
     @property
