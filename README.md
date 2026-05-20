@@ -79,7 +79,29 @@ What's behind those numbers:
 - **Frontend virtualization** (`@tanstack/react-virtual`) on the flat sidebar list mounts ~13 rows instead of all ~1,000, taking the linear-in-N React reconciliation cost with it.
 - **A linear-scan fallback** kept in the codebase covers every "fast path unavailable" case (FTS5 missing on a stock Linux Python, index still warming on first install, summary cache disabled). Search and sidebar never go "down" — slow-but-correct beats fast-but-broken.
 
-If you want to reproduce these numbers or run your own benchmarks, the repo ships a `make bench` target that drives the canonical suite (sidebar, search warm + cold, conversation-detail at multiple size percentiles, Markdown export) against a running backend on `:8765`. `make bench-json` emits the same numbers as structured JSON suitable for paste into a PR body. The harness auto-picks fixture UUIDs from the live corpus and prints them so runs are reproducible. Two focused scripts also live in `benchmarks/`: `bench_perf.py` covers two endpoints with custom stats; `bench_search_paths.py` compares FTS5 and linear-scan in-process. For ad-hoc one-off measurements, [`hyperfine`](https://github.com/sharkdp/hyperfine) is still the right tool (`brew install hyperfine` on macOS, `apt install hyperfine` on Debian / Ubuntu, `cargo install hyperfine` anywhere with a Rust toolchain).
+### Running the benchmarks yourself
+
+The repo ships a `make bench` target that drives the canonical suite (sidebar list, search warm and cold, conversation-detail at small / medium / large size percentiles auto-picked from the live corpus, Markdown export) against a running backend on `:8765`.
+
+```bash
+# 1. Start the backend in one terminal:
+DYLD_LIBRARY_PATH=/opt/homebrew/lib uv run uvicorn backend.main:app --port 8765
+# Wait for "search index build complete" on stdout (warm restart: <1 s;
+# first run after a schema bump can take ~25 s on a large corpus).
+
+# 2. In another terminal, from the repo root:
+make bench           # full suite, ~30–60 s, human-readable table
+make bench-quick     # same suite with fewer runs per measurement
+make bench-json      # structured JSON, suitable for paste into a PR body
+make cold-search-instructions  # prints the steps for cold-restart measurement
+
+# Override the target host (defaults to localhost:8765):
+make bench BASE=http://localhost:8766
+```
+
+`make bench` is **not** a CI gate. It's a developer-loop convenience for "did I regress anything" diffs and PR-body numbers. The harness auto-picks fixture UUIDs from your live corpus and prints them so reruns are reproducible. Full usage notes live in [`benchmarks/README.md`](./benchmarks/README.md).
+
+Two focused scripts also live in `benchmarks/`: `bench_perf.py` covers two endpoints with custom stats, and `bench_search_paths.py` compares the FTS5 and linear-scan search paths in-process so you can confirm both produce the same `(conv_uuid, message_uuid)` set on the same corpus. For ad-hoc one-off measurements, [`hyperfine`](https://github.com/sharkdp/hyperfine) is still the right tool (`brew install hyperfine` on macOS, `apt install hyperfine` on Debian / Ubuntu, `cargo install hyperfine` anywhere with a Rust toolchain).
 
 For the full narrative of how these pieces fit together and what was tried-but-rejected along the way, see ["Building Claude Explorer: Part 2 — The Web App"](./articles/part_2_web_app.md) "Performance (FTS5 index)" section.
 
