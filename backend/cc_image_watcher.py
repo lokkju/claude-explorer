@@ -1,4 +1,4 @@
-"""Continuous CC image-cache protection.
+"""Continuous CC image-cache + search-index protection.
 
 Claude Code drops image attachments into ``~/.claude/image-cache/<sess>/<N>.<ext>``
 and rotates them off disk on its own schedule (often within minutes
@@ -35,6 +35,16 @@ For CC sessions the conversation UUID equals the session UUID equals
 the parent dir name in the live tree, so the destination layout
 matches what the eager and lazy paths produce.
 
+A SECOND observer watches ``~/.claude/projects/`` for ``*.jsonl``
+edits (per PLANS/SEARCH_INDEX_FRESHNESS.md). On event, the changed
+path is queued and a debounce ``threading.Timer`` (default 2 s,
+overridable via ``CLAUDE_EXPLORER_SEARCH_DRIFT_DEBOUNCE_SEC``) is
+reset. When the timer fires, ``update_drifted_files`` runs once
+covering every queued path. Without debouncing, CC's append-only
+write pattern (5–20 ``on_modified`` events per user message) would
+trigger 5–20 redundant SQL upserts in rapid succession. Search
+freshness drops from up to 600 s (backstop poll) to ~debounce + I/O.
+
 The watcher is best-effort: any error is logged and swallowed so a
 transient I/O failure never crashes the backend.
 """
@@ -43,6 +53,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from pathlib import Path
 
 from .cc_image_cache import copy_marker_image_to_cache
@@ -344,6 +355,266 @@ def _try_start_observer():
     return observer
 
 
+# ---------------------------------------------------------------------------
+# Projects-dir event-driven search-index drift
+# ---------------------------------------------------------------------------
+#
+# Per PLANS/SEARCH_INDEX_FRESHNESS.md. The image-cache observer above
+# fires sub-second on the latency-critical image-protection path; this
+# block is the analogous fast-path for the FTS5 search index, watching
+# ``~/.claude/projects/`` for ``*.jsonl`` modifications.
+#
+# Design notes:
+#
+#   * CC writes JSONL append-only as the user types. A single user
+#     message can fire 5–20 ``on_modified`` events in rapid succession.
+#     A naive "run drift on every event" wiring would batter the SQL
+#     writer with redundant upserts. So events queue into a needs-
+#     reindex set and reset a ``threading.Timer``; when the timer
+#     fires we run ``update_drifted_files`` once.
+#
+#   * The Timer pattern is simpler than asyncio coordination here:
+#     watchdog's Observer runs in its own background thread, so an
+#     asyncio.Queue would force us to schedule a wakeup on the main
+#     event loop from inside a different thread. A bare Timer thread
+#     is the path of least resistance and matches how the image-cache
+#     handler also calls back into module-level state from the
+#     watchdog thread.
+#
+#   * The debounce default (2 s) is tunable via
+#     ``CLAUDE_EXPLORER_SEARCH_DRIFT_DEBOUNCE_SEC``. Tests set it
+#     to 0.2 s so they don't wait real wall-clock seconds.
+
+
+def _resolve_search_drift_debounce() -> float:
+    """Debounce window in seconds for the projects-dir drift timer.
+
+    Default 2 s. Override via
+    ``CLAUDE_EXPLORER_SEARCH_DRIFT_DEBOUNCE_SEC``. Clamped to a
+    floor of 0.05 s so a misconfiguration can't reduce the debounce
+    to a per-event fire.
+    """
+    raw = read_env("CLAUDE_EXPLORER_SEARCH_DRIFT_DEBOUNCE_SEC")
+    if raw:
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            logger.warning(
+                "Bad CLAUDE_EXPLORER_SEARCH_DRIFT_DEBOUNCE_SEC %r; "
+                "using default 2.0", raw,
+            )
+    return 2.0
+
+
+# Module-level debounce state. The Timer is reset on every JSONL event
+# inside the debounce window; the needs-reindex set tracks which paths
+# we still need to consider (currently only used for diagnostics — the
+# drift scan re-stats every live path on its own).
+_drift_lock = threading.Lock()
+_drift_timer: threading.Timer | None = None
+_drift_pending: set[Path] = set()
+_drift_shutdown = False
+
+
+def _live_projects_root() -> Path:
+    """Where Claude Code stores per-project session JSONLs."""
+    return get_settings().claude_dir / "projects"
+
+
+def _fire_drift_pass() -> None:
+    """Timer callback: run the search-index drift pass once for every
+    path queued since the last fire.
+
+    Resolves ``update_drifted_files`` through the module attribute (not
+    a top-of-file ``from x import y``) so tests can monkeypatch the
+    function and have the patched version actually run. Same pattern
+    ``scan_once`` uses for its own drift call.
+    """
+    global _drift_timer
+
+    # Snapshot + clear the pending set under the lock so a concurrent
+    # event handler doesn't see a half-drained queue.
+    with _drift_lock:
+        if _drift_shutdown:
+            return
+        _drift_pending.clear()
+        _drift_timer = None
+
+    try:
+        from backend import search_index as si
+        from backend.store import ConversationStore
+
+        idx = si.get_search_index()
+        # Run even when not ready: the same call is what makes the
+        # index ready (build_full_index reuses this codepath for its
+        # warm-start drift absorption). For event-driven fires after
+        # startup, idx.is_ready() is virtually always True; we still
+        # call so the cleanup pass for deleted JSONLs runs.
+        si.update_drifted_files(ConversationStore(), index=idx)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "search-index drift pass failed (event-driven path)"
+        )
+
+
+def _schedule_drift(path: Path) -> None:
+    """Queue a path for the debounced drift pass. Resets the timer."""
+    global _drift_timer
+    debounce = _resolve_search_drift_debounce()
+    with _drift_lock:
+        if _drift_shutdown:
+            return
+        _drift_pending.add(path)
+        if _drift_timer is not None:
+            _drift_timer.cancel()
+        _drift_timer = threading.Timer(debounce, _fire_drift_pass)
+        # Daemon=True so a leaked timer doesn't block Python interpreter
+        # shutdown if `shutdown_projects_drift` somehow isn't called.
+        _drift_timer.daemon = True
+        _drift_timer.start()
+
+
+def _build_projects_event_handler():
+    """Return a watchdog FileSystemEventHandler that queues debounced
+    drift passes for every ``*.jsonl`` modification.
+
+    Non-JSONL events are silently ignored (CC occasionally drops
+    ``.log``/``.tmp`` files in the projects tree). Directory events
+    are skipped: those fire when a new project directory is created;
+    the per-file modify events will catch the JSONLs as they appear.
+    """
+    from watchdog.events import FileSystemEventHandler
+
+    class _ProjectsEventHandler(FileSystemEventHandler):
+        def _maybe_queue(self, src: str) -> None:
+            path = Path(src)
+            if path.suffix.lower() != ".jsonl":
+                return
+            try:
+                _schedule_drift(path)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "projects event handler failed to schedule drift for %s", src,
+                )
+
+        def on_created(self, event) -> None:  # type: ignore[no-untyped-def]
+            if not event.is_directory:
+                self._maybe_queue(event.src_path)
+
+        def on_modified(self, event) -> None:  # type: ignore[no-untyped-def]
+            if not event.is_directory:
+                self._maybe_queue(event.src_path)
+
+        def on_moved(self, event) -> None:  # type: ignore[no-untyped-def]
+            if not event.is_directory and getattr(event, "dest_path", None):
+                self._maybe_queue(event.dest_path)
+
+    return _ProjectsEventHandler()
+
+
+def _try_start_projects_observer():
+    """Build and start a watchdog Observer on the live projects root.
+
+    Returns the started Observer or None on any failure (missing
+    wheel, sandboxed Python, NFS mount, etc.). The caller continues
+    with the backstop-poll-only path if None.
+
+    Eagerly mkdirs the projects root so the watch registers even on
+    a brand-new install (CC will populate it on first session).
+    """
+    try:
+        from watchdog.observers import Observer
+    except ImportError:
+        logger.warning(
+            "search-index watcher: watchdog not installed; in-flight "
+            "search freshness falls back to the 600 s backstop poll.",
+        )
+        return None
+
+    root = _live_projects_root()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "search-index watcher: failed to create %s; projects-dir "
+            "events disabled", root,
+        )
+        return None
+
+    handler = _build_projects_event_handler()
+    observer = Observer()
+    observer.schedule(handler, str(root), recursive=True)
+    try:
+        observer.start()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "search-index watcher: Observer failed to start; falling "
+            "back to backstop-poll-only search freshness",
+        )
+        return None
+
+    backend_name = type(observer).__name__
+    logger.info(
+        "search-index watcher: projects-dir Observer started (%s) on %s",
+        backend_name, root,
+    )
+    return observer
+
+
+def shutdown_projects_drift() -> None:
+    """Cancel any pending debounce Timer + flag shutdown so a fresh
+    event right at this moment doesn't re-schedule.
+
+    Called from ``run_watcher``'s cleanup branch AND from test
+    teardown via the ``reset_projects_drift_for_tests`` hook.
+    """
+    global _drift_timer, _drift_shutdown
+    with _drift_lock:
+        _drift_shutdown = True
+        if _drift_timer is not None:
+            _drift_timer.cancel()
+            _drift_timer = None
+        _drift_pending.clear()
+
+
+def reset_projects_drift_for_tests() -> None:
+    """Test hook: clear ALL projects-drift state.
+
+    Cancels any pending Timer (defense-in-depth — pytest shouldn't
+    leak Timer threads across tests) and re-arms the module so the
+    next test's event traffic is processed normally.
+
+    Production code MUST NOT call this.
+    """
+    global _drift_timer, _drift_shutdown, _drift_pending
+    with _drift_lock:
+        if _drift_timer is not None:
+            _drift_timer.cancel()
+            _drift_timer = None
+        _drift_pending = set()
+        _drift_shutdown = False
+
+
+def _drain_projects_drift_for_tests() -> None:
+    """Test hook: synchronously fire any pending drift work.
+
+    Cancels the pending Timer (if any) and invokes ``_fire_drift_pass``
+    inline. Used by tests that don't want to sleep past the debounce
+    window AGAIN after they've already waited for it (handles the
+    race where the Timer scheduling thread hasn't quite woken yet).
+
+    Production code MUST NOT call this.
+    """
+    global _drift_timer
+    with _drift_lock:
+        had_pending = bool(_drift_pending) or _drift_timer is not None
+        if _drift_timer is not None:
+            _drift_timer.cancel()
+            _drift_timer = None
+    if had_pending:
+        _fire_drift_pass()
+
+
 async def run_watcher(stop_event: asyncio.Event) -> None:
     """Run the watcher until ``stop_event`` is set.
 
@@ -378,6 +649,11 @@ async def run_watcher(stop_event: asyncio.Event) -> None:
         logger.exception("CC image watcher initial scan failed")
 
     observer = _try_start_observer()
+    # Re-arm the projects-drift module state in case a prior watcher
+    # invocation left _drift_shutdown=True (e.g., the dev-reload path
+    # in uvicorn `--reload`). reset_for_tests is the same op.
+    reset_projects_drift_for_tests()
+    projects_observer = _try_start_projects_observer()
 
     while not stop_event.is_set():
         try:
@@ -399,5 +675,18 @@ async def run_watcher(stop_event: asyncio.Event) -> None:
             observer.join(timeout=5)
         except Exception:  # noqa: BLE001
             logger.exception("CC image watcher Observer shutdown failed")
+
+    if projects_observer is not None:
+        try:
+            projects_observer.stop()
+            projects_observer.join(timeout=5)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "search-index watcher projects Observer shutdown failed"
+            )
+
+    # Cancel any in-flight debounce Timer so a pending event scheduled
+    # just before stop_event doesn't fire drift after shutdown.
+    shutdown_projects_drift()
 
     logger.info("CC image watcher stopped")

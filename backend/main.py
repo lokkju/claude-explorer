@@ -251,25 +251,32 @@ async def lifespan(app: FastAPI):
         "CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX",
     ) != "1":
         async def _build_search_index() -> None:
-            # 5-second head-start so the first /api/conversations request
-            # (~85ms warm, ~225ms even on cold restart with the other
-            # heavy tasks deferred) lands BEFORE the FTS5 build starts
-            # hogging disk + CPU. The FTS5 build's
-            # `get_all_conversations_raw(source="all", full_content=True)`
-            # is the dominant cold-start contention source: it loads
-            # every message of every conversation into memory and the
-            # walk takes ~10s of contended disk reads. With a 500ms
-            # delay the request lands during peak contention (~10s
-            # observed); with a 5s delay the request gets clear runway.
+            # 500ms head-start so the first /api/conversations request
+            # lands BEFORE the FTS5 build runs. Search falls back to
+            # the linear-scan path until this completes, so search
+            # never goes "down".
             #
-            # UX trade: search readiness shifts from t≈10s post-restart
-            # to t≈15s — invisible against typical user behavior (people
-            # don't ⌘+K within 10 seconds of opening the app). Search
-            # falls back to the linear-scan path until the build
-            # completes, so search never goes "down".
+            # The original 5 s delay (and the ~10 s contention window
+            # it was hiding) came from the build's
+            # `get_all_conversations_raw(source="all")` walk, which
+            # loaded every message of every conversation into memory
+            # even on warm restarts where every file's mtime was
+            # already known. PLANS/SEARCH_INDEX_FRESHNESS.md refactored
+            # the build to drift-first: `_drift_first_scan` stats every
+            # live path against `indexed_files` and only loads content
+            # for the drifted set. Warm restarts now finish the build
+            # in ~100-300ms (proportional to drift, not corpus size).
+            # No contention to hide behind a delay; 500ms is just the
+            # event-loop yield headroom from the original plan.
             #
-            # See PLANS/OPTIMIZE_COLD_START.md.
-            await asyncio.sleep(5.0)
+            # Search-ready time after restart drops from ~15 s to <1 s
+            # on warm restarts. First install (every path "drifted")
+            # still loads every file once and is bounded by disk I/O.
+            #
+            # See PLANS/SEARCH_INDEX_FRESHNESS.md and the cold-start
+            # bench numbers in articles/part_2_web_app.md "Performance
+            # (FTS5 index)".
+            await asyncio.sleep(0.5)
             try:
                 from backend.search_index import build_full_index, get_search_index
                 from backend.store import ConversationStore
