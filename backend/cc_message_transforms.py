@@ -38,6 +38,8 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
+from .parsing import _parse_iso_opt
+
 
 def _get_message_text(entry: dict) -> str:
     """Extract text content from a message entry."""
@@ -760,15 +762,19 @@ def _extract_conversation_metadata(entries: list[dict], jsonl_path) -> dict:
     user_entries = [e for e in entries if e.get("type") == "user"]
     assistant_entries = [e for e in entries if e.get("type") == "assistant"]
 
-    # Timestamps from all entries
-    all_timestamps = []
-    for e in entries:
-        ts = e.get("timestamp")
-        if ts:
-            try:
-                all_timestamps.append(datetime.fromisoformat(ts.replace("Z", "+00:00")))
-            except (ValueError, TypeError):
-                pass
+    # Timestamps from all entries.
+    #
+    # Hunt #7 (Fragile datetime parsing): use ``_parse_iso_opt`` (the
+    # ``None``-on-failure primitive from ``backend.parsing``) and
+    # filter ``None``, rather than ``_parse_datetime`` which would
+    # substitute ``now(utc)`` on bad rows. The latter would inflate
+    # ``max()`` and bounce a conversation with a single corrupt
+    # timestamp to the top of the sidebar's recent list.
+    all_timestamps = [
+        parsed
+        for e in entries
+        if (parsed := _parse_iso_opt(e.get("timestamp"))) is not None
+    ]
 
     created_at = min(all_timestamps) if all_timestamps else datetime.now(timezone.utc)
     updated_at = max(all_timestamps) if all_timestamps else datetime.now(timezone.utc)

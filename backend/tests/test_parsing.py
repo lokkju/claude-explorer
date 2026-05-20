@@ -197,3 +197,144 @@ def test_parse_datetime_bool_input_falls_back_to_now_utc():
     result = parsing.parse_datetime(True)  # type: ignore[arg-type]
     assert isinstance(result, datetime)
     assert _is_close_to_now_utc(result)
+
+
+# ---------------------------------------------------------------------------
+# Hunt #7: ``_parse_iso_opt`` — the ``None``-on-failure primitive.
+#
+# Background: ``backend/cc_message_transforms.py`` and
+# ``backend/cc_agent_reader.py`` both build ``all_timestamps`` lists and
+# call ``min()`` / ``max()`` over them to derive a conversation's
+# ``created_at`` / ``updated_at``. The original code parsed each
+# timestamp inline with a bare ``try / except (ValueError, TypeError):
+# pass`` — bad rows were silently DROPPED from the list.
+#
+# A naive refactor would have replaced the inline parse with
+# ``parse_datetime``, which substitutes ``now(utc)`` on failure. That
+# substitution would have inflated ``max()`` and bounced any
+# conversation with a single corrupt timestamp to the top of the
+# sidebar's recent-list UI. The council Critic caught this; the fix
+# uses ``_parse_iso_opt`` (returns ``None`` on failure) and filters
+# the list, preserving the original "drop bad rows" semantics while
+# also fixing the wrong-type ``AttributeError`` crash class.
+#
+# These tests pin the contract of the primitive.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_iso_opt_valid_z_returns_aware_datetime():
+    """Happy path: well-formed Z-suffixed input parses to tz-aware UTC."""
+    result = parsing._parse_iso_opt("2025-01-15T10:30:00Z")
+    assert isinstance(result, datetime)
+    assert result.tzinfo is not None
+    assert result.utcoffset() == timedelta(0)
+
+
+def test_parse_iso_opt_naive_input_gets_utc_tagged():
+    """Naive ISO input is tagged with ``timezone.utc`` (never returns naive)."""
+    result = parsing._parse_iso_opt("2025-01-15T10:30:00")
+    assert isinstance(result, datetime)
+    assert result.tzinfo is timezone.utc
+
+
+def test_parse_iso_opt_with_microseconds():
+    """Microsecond-precision input parses without loss."""
+    result = parsing._parse_iso_opt("2025-01-15T10:30:00.123456Z")
+    assert isinstance(result, datetime)
+    assert result.microsecond == 123456
+
+
+def test_parse_iso_opt_with_milliseconds():
+    """3-digit fractional seconds (JS ``toISOString()``) parse correctly."""
+    result = parsing._parse_iso_opt("2025-01-15T10:30:00.123Z")
+    assert isinstance(result, datetime)
+    assert result.microsecond == 123000
+
+
+def test_parse_iso_opt_explicit_offset_preserved():
+    """Non-UTC offset is preserved on success (not silently normalized)."""
+    result = parsing._parse_iso_opt("2025-01-15T10:30:00+04:00")
+    assert isinstance(result, datetime)
+    assert result.utcoffset() == timedelta(hours=4)
+
+
+@pytest.mark.parametrize(
+    "bad_input",
+    [
+        None,
+        "",
+        "not a date",
+        "2025-13-01T10:30:00Z",  # month=13
+        "2025-01-32T10:30:00Z",  # day=32
+        "2025-01-15T25:00:00Z",  # hour=25
+        "2025-01-15 10:30:00 PST",  # named TZ
+        "2025/01/15 10:30:00",  # wrong separators
+        "Jan 15, 2025",  # locale string
+        "2025-01-15T10:30:00Z ",  # trailing whitespace
+        " 2025-01-15T10:30:00Z",  # leading whitespace
+        "\x00\x01\x02",  # control chars
+        "x" * 10_000,  # very long garbage
+        "2025-01-15T10:30:00\u202b",  # RTL mark suffix
+    ],
+)
+def test_parse_iso_opt_bad_string_returns_none(bad_input):
+    """Every malformed string input collapses to ``None`` — no exception."""
+    assert parsing._parse_iso_opt(bad_input) is None
+
+
+@pytest.mark.parametrize(
+    "bad_input",
+    [
+        12345,
+        12345.0,
+        True,
+        False,  # falsy → short-circuits to None
+        ["2025-01-15"],
+        {"year": 2025},
+        ("2025-01-15",),
+        object(),
+    ],
+)
+def test_parse_iso_opt_wrong_type_returns_none(bad_input):
+    """Every non-string truthy input collapses to ``None`` — no AttributeError.
+
+    This is the regression class that 500'd the sidebar pre-fix: a
+    corrupt JSON file with ``"timestamp": 12345`` reached
+    ``ts.replace("Z", "+00:00")`` and threw ``AttributeError``, which
+    the bare ``except (ValueError, TypeError)`` at the call sites did
+    NOT catch. Centralizing in ``_parse_iso_opt`` makes the wide
+    catch the canonical behavior.
+    """
+    assert parsing._parse_iso_opt(bad_input) is None
+
+
+def test_parse_iso_opt_does_not_substitute_now():
+    """The primitive must NEVER return ``now(utc)`` — that's the wrapper's job.
+
+    Pins the contract that aggregation call sites
+    (``cc_message_transforms``, ``cc_agent_reader``) rely on:
+    ``_parse_iso_opt`` returning ``None`` lets them filter bad rows
+    out of ``min()`` / ``max()``. If this primitive ever started
+    returning ``now(utc)`` on failure, ``max()`` would inflate and
+    bounce corrupt conversations to the top of the sidebar.
+    """
+    assert parsing._parse_iso_opt("garbage") is None
+    assert parsing._parse_iso_opt(None) is None
+    assert parsing._parse_iso_opt(12345) is None  # type: ignore[arg-type]
+
+
+def test_parse_datetime_delegates_to_parse_iso_opt_on_success():
+    """``parse_datetime`` returns the same datetime as ``_parse_iso_opt`` on success."""
+    valid = "2025-01-15T10:30:00Z"
+    assert parsing.parse_datetime(valid) == parsing._parse_iso_opt(valid)
+
+
+def test_parse_datetime_substitutes_now_when_parse_iso_opt_returns_none():
+    """``parse_datetime`` substitutes ``now(utc)`` exactly when
+    ``_parse_iso_opt`` returns ``None``. This is the documented
+    wrapper contract and the only behavioral difference between the two.
+    """
+    assert parsing._parse_iso_opt("garbage") is None
+    fallback = parsing.parse_datetime("garbage")
+    assert isinstance(fallback, datetime)
+    assert _is_close_to_now_utc(fallback)

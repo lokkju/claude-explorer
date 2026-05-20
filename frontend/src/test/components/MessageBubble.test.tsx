@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '../utils';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act } from '../utils';
 import { MessageBubble } from '../../components/message/MessageBubble';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useEffect } from 'react';
@@ -365,5 +365,85 @@ describe('MessageBubble — per-block copy/bookmark hover overlay vs argless mar
     expect(bubble).not.toBeNull();
     expect(copyButtonInBubble(bubble)).not.toBeNull();
     expect(bookmarkButtonInBubble(bubble)).not.toBeNull();
+  });
+});
+
+/**
+ * Hunt #11 (timer lifecycle): the copy-feedback `setTimeout` that flips
+ * `setCopied(false)` after 2000ms must be cleared on unmount. Otherwise a
+ * user who hits Copy and then switches conversation within 2s drives the
+ * timer callback at a dead component (React 18 silently no-ops the setState,
+ * but the timer + closure leak in memory, and any future refactor that
+ * resurrects the warning would surface a real bug).
+ *
+ * The original version used `vi.getTimerCount()` deltas — which can
+ * tie at zero-delta when React 18 strict-mode or react-query schedules
+ * a timer concurrently with the unmount cleanup. The robust pattern is
+ * to spy on `clearTimeout` directly: the cleanup effect calls it with
+ * the ref'd timer ID, and the spy proves it ran. Without the cleanup,
+ * the spy is never called with our specific timer ID.
+ */
+describe('MessageBubble — timer cleanup on unmount (Hunt #11)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('clears the copy-feedback timer when MessageBubble unmounts', async () => {
+    const humanMessage = mockMessages[0];
+
+    // Capture the setTimeout ID that handleCopyMessage schedules. We
+    // intercept setTimeout via a spy so we know EXACTLY which ID belongs
+    // to our timer (vs the ones react-query / msw scheduled).
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+
+    const { unmount } = render(<MessageBubble message={humanMessage} />);
+
+    const copyButton = screen.getByTitle('Copy message as Markdown');
+
+    await act(async () => {
+      fireEvent.click(copyButton);
+      // Flush microtasks so handleCopyMessage's post-await continuation
+      // (which schedules the 2000ms setTimeout) runs.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The Copy → Check icon swap confirms setCopied(true) committed,
+    // which means the 2000ms reset setTimeout was scheduled.
+    expect(document.querySelector('svg.lucide-check')).toBeInTheDocument();
+
+    // Find the 2000ms timer we just scheduled. (react-query and other
+    // sources schedule timers with different delays.)
+    const ourTimerCall = setTimeoutSpy.mock.calls.find(
+      (call) => call[1] === 2000
+    );
+    expect(ourTimerCall, '2000ms copy-reset timer should have been scheduled')
+      .toBeDefined();
+    const ourTimerId = setTimeoutSpy.mock.results[
+      setTimeoutSpy.mock.calls.indexOf(ourTimerCall!)
+    ].value;
+
+    // Reset clearTimeout spy so we only see calls during unmount.
+    clearTimeoutSpy.mockClear();
+
+    // Unmount BEFORE the timer fires.
+    unmount();
+
+    // Load-bearing assertion: the cleanup effect must have called
+    // clearTimeout with OUR specific timer ID. Without the cleanup
+    // useEffect, no such call happens for our ID, and the timer would
+    // fire setCopied(false) on a dead component.
+    const clearedIds = clearTimeoutSpy.mock.calls.map((call) => call[0]);
+    expect(clearedIds).toContain(ourTimerId);
   });
 });

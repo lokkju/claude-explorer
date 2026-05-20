@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { User, Bot, ChevronDown, ChevronRight, ChevronsUpDown, Copy, Check, Star, ImageOff } from 'lucide-react'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { MessageAttachments } from './MessageAttachments'
@@ -43,6 +43,16 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
   const [copied, setCopied] = useState(false)
   const bookmarked = conversationId ? isBookmarked(conversationId, message.uuid) : false
 
+  // Hunt #11: ref-tracked timeout for the copy-feedback "Copied" indicator.
+  // MessageBubble unmounts whenever the user switches conversations; without
+  // this cleanup the 2s setTimeout fires `setCopied(false)` on a dead
+  // component (React 18 silently no-ops the setState, but the timer + closure
+  // leak in memory). Mount-scoped effect clears any pending timer on unmount.
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+  }, [])
+
   const handleToggleBookmark = async () => {
     if (!conversationId) return
     await toggleBookmark({
@@ -58,7 +68,8 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
     const markdown = messageToMarkdown(message, showToolCalls)
     await navigator.clipboard.writeText(markdown)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 2000)
   }
 
   const hasVisibleContent = messageHasVisibleContent(message, showToolCalls)
@@ -640,13 +651,20 @@ function ToolUseBlock({ name, input, forceExpanded }: ToolUseBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  // Hunt #11: ref-tracked timeout (see MessageBubbleImpl for rationale).
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+  }, [])
+
   const expanded = forceExpanded || isExpanded
   const inputJson = JSON.stringify(input, null, 2)
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(inputJson)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 2000)
   }
 
   return (

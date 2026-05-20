@@ -1345,10 +1345,24 @@ def _sort_results(
     def _match_time(m: MessageSnippet, fallback):
         return m.created_at if m.created_at is not None else fallback
 
+    # Hunt #12 — Unstable sort tiebreakers. Timsort is stable, but
+    # "stable" only preserves INPUT order on ties, and the input order
+    # here depends on upstream non-determinism (sqlite3 SELECT without
+    # ORDER BY when FTS5 ranks tie; os.scandir/listdir filesystem walk
+    # order in the linear-scan path; set iteration order under
+    # PYTHONHASHSEED randomization). Without an explicit tiebreaker,
+    # two results with identical primary keys silently flip order
+    # between calls → UI flicker on refresh, pagination drift.
+    # The UUID is stable, unique, non-null per the model, and invisible
+    # to the user — it just pins the order. For string-primary sorts
+    # (name, project) we slot the conversation timestamp BETWEEN the
+    # primary key and the UUID so visually-identical-name conversations
+    # cluster by time within the name group (Gemini-3-Pro UX call:
+    # 20 "Untitled" conversations should not UUID-scatter).
     for r in results:
         fallback = r.conversation_updated_at
         r.matching_messages.sort(
-            key=lambda m, fb=fallback: _match_time(m, fb),
+            key=lambda m, fb=fallback: (_match_time(m, fb), m.message_uuid),
             reverse=reverse,
         )
 
@@ -1357,15 +1371,28 @@ def _sort_results(
             return (
                 r.conversation_updated_at
                 if sort == "updated_at"
-                else r.conversation_created_at
+                else r.conversation_created_at,
+                r.conversation_uuid,
             )
 
         results.sort(key=_conv_time_key, reverse=reverse)
     elif sort == "name":
-        results.sort(key=lambda r: (r.conversation_name or "").lower(), reverse=reverse)
+        results.sort(
+            key=lambda r: (
+                (r.conversation_name or "").lower(),
+                r.conversation_updated_at,
+                r.conversation_uuid,
+            ),
+            reverse=reverse,
+        )
     elif sort == "project":
         results.sort(
-            key=lambda r: (r.project_name is None, (r.project_name or "").lower()),
+            key=lambda r: (
+                r.project_name is None,
+                (r.project_name or "").lower(),
+                r.conversation_updated_at,
+                r.conversation_uuid,
+            ),
             reverse=reverse,
         )
 

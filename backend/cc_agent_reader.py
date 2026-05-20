@@ -40,7 +40,7 @@ from typing import Any
 import orjson
 
 from .cc_jsonl_io import DEFAULT_CLAUDE_DIR, parse_jsonl_file
-from .parsing import parse_datetime as _parse_datetime
+from .parsing import _parse_iso_opt, parse_datetime as _parse_datetime
 
 
 def read_agent_summary_fast(agent_path: Path) -> tuple[str | None, dict | None]:
@@ -199,15 +199,15 @@ def _extract_agent_metadata(entries: list[dict], agent_path: Path) -> dict:
     first_entry = entries[0] if entries else {}
     agent_id = first_entry.get("agentId", agent_path.stem.replace("agent-", ""))
 
-    # Timestamps
-    all_timestamps = []
-    for e in entries:
-        ts = e.get("timestamp")
-        if ts:
-            try:
-                all_timestamps.append(datetime.fromisoformat(ts.replace("Z", "+00:00")))
-            except (ValueError, TypeError):
-                pass
+    # Timestamps. See `cc_message_transforms._extract_conversation_metadata`
+    # for the Hunt #7 rationale: use the `None`-on-failure primitive
+    # `_parse_iso_opt` and filter, rather than `_parse_datetime` whose
+    # `now(utc)` fallback would inflate `max()` for corrupt-row sessions.
+    all_timestamps = [
+        parsed
+        for e in entries
+        if (parsed := _parse_iso_opt(e.get("timestamp"))) is not None
+    ]
 
     created_at = min(all_timestamps) if all_timestamps else datetime.now(timezone.utc)
     updated_at = max(all_timestamps) if all_timestamps else datetime.now(timezone.utc)
