@@ -324,3 +324,57 @@ command line as shown above — the server doesn't go through conftest.
 - Python: Follow PEP 8, use type hints
 - TypeScript: Strict mode, prefer functional components
 - Commits: Conventional commit messages, no AI attribution lines
+
+## Pre-push checklist (runs before every push that affects the public repo)
+
+Public-flip is a one-way door: once a commit is on `origin/main` and the repo is public, secrets, personal paths, and AI attribution become permanently public-cached (search-indexed, mirrored by archivers, scraped by training-data crawlers). Run this scan before pushing to a public repo. **Every step MUST return clean (or only known-OK matches the maintainer has eyeballed) before push.**
+
+```bash
+# 1. Secrets in unpushed commit diffs
+git log -p origin/main..HEAD | grep -nE 'sk-ant-[A-Za-z0-9_-]{10,}|Bearer [A-Za-z0-9_.-]{20,}|"password"\s*:\s*"[^"]+"'
+
+# 2. Personal /Users/<name>/ paths in committed files (excluding docs/PLANS)
+git grep -nE '/Users/[a-zA-Z]+/|/home/[a-zA-Z]+/' -- ':!PLANS/' ':!*.md'
+
+# 3. Real session keys / cookies in test fixtures (only "fake-test-key" literals should match)
+git grep -nE 'sessionKey.{0,5}[A-Za-z0-9+/_-]{30,}' -- 'backend/tests/' 'fetcher/tests/'
+
+# 4. AI attribution across ALL unpushed commits (NOT just the most recent — check the whole batch)
+git log origin/main..HEAD --format='%H %B' | grep -inE 'co-authored-by:.*claude|🤖 generated'
+
+# 5. Accidentally-tracked credential / cache / local files
+git ls-files | grep -E '(^|/)\.env$|\.env\.[^.]+$|credentials\.json$|\.sqlite$|\.local$|\.local\.json$'
+
+# 6. Real email addresses outside known-OK list
+git grep -nE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}' -- ':!*.md' ':!PROCESS/' | \
+  grep -v -E 'raymondpeckiii@gmail\.com|noreply@|@example\.(com|org)|user@host'
+
+# 7. ~/.claude or /Users/rpeck/ in files shipped to PyPI sdist
+uv build --sdist 2>&1 | tail -3
+mkdir -p /tmp/sdist-check && tar xzf dist/*.tar.gz -C /tmp/sdist-check
+grep -rnE '/Users/rpeck|~/\.claude(?!-explorer)' /tmp/sdist-check | grep -v PKG-INFO  # PKG-INFO ~/.claude refs are legitimate README content
+rm -rf /tmp/sdist-check
+
+# 8. IP addresses outside known-OK list (127.0.0.1, RFC1918, link-local)
+git grep -nE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' -- ':!*.md' ':!PROCESS/' | \
+  grep -v -E '127\.0\.0\.1|0\.0\.0\.0|169\.254\.|192\.168\.|10\.[0-9]+\.|255\.255'
+
+# 9. Private-infra URLs (internal., grafana, slack channels, linear, etc.)
+git grep -nE '(internal\.|\.local/|linear\.app/|slack\.com/archives|grafana\.|datadog\.)' -- ':!PROCESS/'
+
+# 10. TODO/FIXME/XXX in user-facing code (samples below should be intentional documented tech debt only)
+git grep -nE 'TODO|FIXME|XXX' -- 'frontend/src/' 'backend/' ':!**/tests/**'
+```
+
+**Known-OK matches** (won't fail the scan but worth re-eyeballing):
+
+- `fake-test-key` and `sk-ant-sid01-fake-test-key` in `backend/tests/`, `fetcher/tests/` — deliberate fake fixtures.
+- `/Users/rpeck/` in test fixtures under `frontend/e2e/` — deliberate test data shape mirroring real CC session paths.
+- `~/.claude` in `PKG-INFO` (README copy) and source code — describing the actual home-directory paths the app reads from.
+- `claude-exporter` (the legacy pre-V1 name) in `.gitignore` (backwards-compat) and `PROCESS/a70251a5/outline.jsonl` (frozen historical conversation snapshots).
+- `http://claude-explorer.local/` in `backend/export.py` — base URL for relative-resource resolution in PDF export; not a real infrastructure reference.
+
+**Things this checklist does NOT cover** (and that you should still think about before flipping visibility):
+
+- The `PROCESS/` directory exposes development-session conversation snapshots. Some maintainers want this; some don't. Decide before flip.
+- The `.github/workflows/*.yml` reference org-scoped secrets (`PYPI_API_TOKEN`, OIDC trusted publishing config). On the public repo, these need to be configured under repo Settings → Secrets and variables → Actions BEFORE the first release workflow run.
