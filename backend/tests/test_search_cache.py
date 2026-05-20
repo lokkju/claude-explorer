@@ -39,7 +39,6 @@ def _write_conv(path: Path, uuid: str, body: str) -> None:
         "created_at": "2026-04-01T10:00:00Z",
         "updated_at": "2026-04-01T10:00:00Z",
         "is_starred": False,
-        "is_temporary": False,
         "current_leaf_message_uuid": "m1",
         "chat_messages": [
             {

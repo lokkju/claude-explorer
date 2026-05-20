@@ -52,7 +52,6 @@ def _conv(
         "created_at": "2026-05-01T12:00:00Z",
         "updated_at": "2026-05-01T13:00:00Z",
         "is_starred": False,
-        "is_temporary": False,
         "current_leaf_message_uuid": msg_uuid or f"{uuid}-m1",
         "project_path": project_path,
         "source": source,

@@ -80,18 +80,34 @@ class ConversationSummary(BaseModel):
 
     uuid: str
     name: str
+    # `summary` is Desktop-only auto-generated text and intentionally NOT
+    # surfaced in the sidebar UI, but it IS part of two public contracts
+    # we can't drop without coordinated breakage:
+    #   * MCP `get_session` returns `conversation.summary` (mcp_server/SPEC.md);
+    #   * `/api/conversations?search=` matches against it server-side
+    #     (backend/store.py:_apply_search_filter).
+    # See PLANS/OPTIMIZE_FIRST_PAINT.md 2.1 audit notes.
     summary: str = ""
     model: str = ""
     created_at: datetime
     updated_at: datetime
     is_starred: bool = False
-    is_temporary: bool = False
     message_count: int = 0
+    # `human_message_count` is consumed by the MCP server's
+    # `list_sessions` tool output (mcp_server/SPEC.md, schema-stable
+    # public contract) and remains on `ConversationSummary` for that
+    # reason — the sidebar payload still pays for it.
     human_message_count: int = 0
     has_branches: bool = False
     source: Literal["CLAUDE_AI", "CLAUDE_CODE"] = "CLAUDE_AI"
     project_path: str | None = None  # For Claude Code sessions
     project_name: str | None = None  # Short name extracted from project_path
+    # `git_branch` is read by the conversation-detail page (see
+    # `frontend/src/routes/ConversationPage.tsx` "Details" disclosure).
+    # `ConversationDetail extends ConversationSummary`, so this field
+    # MUST stay on the base model — splitting it out would require
+    # rewriting the detail-page render path. Carry the small per-row
+    # cost in the sidebar payload as the trade-off.
     git_branch: str | None = None  # For Claude Code sessions
     # Multi-org metadata (cowork-multi-org C3). Null for legacy untagged
     # JSONs that haven't been re-fetched yet — UI surfaces these under the

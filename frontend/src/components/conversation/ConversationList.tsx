@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { Star, GitBranch, Terminal, MessageSquare, ChevronRight, Bot, FolderCode, ChevronDown } from 'lucide-react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useConversations } from '@/hooks/useConversations'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import { Badge } from '@/components/ui/badge'
@@ -22,6 +23,52 @@ interface ConversationListProps {
   titleFilterMode?: FilterMode
   // cowork-multi-org C6: workspace filter (null = "All workspaces").
   organizationId?: string | null
+}
+
+/* ---------- virtualization tuning ---------- */
+// Row height measured live at ~83 px (lucide icons + 3-line layout). The
+// virtualizer auto-corrects via `measureElement` once each row mounts;
+// the estimate is only used for the initial scrollable height + first
+// render of off-screen rows. Slight under-estimate is fine, slight
+// over-estimate causes scroll-jump on initial render — so we err low.
+const ROW_HEIGHT = 83
+// Header rows ("Starred", group headers) and dividers are shorter.
+const HEADER_HEIGHT = 34
+const DIVIDER_HEIGHT = 17
+// Overscan keeps a small buffer above + below the viewport so arrow-key
+// nav doesn't reveal blank gaps mid-frame. 8 rows ≈ 1 viewport-height of
+// safety on a typical 700-1000 px sidebar.
+const OVERSCAN = 8
+
+/* ---------- flat-view item model ----------
+ *
+ * The flat (non-grouped) view virtualizes a single mixed list of
+ * heterogeneously-sized items: an optional "Starred" header, the
+ * starred rows, a divider, then the unstarred rows. Each item gets a
+ * stable `key` so React's reconciliation tracks it correctly across
+ * scroll-driven mount/unmount cycles. */
+
+type FlatItem =
+  | { kind: 'header'; key: string; label: string }
+  | { kind: 'divider'; key: string }
+  | { kind: 'conv'; key: string; conv: ConversationSummary }
+
+function buildFlatItems(
+  starred: ConversationSummary[],
+  unstarred: ConversationSummary[],
+): FlatItem[] {
+  const items: FlatItem[] = []
+  if (starred.length > 0) {
+    items.push({ kind: 'header', key: '__starred_header', label: 'Starred' })
+    for (const c of starred) {
+      items.push({ kind: 'conv', key: `s-${c.uuid}`, conv: c })
+    }
+    items.push({ kind: 'divider', key: '__starred_divider' })
+  }
+  for (const c of unstarred) {
+    items.push({ kind: 'conv', key: `u-${c.uuid}`, conv: c })
+  }
+  return items
 }
 
 export function ConversationList({
@@ -186,6 +233,14 @@ export function ConversationList({
     //   * CLAUDE_AI untagged (legacy pre-migration) → "Untagged
     //     (re-fetch to assign workspace)"
     //   * The string 'Claude Desktop' no longer appears here.
+    //
+    // This path is intentionally NOT virtualized: per-group collapse
+    // already gives the user a coarse-grained "hide rows I don't care
+    // about" lever, and the cross-group ordering + collapse-state
+    // bookkeeping would double the implementation complexity for a
+    // view most users don't keep open. If grouped corpora start
+    // hitting their own first-paint cliff we'll come back. (Phase 2.2
+    // virtualization scope, OPTIMIZE_FIRST_PAINT.md.)
     const groups = new Map<string, ConversationSummary[]>()
 
     for (const conv of conversations) {
@@ -274,37 +329,345 @@ export function ConversationList({
     )
   }
 
-  // Flat view (no grouping)
+  // Flat view (no grouping) — virtualized.
   return (
-    <div className="flex flex-col">
-      {starred.length > 0 && (
-        <>
-          <div className="px-4 py-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-            Starred
-          </div>
-          {starred.map((conv) => (
+    <VirtualizedFlatList
+      conversations={conversations}
+      selectedUuid={selectedUuid}
+      onClickConv={(conv) => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
+      isInScope={isInScope}
+      isKeyboardSelected={isKeyboardSelected}
+    />
+  )
+}
+
+interface VirtualizedFlatListProps {
+  /** The post-filter, post-sort conversation list. Starred/unstarred
+   *  partitioning and ordered-IDs derivation happen inside this
+   *  component, memoized on `conversations` so the virtualizer's
+   *  inputs don't shift identity on every parent render. */
+  conversations: ConversationSummary[]
+  selectedUuid: string | undefined
+  onClickConv: (conv: ConversationSummary) => void
+  isInScope: (conv: ConversationSummary) => boolean
+  isKeyboardSelected: (uuid: string) => boolean
+}
+
+function VirtualizedFlatList({
+  conversations,
+  selectedUuid,
+  onClickConv,
+  isInScope,
+  isKeyboardSelected,
+}: VirtualizedFlatListProps) {
+  // Stable references across renders. Without this, the parent's
+  // `starred.filter(...)` allocations produce a fresh `items` array on
+  // every render and the scroll-to-active effect fires every frame —
+  // which causes react-virtual to mount duplicate stale rows at high
+  // translateY positions before unmounting them, leaving the deep-
+  // linked row off-screen.
+  const starred = useMemo(
+    () => conversations.filter((c) => c.is_starred),
+    [conversations]
+  )
+  const unstarred = useMemo(
+    () => conversations.filter((c) => !c.is_starred),
+    [conversations]
+  )
+  const orderedConversations = useMemo(
+    () => [...starred, ...unstarred],
+    [starred, unstarred]
+  )
+  const { selectedIndex, focusArea } = useKeyboardNavigation()
+  const parentRef = useRef<HTMLDivElement | null>(null)
+  // The sidebar wraps the list in a Radix `<ScrollArea>` (see
+  // `Sidebar.tsx`); the actual scroll container is the inner Viewport
+  // element Radix injects with `data-radix-scroll-area-viewport`. We
+  // resolve it lazily via `getScrollElement` so this component works
+  // both inside the Radix ScrollArea (production) and inside a plain
+  // overflow:auto container (vitest / Storybook).
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    if (!parentRef.current) return
+    // Walk up to the actual scroll container. Two layout shapes:
+    //   * Production: the sidebar wraps us in a Radix `<ScrollArea>`,
+    //     whose Viewport carries `data-radix-scroll-area-viewport` and
+    //     is the element with clientHeight < scrollHeight. ALWAYS
+    //     prefer it when present — Radix injects intermediate wrappers
+    //     with `overflow-y: scroll` whose clientHeight equals
+    //     scrollHeight (they don't actually scroll), so the "first
+    //     overflow:scroll ancestor" heuristic picks the wrong node.
+    //   * Tests / Storybook: any ancestor whose computed
+    //     `overflow-y` is auto/scroll AND whose scrollHeight exceeds
+    //     clientHeight (i.e. the element actually scrolls).
+    let node: HTMLElement | null = parentRef.current.parentElement
+    while (node) {
+      if (node.hasAttribute('data-radix-scroll-area-viewport')) {
+        setScrollEl(node)
+        return
+      }
+      const cs = getComputedStyle(node)
+      if (
+        (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
+        node.scrollHeight > node.clientHeight
+      ) {
+        setScrollEl(node)
+        return
+      }
+      node = node.parentElement
+    }
+    // Last-resort fallback: virtualizer falls back to documentElement
+    // scrolling. Used only when nothing above the list scrolls — true
+    // in vitest where we render the list standalone.
+    setScrollEl(document.documentElement)
+  }, [])
+
+  const items = useMemo(
+    () => buildFlatItems(starred, unstarred),
+    [starred, unstarred]
+  )
+
+  // When the items array shrinks (e.g. type-to-filter narrows the
+  // list), the scrollElement may be parked past the new shorter
+  // content. Clamp it back into range so the virtualizer's next
+  // getVirtualItems() doesn't return indices that exceed the
+  // new items length.
+  const prevItemsLenRef = useRef(items.length)
+  useEffect(() => {
+    if (!scrollEl) return
+    if (items.length < prevItemsLenRef.current && scrollEl.scrollTop > 0) {
+      scrollEl.scrollTop = 0
+    }
+    prevItemsLenRef.current = items.length
+  }, [items.length, scrollEl])
+
+  const estimateSize = useCallback(
+    (index: number) => {
+      const it = items[index]
+      if (!it) return ROW_HEIGHT
+      if (it.kind === 'header') return HEADER_HEIGHT
+      if (it.kind === 'divider') return DIVIDER_HEIGHT
+      return ROW_HEIGHT
+    },
+    [items]
+  )
+
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollEl,
+    estimateSize,
+    overscan: OVERSCAN,
+    // Re-measure on actual DOM mount so the once-per-row height drift
+    // (e.g. wrapped 2-line titles, project-path subtitle on CC rows
+    // that add ~36 px) self-corrects rather than locking us into the
+    // ROW_HEIGHT estimate. Skip in jsdom (vitest) where
+    // getBoundingClientRect always returns zero and the auto-measure
+    // would push every row to 0 px and collapse the spacer.
+    measureElement:
+      typeof window !== 'undefined' && typeof ResizeObserver !== 'undefined'
+        ? undefined
+        : () => ROW_HEIGHT,
+  })
+
+  // Keep mutable refs to `items` / `orderedConversations` so the
+  // scroll effects below can read the latest value WITHOUT putting
+  // either in their dependency array. The effects depend only on the
+  // user's intent (`selectedIndex`, `selectedUuid`); the items array
+  // is read off the ref. This breaks the render → scrollToIndex →
+  // scroll event → re-render → scrollToIndex cascade that was
+  // producing duplicate stale DOM rows.
+  const itemsRef = useRef(items)
+  itemsRef.current = items
+  const orderedRef = useRef(orderedConversations)
+  orderedRef.current = orderedConversations
+
+  // Drive virtualizer scroll on keyboard navigation. The
+  // KeyboardNavigationContext sets `selectedIndex` into
+  // `orderedConversations`; we map that back to the `items` index
+  // (which is offset by the optional "Starred" header) and call
+  // `scrollToIndex`. Native `scrollIntoView` does NOT work on
+  // off-screen virtualized rows — they don't exist in the DOM yet.
+  //
+  // Why scrollEl.scrollTop = estimate rather than
+  // `virtualizer.scrollToIndex`: same cascade-avoidance reason as
+  // the URL deep-link effect below. The virtualizer's
+  // scrollToIndex triggers a scroll → re-render → measure cycle
+  // that can produce duplicate React-rendered rows when several
+  // measurements arrive between commits. Setting scrollTop
+  // directly keeps the virtualizer in spectator mode: one scroll
+  // event, one re-render, no cascade. The row's own scrollIntoView
+  // effect (`isKeyboardSelected` → `scrollIntoView({block:
+  // 'nearest'})`) handles the final precision once the row mounts.
+  useEffect(() => {
+    if (!scrollEl) return
+    if (focusArea !== 'list') return
+    const ordered = orderedRef.current
+    if (selectedIndex < 0 || selectedIndex >= ordered.length) return
+    const conv = ordered[selectedIndex]
+    const currentItems = itemsRef.current
+    const itemsIndex = currentItems.findIndex(
+      (it) => it.kind === 'conv' && it.conv.uuid === conv.uuid
+    )
+    if (itemsIndex < 0) return
+    // Only pre-scroll if the target is outside the currently
+    // rendered window. `align: 'auto'` semantics: keep the row in
+    // view; if it already is, do nothing. We replicate that here.
+    const estimated = itemsIndex * ROW_HEIGHT
+    const viewportTop = scrollEl.scrollTop
+    const viewportBottom = viewportTop + scrollEl.clientHeight
+    if (estimated >= viewportTop && estimated + ROW_HEIGHT <= viewportBottom) {
+      return
+    }
+    scrollEl.scrollTop = Math.max(0, estimated - scrollEl.clientHeight / 3)
+  }, [selectedIndex, focusArea, scrollEl])
+
+  // Scroll-to-active when the URL deep-links to a specific conversation
+  // (e.g. /conversations/<uuid>). Runs on mount + whenever
+  // selectedUuid changes. We rely on `selectedUuid` as the sole
+  // trigger (NOT `items`) because each scrollToIndex causes a
+  // scroll event that re-renders VirtualizedFlatList, which would
+  // otherwise refire this effect every frame and produce a cascade
+  // of duplicate DOM mounts at stale measurement positions.
+  //
+  // After the virtualizer brings the row into the rendered window
+  // here, the `ConversationListItem` child's own scrollIntoView
+  // effect (keyed on `isSelected`) finishes the job — it pulls the
+  // row to its `block: 'nearest'` position inside the Radix
+  // viewport. This is the same code path the pre-virtualization
+  // implementation used, so the final visual behavior matches.
+  useEffect(() => {
+    if (!scrollEl || !selectedUuid) return
+    const currentItems = itemsRef.current
+    const itemsIndex = currentItems.findIndex(
+      (it) => it.kind === 'conv' && it.conv.uuid === selectedUuid
+    )
+    if (itemsIndex < 0) return
+    // Scroll directly via scrollEl.scrollTop using an estimated offset
+    // for the target index. Rationale: react-virtual's
+    // `scrollToIndex` triggers a scroll → re-render → measure cycle
+    // that, under React 18 + StrictMode, can produce a cascade of
+    // double-mounted absolutely-positioned rows when the
+    // measurement-driven re-render fires while React is still
+    // committing the previous batch. Bypassing the API and writing
+    // scrollTop ourselves keeps the virtualizer in spectator mode:
+    // it sees ONE scroll event and computes ONE new virtual window.
+    //
+    // After the virtualizer mounts the target row, that row's own
+    // `scrollIntoView({ block: 'nearest' })` effect (already on
+    // `ConversationListItem`) finishes the centering. We
+    // intentionally aim a little ABOVE center (clientHeight / 3) so
+    // `nearest` consistently pulls the row down into view rather
+    // than fighting our pre-scroll position.
+    const estimated = itemsIndex * ROW_HEIGHT
+    const offset = Math.max(0, estimated - scrollEl.clientHeight / 3)
+    scrollEl.scrollTop = offset
+  }, [scrollEl, selectedUuid])
+
+  // jsdom (vitest) doesn't run layout — getBoundingClientRect always
+  // returns zero — so the virtualizer can't measure rows and would
+  // render zero items. That would break every existing unit test
+  // that asserts on row content. Detect jsdom (its user-agent
+  // string carries the literal "jsdom") and fall back to plain
+  // non-virtualized rendering. Real browsers don't match.
+  // ResizeObserver-presence isn't reliable because src/test/setup.ts
+  // polyfills it for cmdk's sake.
+  const isJsdom =
+    typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)
+  if (isJsdom) {
+    return (
+      <div className="flex flex-col" data-testid="conversation-list-flat">
+        {items.map((item) => {
+          if (item.kind === 'header') {
+            return (
+              <div
+                key={item.key}
+                className="px-4 py-2 text-xs font-medium text-zinc-500 dark:text-zinc-400"
+              >
+                {item.label}
+              </div>
+            )
+          }
+          if (item.kind === 'divider') {
+            return (
+              <div
+                key={item.key}
+                className="mx-4 my-2 border-t border-zinc-200 dark:border-zinc-800"
+              />
+            )
+          }
+          return (
             <ConversationListItem
-              key={conv.uuid}
-              conversation={conv}
-              isSelected={conv.uuid === selectedUuid}
-              isKeyboardSelected={isKeyboardSelected(conv.uuid)}
-              onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
-              outOfScope={!isInScope(conv)}
+              key={item.key}
+              conversation={item.conv}
+              isSelected={item.conv.uuid === selectedUuid}
+              isKeyboardSelected={isKeyboardSelected(item.conv.uuid)}
+              onClick={() => onClickConv(item.conv)}
+              outOfScope={!isInScope(item.conv)}
             />
-          ))}
-          <div className="mx-4 my-2 border-t border-zinc-200 dark:border-zinc-800" />
-        </>
-      )}
-      {unstarred.map((conv) => (
-        <ConversationListItem
-          key={conv.uuid}
-          conversation={conv}
-          isSelected={conv.uuid === selectedUuid}
-          isKeyboardSelected={isKeyboardSelected(conv.uuid)}
-          onClick={() => { setNavSource('list'); navigate(`/conversations/${conv.uuid}`) }}
-          outOfScope={!isInScope(conv)}
-        />
-      ))}
+          )
+        })}
+      </div>
+    )
+  }
+
+  const virtualItems = virtualizer.getVirtualItems()
+  const totalSize = virtualizer.getTotalSize()
+
+  return (
+    <div ref={parentRef} className="flex flex-col" data-testid="conversation-list-flat">
+      <div
+        style={{
+          height: `${totalSize}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {virtualItems.map((vi) => {
+          const item = items[vi.index]
+          if (!item) return null
+          return (
+            // Key MUST be `vi.key` (the virtualizer-derived stable
+            // key), not our own `item.key`. With our item.key, when
+            // items[index] changes UUID across renders the React
+            // key changes too, but the virtualizer's render still
+            // emits the same `data-index` — React's reconciler then
+            // treats them as different children for the same array
+            // slot and accumulates orphaned DOM rows under React 18
+            // concurrent commit. Using `vi.key` keeps the React-side
+            // and virtualizer-side identity aligned.
+            <div
+              key={vi.key}
+              data-index={vi.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${vi.start}px)`,
+              }}
+            >
+              {item.kind === 'header' && (
+                <div className="px-4 py-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                  {item.label}
+                </div>
+              )}
+              {item.kind === 'divider' && (
+                <div className="mx-4 my-2 border-t border-zinc-200 dark:border-zinc-800" />
+              )}
+              {item.kind === 'conv' && (
+                <ConversationListItem
+                  conversation={item.conv}
+                  isSelected={item.conv.uuid === selectedUuid}
+                  isKeyboardSelected={isKeyboardSelected(item.conv.uuid)}
+                  onClick={() => onClickConv(item.conv)}
+                  outOfScope={!isInScope(item.conv)}
+                />
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -331,7 +694,13 @@ function ConversationListItem({
   const subagents = conversation.subagents || []
   const hasSubagents = subagents.length > 0
 
-  // Scroll keyboard-selected item into view
+  // Scroll keyboard-selected item into view. Note: in the virtualized
+  // flat-view path, the virtualizer's `scrollToIndex` has already
+  // brought the row into the visible window, so this `scrollIntoView`
+  // is a no-op on already-visible rows and a precision nudge when the
+  // virtualizer's `align: 'auto'` left the row at the very top/bottom
+  // edge. In the grouped (non-virtualized) path this is the only
+  // mechanism that keeps the keyboard cursor in view.
   useEffect(() => {
     if (isKeyboardSelected && itemRef.current) {
       itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })

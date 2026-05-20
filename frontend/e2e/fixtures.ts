@@ -93,7 +93,6 @@ export function makeSummary(overrides: Partial<ConversationSummary> & { uuid: st
     created_at: '2026-04-01T10:00:00Z',
     updated_at: '2026-04-01T10:00:00Z',
     is_starred: false,
-    is_temporary: false,
     message_count: 0,
     human_message_count: 0,
     has_branches: false,

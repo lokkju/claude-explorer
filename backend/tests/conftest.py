@@ -130,7 +130,6 @@ def temp_data_dir():
             "created_at": "2024-03-01T12:00:00Z",
             "updated_at": "2024-03-01T13:00:00Z",
             "is_starred": False,
-            "is_temporary": False,
             "current_leaf_message_uuid": "msg-2",
             "chat_messages": [
                 {
@@ -172,7 +171,6 @@ def sample_conversation():
         "created_at": "2024-03-01T12:00:00Z",
         "updated_at": "2024-03-01T13:00:00Z",
         "is_starred": False,
-        "is_temporary": False,
         "message_count": 2,
         "human_message_count": 1,
         "has_branches": False,

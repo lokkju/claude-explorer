@@ -249,7 +249,6 @@ class McpFixture:
             "created_at": created_at,
             "updated_at": updated_at,
             "is_starred": is_starred,
-            "is_temporary": False,
             "current_leaf_message_uuid": leaf,
             "chat_messages": messages,
         }

@@ -49,7 +49,6 @@ def _conv_with_placeholder(uuid: str, text: str) -> dict:
         "created_at": "2026-05-01T12:00:00Z",
         "updated_at": "2026-05-01T13:00:00Z",
         "is_starred": False,
-        "is_temporary": False,
         "current_leaf_message_uuid": "m1",
         "chat_messages": [
             {

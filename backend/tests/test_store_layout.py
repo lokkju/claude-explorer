@@ -36,7 +36,6 @@ def _write_conv(path: Path, uuid: str, name: str = "Test", organization_id: str 
         "created_at": "2024-03-01T12:00:00Z",
         "updated_at": "2024-03-01T13:00:00Z",
         "is_starred": False,
-        "is_temporary": False,
         "chat_messages": [],
     }
     if organization_id:

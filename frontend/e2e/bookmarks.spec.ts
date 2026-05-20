@@ -18,7 +18,6 @@ const baseConv = {
   created_at: '2026-04-01T10:00:00Z',
   updated_at: '2026-04-01T13:00:00Z',
   is_starred: false,
-  is_temporary: false,
   message_count: 3,
   human_message_count: 2,
   has_branches: false,

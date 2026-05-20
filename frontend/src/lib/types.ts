@@ -15,18 +15,27 @@ export interface SubagentSummary {
 export interface ConversationSummary {
   uuid: string
   name: string
+  // `summary` is Desktop-only auto-text. Carried on the wire because
+  // the backend's /api/conversations?search= matcher and the MCP
+  // server's list_sessions tool both consume it. Frontend never
+  // renders it.
   summary: string
   model: string
   created_at: string
   updated_at: string
   is_starred: boolean
-  is_temporary: boolean
   message_count: number
+  // Carried for the MCP server's public list_sessions output
+  // (mcp_server/SPEC.md). Not consumed by the frontend.
   human_message_count: number
   has_branches: boolean
   source: ConversationSource
   project_path?: string | null
   project_name?: string | null
+  // Read by ConversationPage's Details disclosure. Because
+  // ConversationDetail extends this interface, the field must live
+  // on the base shape (the detail page would lose its TS type
+  // narrowing otherwise).
   git_branch?: string | null
   // cowork-multi-org C6: workspace metadata. Null for legacy untagged
   // JSONs that haven't been re-fetched yet.

@@ -81,7 +81,6 @@ def _conv_with_thinking_and_text(
         "created_at": "2026-05-14T12:00:00Z",
         "updated_at": "2026-05-14T13:00:00Z",
         "is_starred": False,
-        "is_temporary": False,
         "current_leaf_message_uuid": msg_uuid,
         "project_path": None,
         "source": "CLAUDE_AI",

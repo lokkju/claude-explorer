@@ -65,7 +65,6 @@ def _conv(
         "created_at": conv_created_at,
         "updated_at": conv_updated_at,
         "is_starred": False,
-        "is_temporary": False,
         "current_leaf_message_uuid": f"{uuid}-{msg_uuid_suffix}",
         "project_path": None,
         "source": source,

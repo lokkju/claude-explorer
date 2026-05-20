@@ -7,9 +7,9 @@ import { test, expect, Route } from '@playwright/test';
  */
 
 const conversations = [
-  { uuid: 'a-1', name: 'MCP server bootstrap', model: 'claude', source: 'CLAUDE_CODE', is_starred: false, is_temporary: false, message_count: 4, human_message_count: 2, has_branches: false, summary: '', created_at: '2026-04-01T10:00:00Z', updated_at: '2026-04-01T10:00:00Z', project_path: '/p/explorer', project_name: 'explorer', git_branch: 'main', subagents: [] },
-  { uuid: 'b-2', name: 'React refactor', model: 'claude', source: 'CLAUDE_CODE', is_starred: false, is_temporary: false, message_count: 4, human_message_count: 2, has_branches: false, summary: '', created_at: '2026-04-02T10:00:00Z', updated_at: '2026-04-02T10:00:00Z', project_path: '/p/other', project_name: 'other', git_branch: 'main', subagents: [] },
-  { uuid: 'c-3', name: 'MCP test plan', model: 'claude', source: 'CLAUDE_CODE', is_starred: false, is_temporary: false, message_count: 4, human_message_count: 2, has_branches: false, summary: '', created_at: '2026-04-03T10:00:00Z', updated_at: '2026-04-03T10:00:00Z', project_path: '/p/explorer', project_name: 'explorer', git_branch: 'main', subagents: [] },
+  { uuid: 'a-1', name: 'MCP server bootstrap', model: 'claude', source: 'CLAUDE_CODE', is_starred: false, message_count: 4, human_message_count: 2, has_branches: false, summary: '', created_at: '2026-04-01T10:00:00Z', updated_at: '2026-04-01T10:00:00Z', project_path: '/p/explorer', project_name: 'explorer', git_branch: 'main', subagents: [] },
+  { uuid: 'b-2', name: 'React refactor', model: 'claude', source: 'CLAUDE_CODE', is_starred: false, message_count: 4, human_message_count: 2, has_branches: false, summary: '', created_at: '2026-04-02T10:00:00Z', updated_at: '2026-04-02T10:00:00Z', project_path: '/p/other', project_name: 'other', git_branch: 'main', subagents: [] },
+  { uuid: 'c-3', name: 'MCP test plan', model: 'claude', source: 'CLAUDE_CODE', is_starred: false, message_count: 4, human_message_count: 2, has_branches: false, summary: '', created_at: '2026-04-03T10:00:00Z', updated_at: '2026-04-03T10:00:00Z', project_path: '/p/explorer', project_name: 'explorer', git_branch: 'main', subagents: [] },
 ];
 
 // CF1: composable-filter graph helper. Seeds the new prefs blob shape so
@@ -179,7 +179,6 @@ test.describe('Sidebar title search scope (P1.2)', () => {
     model: 'claude',
     source: 'CLAUDE_AI',
     is_starred: false,
-    is_temporary: false,
     message_count: 4,
     human_message_count: 2,
     has_branches: false,
@@ -200,7 +199,6 @@ test.describe('Sidebar title search scope (P1.2)', () => {
     model: 'claude',
     source: 'CLAUDE_CODE',
     is_starred: false,
-    is_temporary: false,
     message_count: 4,
     human_message_count: 2,
     has_branches: false,

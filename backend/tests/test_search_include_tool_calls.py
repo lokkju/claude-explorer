@@ -82,7 +82,6 @@ def _conv(
         "created_at": "2026-05-11T12:00:00Z",
         "updated_at": "2026-05-11T13:00:00Z",
         "is_starred": False,
-        "is_temporary": False,
         "current_leaf_message_uuid": messages[-1]["uuid"] if messages else "",
         "project_path": project_path,
         "source": source,

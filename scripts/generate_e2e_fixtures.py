@@ -108,7 +108,6 @@ def _conv(
         "created_at": _ts(minute_offset),
         "updated_at": _ts(minute_offset + len(messages)),
         "is_starred": False,
-        "is_temporary": False,
         "current_leaf_message_uuid": messages[-1]["uuid"] if messages else "",
         "chat_messages": messages,
         "has_branches": has_branches,

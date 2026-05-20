@@ -86,7 +86,6 @@ def _make_conv(idx: int, *, body_size: int = 50, needle: bool = False) -> dict:
         "created_at": _BASE_TIME.isoformat(),
         "updated_at": (_BASE_TIME + timedelta(seconds=body_size)).isoformat(),
         "is_starred": False,
-        "is_temporary": False,
         "current_leaf_message_uuid": msgs[-1]["uuid"],
         "project_path": f"/work/synthetic{idx % 5}",
         "source": "CLAUDE_AI",

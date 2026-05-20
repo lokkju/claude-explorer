@@ -354,7 +354,6 @@ class ConversationStore:
             created_at=_parse_datetime(data.get("created_at")),
             updated_at=_parse_datetime(data.get("updated_at")),
             is_starred=data.get("is_starred", False),
-            is_temporary=data.get("is_temporary", False),
             message_count=message_count,
             human_message_count=human_count,
             # See `get_conversation` for the CC branch-flag rationale —
@@ -555,7 +554,6 @@ class ConversationStore:
             created_at=_parse_datetime(data.get("created_at")),
             updated_at=_parse_datetime(data.get("updated_at")),
             is_starred=data.get("is_starred", False),
-            is_temporary=data.get("is_temporary", False),
             message_count=len(chat_messages),
             human_message_count=human_count,
             has_branches=branches_flag,
