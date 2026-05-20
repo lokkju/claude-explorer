@@ -164,16 +164,57 @@ class FileCache:
         path: Path,
         loader: Callable[[Path], Any],
     ) -> Any:
-        """Get from cache or load using the provided function."""
+        """Get from cache or load using the provided function.
+
+        TOCTOU-safe (S5 T2c, 2026-05-20): capture mtime BEFORE the loader
+        runs, then re-stat AFTER. If the file mutated during the read,
+        the loaded content is stale-relative-to-disk; skip the cache
+        write so the next ``get_or_load`` re-loads against the fresh
+        on-disk state. The original implementation called ``self.set(path,
+        data)`` with no mtime, which re-stat'd inside ``set`` and stored
+        ``(old_content, new_mtime)`` — a stale payload labeled fresh.
+
+        Pinned by ``backend/tests/test_filecache_toctou.py``.
+        """
         data, is_valid = self.get(path)
         if is_valid:
             return data
 
-        # Load fresh data
-        data = loader(path)
-        if data is not None:
-            self.set(path, data)
-        return data
+        try:
+            mtime_before = path.stat().st_mtime
+        except OSError:
+            # File vanished between cache miss and stat — let the loader
+            # surface the error rather than papering over it here.
+            return loader(path)
+
+        loaded = loader(path)
+        if loaded is None:
+            return loaded
+
+        try:
+            mtime_after = path.stat().st_mtime
+        except OSError:
+            # File vanished mid-load. Don't cache (the loaded payload
+            # is detached from any current on-disk state); return it
+            # to the caller for one-shot use.
+            return loaded
+
+        if mtime_before != mtime_after:
+            # File mutated during the read. Cache nothing; the caller
+            # gets the loaded payload, but the next ``get_or_load`` will
+            # re-load against the fresh state instead of returning the
+            # stale payload as a hit.
+            logger.info(
+                "FileCache: %s mutated mid-load (%.6f -> %.6f); "
+                "skipping cache to avoid stale-as-fresh entry",
+                path,
+                mtime_before,
+                mtime_after,
+            )
+            return loaded
+
+        self.set(path, loaded, mtime_before)
+        return loaded
 
     def load_many_parallel(
         self,
