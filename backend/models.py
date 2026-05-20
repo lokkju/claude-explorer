@@ -21,7 +21,21 @@ class ContentBlock(BaseModel):
 
 
 class Message(BaseModel):
-    """A single message in a conversation."""
+    """A single message in a conversation.
+
+    Pydantic↔TS contract note (Task B, 2026-05-18): fields with
+    Pydantic defaults below (``content``, ``attachments``, ``files``,
+    ``files_v2``, ``is_command_marker``, ``is_prelude``,
+    ``assistant_canned_response_consumed``) are ALWAYS emitted on
+    the wire — the default is applied at construction so the JSON
+    key is always present. The frontend ``Message`` interface in
+    ``frontend/src/lib/types.ts`` marks several of these as optional
+    (``?:``) to keep frontend mock construction friction-free; this
+    is a defensive-direction lie (TS wider than runtime). Consumers
+    using ``?? false`` / ``?? []`` are safe. Do NOT remove the
+    Pydantic defaults to "match TS optionality" — that would change
+    the wire shape and require a coordinated TS+BE update.
+    """
 
     uuid: str
     sender: Literal["human", "assistant"]
@@ -313,6 +327,36 @@ class SearchResponse(BaseModel):
     total_messages_matched: int = 0
     returned_messages: int = 0
     truncated: bool = False
+
+
+class Org(BaseModel):
+    """A workspace (org) the user has access to.
+
+    Wire shape mirrored by the frontend `Org` interface in
+    `frontend/src/lib/types.ts`. `name` is nullable because the
+    upstream credentials JSON may omit it for legacy entries (see
+    `backend/routers/orgs.py:get_orgs`).
+    """
+
+    org_id: str
+    name: str | None = None
+    is_primary: bool
+
+
+class OrgsResponse(BaseModel):
+    """Wrapped `/api/orgs` response.
+
+    Three-state contract documented at
+    `backend/routers/orgs.py` module docstring. Pre-Task-B the
+    router returned a raw `dict`, leaving the wire shape undocumented
+    in the OpenAPI schema; the frontend `OrgsResponse` interface in
+    `frontend/src/lib/types.ts` was the only spec. This Pydantic
+    model makes BE the single source of truth so the next field
+    addition lands in OpenAPI automatically.
+    """
+
+    authenticated: bool
+    orgs: list[Org] = Field(default_factory=list)
 
 
 class AppConfig(BaseModel):

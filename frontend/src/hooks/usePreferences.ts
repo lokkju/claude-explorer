@@ -34,6 +34,13 @@ import {
 const PREFS_QUERY_KEY = ['preferences'] as const;
 const MIGRATION_MARKER_KEY = 'prefs_migrated_v1';
 
+// Mirrors backend `PreferencesEnvelope` Pydantic model in
+// `backend/routers/preferences.py`. Lives here (not in `lib/types.ts`)
+// because this hook is the only frontend consumer; per the Task B
+// Pydantic↔TS drift audit (2026-05-18, Decision Record #7), we leave
+// this co-located until a second consumer appears. If you find
+// yourself re-declaring this interface in another file, HOIST it to
+// `lib/types.ts` instead.
 interface PreferencesEnvelope {
   version: number;
   data: Record<string, unknown>;

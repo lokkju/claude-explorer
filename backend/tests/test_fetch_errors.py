@@ -248,3 +248,100 @@ def test__get_fetch_status__creds_present__age_is_non_negative_integer(
     age = body["credentials_age_days"]
     assert isinstance(age, int), f"age must be int, got {type(age).__name__}"
     assert age >= 0, f"age must be non-negative, got {age}"
+
+
+# ---------------------------------------------------------------------------
+# Pydantic ↔ TS drift audit (Task B): FetchProgress.type Literal contract
+# ---------------------------------------------------------------------------
+
+
+def test__fetch_progress__type_field_is_closed_literal_union() -> None:
+    """RED→GREEN: `FetchProgress.type` must be a closed `Literal` union
+    mirroring the frontend `FetchProgress.type` in
+    `frontend/src/components/fetch/FetchToast.tsx`. Pre-Task-B the
+    backend declared `type: str` (any string accepted), while the
+    frontend narrowed to a closed union — silent drift on either side
+    was invisible.
+
+    If a future PR adds a new SSE event type on the backend dict-build
+    path WITHOUT also adding it to this Literal, the Pydantic model
+    no longer documents the wire contract. This test pins the
+    contract.
+    """
+    from pydantic import ValidationError
+
+    from backend.routers.fetch import FetchProgress
+
+    # GREEN: every documented type validates.
+    documented_types = [
+        "start",
+        "progress",
+        "complete",
+        "error",
+        "capture_start",
+        "capture_waiting_login",
+        "capture_done",
+    ]
+    for t in documented_types:
+        FetchProgress(type=t, message="ok")  # must not raise
+
+    # RED-direction: an unknown type must raise ValidationError. If the
+    # field is still `type: str` (not Literal), this passes silently
+    # and the test fails.
+    try:
+        FetchProgress(type="not_a_documented_type", message="oops")
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError(
+            "FetchProgress.type accepted an undocumented value — "
+            "field must be a closed Literal union to lock the SSE contract."
+        )
+
+
+def test__fetch_progress__schema_documents_type_literal_in_openapi() -> None:
+    """Companion to the runtime test: the JSON schema must list the
+    Literal variants under `enum` so OpenAPI / TS codegen can see the
+    closed set. A `type: str` field produces no `enum` — this test
+    catches that drift via the model's own JSON schema.
+    """
+    from backend.routers.fetch import FetchProgress
+
+    schema = FetchProgress.model_json_schema()
+    type_field = schema.get("properties", {}).get("type", {})
+    assert "enum" in type_field, (
+        f"FetchProgress.type must surface as an enum in the JSON schema "
+        f"(Literal[...] required); got {type_field!r}"
+    )
+    assert set(type_field["enum"]) >= {
+        "start",
+        "progress",
+        "complete",
+        "error",
+        "capture_start",
+        "capture_waiting_login",
+        "capture_done",
+    }, (
+        f"FetchProgress.type enum missing required variants; got "
+        f"{type_field['enum']!r}"
+    )
+
+
+def test__build_error_event__preserves_extra_fields_after_validation() -> None:
+    """The SSE error dict carries `kind` and `retryable` — fields NOT
+    on the Pydantic model. Any future change that pipes the dict
+    through `FetchProgress.model_dump()` would silently strip them,
+    breaking the frontend's `kind`/`retryable` handling. This test
+    pins the contract: `_build_error_event` MUST emit these fields.
+    """
+    from backend.routers.fetch import _build_error_event
+
+    event = _build_error_event("TRANSIENT", "503 Service Unavailable")
+    assert event["type"] == "error"
+    assert event["kind"] == "TRANSIENT"
+    assert event["retryable"] is True
+    assert "message" in event and event["message"]
+
+    auth_event = _build_error_event("AUTH", "401")
+    assert auth_event["kind"] == "AUTH"
+    assert auth_event["retryable"] is False

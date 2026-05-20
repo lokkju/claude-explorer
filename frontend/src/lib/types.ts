@@ -116,6 +116,17 @@ export interface ContentBlock {
   // so the field round-trips through the API without TypeScript
   // narrowing it to `never`, and so any future "Show thinking"
   // affordance can branch on it without re-widening the union.
+  //
+  // Pydantic↔TS drift note (Task B, 2026-05-18): the backend
+  // `ContentBlock.type` is `str` (any string), while this TS union is
+  // closed. Mismatch is intentional: if Anthropic ships a new block
+  // type, the BE passes it through and every consumer (MessageBubble,
+  // lib/utils.ts, ConversationLightboxContext) routes through a
+  // `default: return null` branch — runtime safe. Do NOT tighten the
+  // BE to `Literal[...]`: that would reject new block types at the
+  // ingest layer and break /api/conversations on the next Anthropic
+  // release. Add the new variant to this TS union when you're ready
+  // to render it.
   type: 'text' | 'tool_use' | 'tool_result' | 'image' | 'thinking'
   text?: string
   name?: string // tool_use
@@ -149,6 +160,15 @@ export interface ImageFile {
   // but the renderer only treats file_kind === 'image' specially.
 }
 
+// Pydantic↔TS contract note (Task B drift audit, 2026-05-18): the
+// fields below marked optional (`?:`) — `files_v2`,
+// `is_command_marker`, `is_prelude`, `assistant_canned_response_consumed`,
+// `slash_command` — are ALWAYS emitted by the backend (Pydantic
+// defaults at construction time). The `?` marker is a deliberate
+// defensive lie that keeps frontend mock construction friction-free.
+// Consumers MUST treat these as possibly-absent (`?? false` / `?? []`)
+// because the type system says so, even though the runtime guarantee
+// is stronger. See `backend/models.py:Message` for the full rationale.
 export interface Message {
   uuid: string
   sender: 'human' | 'assistant'

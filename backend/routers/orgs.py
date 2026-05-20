@@ -27,6 +27,8 @@ from fetcher.credentials import (
     load_credentials,
 )
 
+from ..models import Org, OrgsResponse
+
 
 log = logging.getLogger(__name__)
 
@@ -40,14 +42,18 @@ def _is_synthetic(uuid: str) -> bool:
     return uuid.startswith("_")
 
 
-@router.get("/orgs")
-def get_orgs() -> dict:
+@router.get("/orgs", response_model=OrgsResponse)
+def get_orgs() -> OrgsResponse:
     """Return the list of workspaces available to the user.
 
-    See module docstring for the three-state response shape.
+    See module docstring for the three-state response shape. Returns
+    a typed ``OrgsResponse`` (Task B Pydantic↔TS drift audit, 2026-05-18)
+    so the OpenAPI schema documents the wire shape and the frontend
+    ``OrgsResponse`` interface in ``lib/types.ts`` has a Pydantic
+    counterpart that catches future drift.
     """
     if not DEFAULT_CREDENTIALS_PATH.exists():
-        return {"authenticated": False, "orgs": []}
+        return OrgsResponse(authenticated=False, orgs=[])
 
     try:
         creds = load_credentials(DEFAULT_CREDENTIALS_PATH)
@@ -62,14 +68,14 @@ def get_orgs() -> dict:
         )
 
     primary = creds.get("primary_org_id")
-    out = []
+    out: list[Org] = []
     for org in creds.get("orgs", []):
         uuid = org.get("uuid")
         if not uuid or _is_synthetic(uuid):
             continue
-        out.append({
-            "org_id": uuid,
-            "name": org.get("name"),
-            "is_primary": uuid == primary,
-        })
-    return {"authenticated": True, "orgs": out}
+        out.append(Org(
+            org_id=uuid,
+            name=org.get("name"),
+            is_primary=uuid == primary,
+        ))
+    return OrgsResponse(authenticated=True, orgs=out)

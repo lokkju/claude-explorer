@@ -215,7 +215,13 @@ export const api = {
   exportAllMarkdown: (): Promise<Response> =>
     fetch(`${BASE_URL}/export/all/markdown`),
 
-  // Fetch operations (Claude Desktop only)
+  // Fetch operations (Claude Desktop only).
+  //
+  // The inline `Promise<{...}>` mirrors the backend `FetchStatus`
+  // Pydantic model in `backend/routers/fetch.py`. Inline (not in
+  // `lib/types.ts`) because `api.ts` is the only consumer; per the
+  // Task B Pydantic↔TS drift audit (2026-05-18, Decision Record #8),
+  // we leave it co-located until a second consumer appears.
   getFetchStatus: async (): Promise<{
     has_credentials: boolean
     credentials_path: string

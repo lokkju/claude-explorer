@@ -145,8 +145,33 @@ class FetchStatus(BaseModel):
 
 
 class FetchProgress(BaseModel):
-    """Progress update during fetch."""
-    type: str  # "start", "progress", "complete", "error"
+    """Progress update during fetch.
+
+    The ``type`` field is a closed ``Literal`` union mirroring the
+    frontend ``FetchProgress.type`` in
+    ``frontend/src/components/fetch/FetchToast.tsx``. Pre-Task-B
+    (2026-05-18) the field was bare ``str``; the frontend had a
+    narrow union but the backend would have happily emitted an
+    undocumented variant. Tightening locks the contract on both ends.
+
+    Note: SSE events are constructed as raw dicts in
+    ``_build_error_event`` and similar helpers, not via this model
+    (the dicts carry ``kind`` and ``retryable`` fields that aren't
+    part of this base contract). Do NOT pipe SSE dicts through
+    ``FetchProgress.model_dump()`` — that would strip the extra
+    fields and break the frontend. The model is the contract spec;
+    the SSE dict is the wire payload.
+    """
+    type: Literal[
+        "start",
+        "progress",
+        "complete",
+        "error",
+        # Build-9: combined capture+fetch pipeline events.
+        "capture_start",
+        "capture_waiting_login",
+        "capture_done",
+    ]
     message: str
     current: int = 0
     total: int = 0

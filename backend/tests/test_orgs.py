@@ -142,6 +142,82 @@ def test__get_orgs__credentials_truncated_json__returns_500_corrupt(
     )
 
 
+def test__orgs_response_schema__pydantic_response_model_in_openapi(
+    client: TestClient,
+) -> None:
+    """Hunt Pydantic↔TS drift (Task B): `/api/orgs` must have a
+    Pydantic response_model so OpenAPI documents the shape and future
+    drift surfaces in the schema diff. The router previously returned
+    a raw `dict` with no response_model — frontend `OrgsResponse` /
+    `Org` interfaces were the only contract spec.
+
+    RED test for the tightening: if `response_model` is not set OR
+    the response schema does not declare both `authenticated` and
+    `orgs[].org_id` keys, this fails.
+
+    Bidirectional: see
+    `test__orgs_response_schema__authenticated_true_payload_matches_pydantic_shape`
+    below for the GREEN-direction "real shape still works" check.
+    """
+    openapi = client.get("/openapi.json").json()
+    paths = openapi["paths"]
+    assert "/api/orgs" in paths, "GET /api/orgs missing from OpenAPI"
+    get_op = paths["/api/orgs"]["get"]
+    schemas = openapi["components"]["schemas"]
+    resp_200 = get_op["responses"]["200"]["content"]["application/json"]["schema"]
+    # Either a direct $ref or an inline schema.
+    if "$ref" in resp_200:
+        ref_name = resp_200["$ref"].split("/")[-1]
+        resp_schema = schemas[ref_name]
+    else:
+        resp_schema = resp_200
+    props = resp_schema.get("properties", {})
+    assert "authenticated" in props, (
+        f"OrgsResponse schema must declare 'authenticated'; got props={list(props)}"
+    )
+    assert "orgs" in props, (
+        f"OrgsResponse schema must declare 'orgs'; got props={list(props)}"
+    )
+    # Drill into the orgs item schema to confirm `org_id` is documented.
+    orgs_items = props["orgs"].get("items", {})
+    if "$ref" in orgs_items:
+        org_schema = schemas[orgs_items["$ref"].split("/")[-1]]
+    else:
+        org_schema = orgs_items
+    org_props = org_schema.get("properties", {})
+    assert "org_id" in org_props, (
+        f"Org schema must declare 'org_id'; got props={list(org_props)}"
+    )
+    assert "is_primary" in org_props, (
+        f"Org schema must declare 'is_primary'; got props={list(org_props)}"
+    )
+
+
+def test__orgs_response_schema__authenticated_true_payload_matches_pydantic_shape(
+    client: TestClient, isolated_creds: Path
+) -> None:
+    """Bidirectional GREEN for the tightening: with valid creds, the
+    actual response payload still matches the existing wire format
+    that the frontend `OrgsResponse` interface encodes. If the
+    Pydantic tightening accidentally changes a field name or drops a
+    field, this fails."""
+    save_credentials(_v2_creds(orgs_count=2), isolated_creds)
+    r = client.get("/api/orgs")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert set(data.keys()) == {"authenticated", "orgs"}, (
+        f"top-level keys drifted; got {set(data)}"
+    )
+    assert isinstance(data["orgs"], list) and data["orgs"], "orgs must be non-empty"
+    for org in data["orgs"]:
+        assert set(org.keys()) == {"org_id", "name", "is_primary"}, (
+            f"Org keys drifted; got {set(org)}"
+        )
+        assert isinstance(org["org_id"], str)
+        assert org["name"] is None or isinstance(org["name"], str)
+        assert isinstance(org["is_primary"], bool)
+
+
 def test_synthetic_claude_code_org_filtered(
     client: TestClient, isolated_creds: Path
 ) -> None:
