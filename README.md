@@ -13,6 +13,11 @@ uvx claude-explorer serve
 # In another terminal, install the always-on image-cache watcher
 # (strongly recommended — see "Continuous Image-Cache Watcher" below):
 uvx claude-explorer install-watcher
+
+# Optional: install the system libraries WeasyPrint needs for PDF export
+# (skip if you only care about Markdown export). On Linux, use your
+# distro's pango / cairo / libffi packages instead of brew.
+brew install pango cairo libffi
 ```
 
 That's it. Open `http://localhost:8765` in your browser and your Claude Code sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
@@ -198,6 +203,11 @@ uv sync
 
 # Install Playwright browsers (for browser-based credential capture)
 uv run playwright install chromium
+
+# Optional: install the system libraries WeasyPrint needs for PDF export
+# (skip if you only care about Markdown export). On Linux, use your
+# distro's pango / cairo / libffi packages instead of brew.
+brew install pango cairo libffi
 ```
 
 ### Step 1: Capture Your Session Cookie

@@ -11,7 +11,7 @@
 
 > **Disclaimer**: This is an independent, community-built project. It is not affiliated with, endorsed by, sponsored by, or supported by Anthropic, PBC. "Claude" and "Claude Code" are trademarks of Anthropic, PBC. This project consumes Anthropic's products as a user would, via the same APIs and on-disk file formats the official clients use, but nothing here represents an Anthropic-sanctioned interface, and the formats this project depends on may change without notice.
 
-In the previous installation of this series, we covered the web app: how it unifies Claude Desktop conversations (fetched down to disk) and Claude Code sessions (read live from `~/.claude/projects/`), plus search, keyboard navigation, and exports. If you missed that, make sure to go back and read [Part 1](https://medium.com/@raymondpeck/part-1-what-this-thing-is-and-why-youd-want-it) and [Part 2](https://medium.com/@raymondpeck/part-2-using-the-web-app) first; Part 3 assumes you already have a mental model of the on-disk corpus, because the MCP server is simply another way to read it.
+In the previous installation of this series, we covered the web app: how it unifies Claude Desktop conversations (fetched down to disk) and Claude Code sessions (read live from `~/.claude/projects/`), plus search, keyboard navigation, and exports. If you missed that, make sure to go back and read [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) and [Part 2](https://medium.com/@raymondpeck/part-2-using-the-web-app) first; Part 3 assumes you already have a mental model of the on-disk corpus, because the MCP server is simply another way to read it.
 
 ## Why an MCP Server?
 

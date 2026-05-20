@@ -5,7 +5,7 @@ import { test, expect, makeSummary } from './fixtures'
  * the sidebar Refresh button runs, NOT a plain conversation-list
  * re-fetch.
  *
- * Article promise (PLANS/articles/part_2_web_app.md, line ~154):
+ * Article promise (articles/part_2_web_app.md, line ~154):
  *   "The UI also binds Cmd+R to the refresh action (the same one the
  *    sidebar button triggers) so you don't accidentally reload the
  *    single-page app and lose your place."

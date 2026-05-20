@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark the article's perf claims.
 
-The Medium series (`PLANS/articles/part_2_web_app.md` line 92) cites two
+The Medium series (`articles/part_2_web_app.md` line 92) cites two
 numbers that need to be backed by reproducible measurements:
 
   - Full-text search returns in around 50 ms on a warm cache
