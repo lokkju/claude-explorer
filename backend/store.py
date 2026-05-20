@@ -9,7 +9,14 @@ from typing import Any, Literal
 from .config import get_settings
 from .claude_code_reader import (
     list_claude_code_conversations,
-    read_claude_code_conversation,
+    # Re-exported so existing tests that patch
+    # ``backend.store.read_claude_code_conversation`` keep their
+    # bind point (the fast-path C1 fix routes through
+    # _load_conversation_cached, which calls this name via the
+    # claude_code_reader module's own binding — but tests that
+    # patch store.py-side as a belt-and-suspenders measure want
+    # this symbol to exist).
+    read_claude_code_conversation,  # noqa: F401  (re-export for tests)
     _load_conversation_cached,
     discover_jsonl_files,
 )

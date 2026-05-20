@@ -102,7 +102,16 @@ logger = logging.getLogger(__name__)
 #     task (backend/main.py:253, asyncio.to_thread) makes the
 #     rebuild non-blocking; queries fall back to linear scan during
 #     the rebuild window.
-SCHEMA_VERSION = 5
+#   * v6 (2026-05-16, PHASE_2 Workstream A): adds
+#     ``conv_created_at`` and ``conv_updated_at`` UNINDEXED columns
+#     so the FTS5 fast path can build SearchResult objects (which
+#     carry conversation-level timestamps) without walking the
+#     conversation corpus or hitting the summary cache for every
+#     hit. Cost: ~50 chars per row UNINDEXED — negligible against
+#     the 861 MB index. Bumping the version forces a one-time
+#     rebuild so the new columns get populated. The build remains
+#     non-blocking via the existing lifespan task.
+SCHEMA_VERSION = 6
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata
@@ -137,6 +146,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     source UNINDEXED,
     project_path UNINDEXED,
     organization_id UNINDEXED,
+    conv_created_at UNINDEXED,
+    conv_updated_at UNINDEXED,
     title,
     body,
     tokenize = "porter unicode61 remove_diacritics 1"
@@ -308,6 +319,7 @@ class SearchIndex:
     _EXPECTED_MESSAGES_COLS = frozenset({
         "conv_uuid", "message_uuid", "sender", "created_at",
         "source", "project_path", "organization_id",
+        "conv_created_at", "conv_updated_at",
         "title", "body",
     })
 
@@ -435,8 +447,14 @@ class SearchIndex:
         # (CC has no workspace concept). The query path treats empty as
         # "no workspace" — only an exact UUID match counts.
         organization_id = conv.get("organization_id") or ""
+        # 2026-05-16 (v6): conv-level timestamps so the FTS5 fast path
+        # can build SearchResult objects without re-walking the corpus.
+        # Stored as ISO 8601 strings (same format as per-message
+        # created_at) so the SQL doesn't have to parse/coerce.
+        conv_created_at = conv.get("created_at", "") or ""
+        conv_updated_at = conv.get("updated_at", "") or ""
 
-        rows: list[tuple[str, str, str, str, str, str, str, str, str]] = []
+        rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]] = []
         for msg in conv.get("chat_messages", []) or []:
             body = _extract_searchable_text(msg)
             # We index even messages with empty body so the title-only
@@ -451,6 +469,8 @@ class SearchIndex:
                     source,
                     project_path,
                     organization_id,
+                    conv_created_at,
+                    conv_updated_at,
                     title,
                     body,
                 )
@@ -462,7 +482,9 @@ class SearchIndex:
             rows.append(
                 (
                     conv_uuid, "title", "title", "",
-                    source, project_path, organization_id, title, "",
+                    source, project_path, organization_id,
+                    conv_created_at, conv_updated_at,
+                    title, "",
                 )
             )
 
@@ -473,8 +495,8 @@ class SearchIndex:
                 )
                 self._write_conn.executemany(
                     "INSERT INTO messages "
-                    "(conv_uuid, message_uuid, sender, created_at, source, project_path, organization_id, title, body) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(conv_uuid, message_uuid, sender, created_at, source, project_path, organization_id, conv_created_at, conv_updated_at, title, body) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 self._write_conn.execute(
@@ -689,6 +711,277 @@ class SearchIndex:
             }
             for row in cur.fetchall()
         ]
+
+    # FTS5 snippet() marker pair. The marks are intentionally OBSCURE
+    # (no HTML, no characters that appear in natural prose) so the
+    # Python parser can split on them deterministically without an
+    # escape pass. The literal byte sequence ``\x01\x01`` would also
+    # work but the printable form is easier to grep in test failures.
+    _SNIPPET_OPEN = "\u0001\u0001MARK\u0001\u0001"
+    _SNIPPET_CLOSE = "\u0001\u0001/MARK\u0001\u0001"
+    # FTS5 snippet() args: (table, column_index, open, close,
+    # ellipsis, max_tokens). column_index is the position in the
+    # messages FTS5 schema (0-indexed). Sweep is bm25-driven so we
+    # get the densest match cluster across multi-token queries.
+    # v6 schema column order: conv_uuid(0), message_uuid(1), sender(2),
+    # created_at(3), source(4), project_path(5), organization_id(6),
+    # conv_created_at(7), conv_updated_at(8), title(9), body(10).
+    _SNIPPET_BODY_COL_IDX = 10
+    _SNIPPET_TITLE_COL_IDX = 9
+    _SNIPPET_ELLIPSIS = "..."
+    _SNIPPET_MAX_TOKENS = 30  # ~150 chars for English prose
+
+    def query_with_snippets(
+        self,
+        user_query: str,
+        *,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        conversation_uuid: str | None = None,
+        project_path: str | None = None,
+        bookmarks: set[str] | None = None,
+        organization_id: str | None = None,
+        conversation_uuids: set[str] | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """FTS5 fast path with body snippets in-band.
+
+        Same filter/scope semantics as :meth:`query` but each row also
+        carries ``body_snippet`` (the FTS5 ``snippet()`` output for
+        the body column) AND the conversation-level metadata
+        (``title``, ``project_path``, ``organization_id``,
+        ``source``) so the caller can build ``SearchResult`` objects
+        without re-reading any JSON/JSONL.
+
+        Marker characters in ``body_snippet``:
+          * ``\\x01\\x01MARK\\x01\\x01`` — opens a highlighted span.
+          * ``\\x01\\x01/MARK\\x01\\x01`` — closes the span.
+
+        The caller parses these into ``SnippetFragment`` objects.
+        We use non-printable sentinels (not HTML ``<mark>``) so the
+        parser can split deterministically without an escape pass
+        and so accidental ``<mark>`` text in user content can never
+        be confused for a real highlight marker.
+
+        LIMIT 1000 (down from 5000):
+          FTS5 ``snippet()`` is the dominant cost in this query —
+          ~140 µs per row for a typical hit (FTS5 has to scan the
+          body column to locate token positions). At 5000 rows
+          that's ~700 ms; at 1000 it's ~140 ms.
+
+          The cap distributes across conversations naturally: a
+          query that hits 100 conversations gets ~10 snippets per
+          conv, plenty for the UI's "first 3 + show N more"
+          affordance. A query that hits 5 conversations gets ~200
+          snippets per conv, far more than any UI surfaces.
+
+          A two-pass strategy (fetch top-N rowids cheap; snippet
+          only the chosen rowids) was prototyped and was SLOWER
+          than the single-pass with smaller LIMIT — combining
+          ``rowid IN (?, ?, ...) AND messages MATCH ?`` forced
+          FTS5 to scan with both predicates, defeating the win.
+          Single-pass with bounded LIMIT is both simpler and
+          faster on this index shape.
+        """
+        match_expr = translate_query(user_query)
+        if not match_expr:
+            return []
+
+        if conversation_uuids is not None and not conversation_uuids:
+            return []
+
+        clauses: list[str] = ["messages MATCH ?"]
+        params: list[Any] = [match_expr]
+        use_allowed_join = False
+
+        if conversation_uuid is not None:
+            clauses.append("conv_uuid = ?")
+            params.append(conversation_uuid)
+        else:
+            if project_path is not None:
+                clauses.append("project_path = ?")
+                params.append(project_path)
+            if bookmarks is not None:
+                if not bookmarks:
+                    return []
+                placeholders = ",".join("?" * len(bookmarks))
+                clauses.append(f"conv_uuid IN ({placeholders})")
+                params.extend(sorted(bookmarks))
+            if conversation_uuids is not None:
+                use_allowed_join = True
+                clauses.append("conv_uuid IN (SELECT uuid FROM allowed_conv)")
+
+        if source != "all":
+            clauses.append("source = ?")
+            params.append(source)
+        if organization_id is not None:
+            clauses.append("organization_id = ?")
+            params.append(organization_id)
+
+        body_snippet_expr = (
+            f"snippet(messages, {self._SNIPPET_BODY_COL_IDX}, "
+            f"?, ?, ?, ?)"
+        )
+        snippet_params = [
+            self._SNIPPET_OPEN,
+            self._SNIPPET_CLOSE,
+            self._SNIPPET_ELLIPSIS,
+            self._SNIPPET_MAX_TOKENS,
+        ]
+
+        sql = (
+            "SELECT conv_uuid, message_uuid, sender, created_at, "
+            "       title, project_path, organization_id, source, "
+            "       conv_created_at, conv_updated_at, "
+            f"      {body_snippet_expr} "
+            "FROM messages "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY bm25(messages) "
+            "LIMIT ?"
+        )
+        full_params: list[Any] = list(snippet_params) + list(params) + [int(limit)]
+
+        conn = self._get_read_conn()
+        if use_allowed_join:
+            assert conversation_uuids is not None
+            self._populate_allowed_conv(conn, conversation_uuids)
+
+        cur = conn.execute(sql, tuple(full_params))
+        return [
+            {
+                "conv_uuid": row[0],
+                "message_uuid": row[1],
+                "sender": row[2],
+                "created_at": row[3],
+                "title": row[4],
+                "project_path": row[5],
+                "organization_id": row[6],
+                "source": row[7],
+                "conv_created_at": row[8],
+                "conv_updated_at": row[9],
+                "body_snippet": row[10],
+            }
+            for row in cur.fetchall()
+        ]
+
+    def title_match_snippets(
+        self,
+        user_query: str,
+        *,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        conversation_uuid: str | None = None,
+        project_path: str | None = None,
+        bookmarks: set[str] | None = None,
+        organization_id: str | None = None,
+        conversation_uuids: set[str] | None = None,
+    ) -> dict[str, str]:
+        """Return ``{conv_uuid: title_snippet}`` for conversations whose
+        TITLE matched the query as a LIKE substring.
+
+        Mirrors the title-sweep in ``_search_via_index`` but produces
+        the marked snippet at SQL time. The output substring is
+        wrapped in the SAME ``\\x01\\x01MARK\\x01\\x01`` /
+        ``\\x01\\x01/MARK\\x01\\x01`` sentinels so the caller can
+        parse fragments with the same code path as ``body_snippet``.
+
+        Why we don't reuse FTS5's ``snippet()`` for titles: the
+        ``title`` column is FTS5-indexed (so MATCH works) but a
+        LIKE-based substring sweep is what catches mid-token
+        substrings (e.g. "edul" inside "scheduled") that the
+        porter+unicode61 tokenizer rejects. The Python wrapper here
+        builds the marked snippet by hand from a case-insensitive
+        find() — identical semantics to the legacy linear-scan
+        title sweep.
+        """
+        stripped = user_query.strip()
+        if not stripped:
+            return {}
+
+        # Phrase-mode handling mirrors backend.search.parse_user_query:
+        # when the whole query is wrapped in double quotes, treat the
+        # quoted phrase as the literal title needle. Otherwise the
+        # full string is the needle (matches linear-scan policy).
+        if len(stripped) >= 3 and stripped[0] == '"' and stripped[-1] == '"':
+            inner = stripped[1:-1].strip()
+            needle = inner if inner else stripped
+        else:
+            needle = stripped
+
+        title_clauses: list[str] = ["title LIKE ?"]
+        title_params: list[Any] = [f"%{needle}%"]
+        use_allowed_join = False
+
+        if conversation_uuid is not None:
+            title_clauses.append("conv_uuid = ?")
+            title_params.append(conversation_uuid)
+        else:
+            if project_path is not None:
+                title_clauses.append("project_path = ?")
+                title_params.append(project_path)
+            if bookmarks is not None:
+                if not bookmarks:
+                    return {}
+                placeholders = ",".join("?" * len(bookmarks))
+                title_clauses.append(f"conv_uuid IN ({placeholders})")
+                title_params.extend(sorted(bookmarks))
+            if conversation_uuids is not None:
+                if not conversation_uuids:
+                    return {}
+                use_allowed_join = True
+                title_clauses.append("conv_uuid IN (SELECT uuid FROM allowed_conv)")
+        if source != "all":
+            title_clauses.append("source = ?")
+            title_params.append(source)
+        if organization_id is not None:
+            title_clauses.append("organization_id = ?")
+            title_params.append(organization_id)
+
+        # Per-conv metadata (timestamps, project_path) returned alongside
+        # the marked title so the caller can build SearchResult objects
+        # for title-only hits without loading the conversation body.
+        sql = (
+            "SELECT conv_uuid, title, conv_created_at, conv_updated_at, "
+            "       project_path, source, organization_id "
+            "FROM messages "
+            f"WHERE {' AND '.join(title_clauses)} "
+            "GROUP BY conv_uuid"
+        )
+        conn = self._get_read_conn()
+        if use_allowed_join:
+            assert conversation_uuids is not None
+            self._populate_allowed_conv(conn, conversation_uuids)
+        try:
+            cur = conn.execute(sql, tuple(title_params))
+            rows = cur.fetchall()
+        except sqlite3.Error:
+            logger.exception("search_index: title sweep failed")
+            return {}
+
+        out: dict[str, dict[str, Any]] = {}
+        needle_lower = needle.lower()
+        for conv_uuid, title, c_created, c_updated, proj, src, org in rows:
+            if not title:
+                continue
+            tlow = title.lower()
+            idx = tlow.find(needle_lower)
+            if idx < 0:
+                continue  # SQL caught case-folded but Python str.find missed? defensive
+            marked = (
+                title[:idx]
+                + self._SNIPPET_OPEN
+                + title[idx:idx + len(needle)]
+                + self._SNIPPET_CLOSE
+                + title[idx + len(needle):]
+            )
+            out[conv_uuid] = {
+                "title": title,
+                "marked_title": marked,
+                "conv_created_at": c_created,
+                "conv_updated_at": c_updated,
+                "project_path": proj,
+                "source": src,
+                "organization_id": org,
+            }
+        return out
 
     def _populate_allowed_conv(
         self, conn: sqlite3.Connection, uuids: set[str]

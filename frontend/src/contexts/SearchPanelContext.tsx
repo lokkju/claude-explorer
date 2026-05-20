@@ -15,7 +15,7 @@ import { useSettings } from '@/contexts/SettingsContext'
 import { useFilters } from '@/contexts/FilterContext'
 import { applyActiveFilter } from '@/lib/filterEngine'
 import { usePreferences } from '@/hooks/usePreferences'
-import type { SearchResult, SortField, SortOrder } from '@/lib/types'
+import type { SearchResult, SnippetFragment, SortField, SortOrder } from '@/lib/types'
 
 export interface SearchMatch {
   conversationUuid: string
@@ -33,6 +33,14 @@ export interface SearchMatch {
   // created_at sort falls back to conversation_created_at.
   conversationUpdatedAt: string
   conversationCreatedAt: string
+  /** Phase-2 Workstream A: structured highlight fragments from the
+   *  FTS5 fast path. Null when the backend emitted the legacy
+   *  snippet/match_start/match_end triple only (linear-scan fallback,
+   *  context_size='full'). The renderer prefers fragments when present
+   *  because the backend's bm25-driven snippet() picks the densest
+   *  multi-token cluster — better than the legacy first-token-only
+   *  highlight. */
+  fragments?: SnippetFragment[] | null
 }
 
 export type SearchContextSize = 'snippet' | 'full'
@@ -296,6 +304,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
             createdAt: msg.created_at,
             conversationUpdatedAt: result.conversation_updated_at,
             conversationCreatedAt: result.conversation_created_at,
+            fragments: msg.fragments ?? null,
           })
         }
       } else {
@@ -313,6 +322,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
           createdAt: null,
           conversationUpdatedAt: result.conversation_updated_at,
           conversationCreatedAt: result.conversation_created_at,
+          fragments: titleMatch?.fragments ?? null,
         })
       }
     }

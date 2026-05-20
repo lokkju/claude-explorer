@@ -24,7 +24,7 @@ import re
 import sqlite3
 from typing import Any, Literal
 
-from .models import SearchResult, MessageSnippet
+from .models import SearchResult, MessageSnippet, SnippetFragment
 from .store import ConversationStore, _parse_datetime
 
 
@@ -421,12 +421,34 @@ def search_conversations(
 
     # Fast path: FTS5 inverted index when ready. Imported lazily so the
     # test suite can patch get_search_index() without import cycles.
+    #
+    # Phase-2 Workstream A: two FTS5 paths now exist.
+    #   * ``_search_via_index_fast`` (context_size="snippet"): pure SQL,
+    #     no corpus walk. FTS5's snippet() produces structured
+    #     fragments. The dominant code path; replaces the scatter-
+    #     gather walk that cost ~15 s cold / ~750 ms warm.
+    #   * ``_search_via_index`` (context_size="full"): the existing
+    #     Python scatter-gather. Required for "show the whole matched
+    #     message" UX — FTS5 snippet() can't produce the full body.
+    #     Falls back to FileCache, slow but correct, rare branch.
     try:
         from .search_index import get_search_index
 
         idx = get_search_index()
         if idx is not None and idx.is_ready():
             try:
+                if context_size == "snippet":
+                    return _search_via_index_fast(
+                        store, idx, query,
+                        source=source,
+                        sort=sort, sort_order=sort_order,
+                        conversation_uuid=conversation_uuid,
+                        project_path=project_path,
+                        bookmarks=bookmarks,
+                        include_tool_calls=include_tool_calls,
+                        organization_id=organization_id,
+                        conversation_uuids=conversation_uuids,
+                    )
                 return _search_via_index(
                     store, idx, query,
                     source=source, context_size=context_size,
@@ -458,6 +480,292 @@ def search_conversations(
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
     )
+
+
+# ---------------------------------------------------------------------------
+# FTS5 fast path (Phase-2 Workstream A)
+# ---------------------------------------------------------------------------
+
+
+# Sentinel byte sequences FTS5 ``snippet()`` wraps around matches.
+# Must stay in lockstep with ``SearchIndex._SNIPPET_OPEN`` /
+# ``SearchIndex._SNIPPET_CLOSE``. Defining the constants twice
+# (here + index) is deliberate: this module is the consumer; the
+# index module is the producer; coupling them via import would
+# muddle the layering. The test
+# ``test_search_snippet_fragments.test_fast_path_populates_fragments_for_snippet_mode``
+# catches any drift.
+_FRAG_OPEN = "\u0001\u0001MARK\u0001\u0001"
+_FRAG_CLOSE = "\u0001\u0001/MARK\u0001\u0001"
+
+
+def _parse_snippet_to_fragments(
+    raw_snippet: str,
+) -> tuple[str, list[SnippetFragment], int, int]:
+    """Parse FTS5 ``snippet()`` output into structured fragments.
+
+    Input: ``"...lorem \\x01\\x01MARK\\x01\\x01python\\x01\\x01/MARK\\x01\\x01 ipsum..."``
+    Output:
+      * Rendered snippet (sentinels stripped):
+        ``"...lorem python ipsum..."``
+      * Fragments:
+        ``[Frag('...lorem ', False), Frag('python', True),
+          Frag(' ipsum...', False)]``
+      * ``match_start``, ``match_end``: position of the FIRST marked
+        span in the rendered snippet (for backward-compat with
+        consumers that read the legacy match_start/match_end pair).
+
+    Robust against:
+      * No marks (FTS5 sometimes returns the raw snippet without
+        marks for stemmer-drift cases): single unmarked fragment;
+        match_start = match_end = 0.
+      * Multiple marks: each becomes its own fragment.
+      * Empty unmarked spans between consecutive marks: skipped
+        so the fragment list never has zero-length entries (the
+        invariant the frontend renderer relies on).
+      * Malformed input (an open without a close): the trailing
+        text after the dangling open is treated as unmarked; we
+        never raise on a producer drift bug — falling back to
+        "no highlight" is preferable to a 500.
+    """
+    if _FRAG_OPEN not in raw_snippet:
+        # No marks at all — return a single unmarked fragment.
+        rendered = raw_snippet
+        if not rendered:
+            return "", [], 0, 0
+        return rendered, [SnippetFragment(text=rendered, mark=False)], 0, 0
+
+    fragments: list[SnippetFragment] = []
+    rendered_parts: list[str] = []
+    rendered_len = 0
+    match_start = 0
+    match_end = 0
+    first_match_recorded = False
+
+    # Walk the string segment-by-segment around open/close pairs.
+    cursor = 0
+    while cursor < len(raw_snippet):
+        open_idx = raw_snippet.find(_FRAG_OPEN, cursor)
+        if open_idx < 0:
+            # Tail — everything left is unmarked.
+            tail = raw_snippet[cursor:]
+            if tail:
+                fragments.append(SnippetFragment(text=tail, mark=False))
+                rendered_parts.append(tail)
+                rendered_len += len(tail)
+            break
+
+        # Leading unmarked segment (open_idx may equal cursor for
+        # a snippet that starts with a mark — skip the empty span).
+        if open_idx > cursor:
+            seg = raw_snippet[cursor:open_idx]
+            fragments.append(SnippetFragment(text=seg, mark=False))
+            rendered_parts.append(seg)
+            rendered_len += len(seg)
+
+        body_start = open_idx + len(_FRAG_OPEN)
+        close_idx = raw_snippet.find(_FRAG_CLOSE, body_start)
+        if close_idx < 0:
+            # Malformed: open without close. Treat remainder as
+            # unmarked and stop.
+            tail = raw_snippet[body_start:]
+            if tail:
+                fragments.append(SnippetFragment(text=tail, mark=False))
+                rendered_parts.append(tail)
+                rendered_len += len(tail)
+            break
+
+        marked_text = raw_snippet[body_start:close_idx]
+        if marked_text:
+            fragments.append(SnippetFragment(text=marked_text, mark=True))
+            rendered_parts.append(marked_text)
+            if not first_match_recorded:
+                match_start = rendered_len
+                match_end = rendered_len + len(marked_text)
+                first_match_recorded = True
+            rendered_len += len(marked_text)
+
+        cursor = close_idx + len(_FRAG_CLOSE)
+
+    rendered = "".join(rendered_parts)
+    return rendered, fragments, match_start, match_end
+
+
+def _search_via_index_fast(
+    store: ConversationStore,
+    idx: Any,
+    query: str,
+    *,
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"],
+    sort: SortField,
+    sort_order: SortOrder,
+    conversation_uuid: str | None,
+    project_path: str | None,
+    bookmarks: set[str] | None,
+    include_tool_calls: bool = True,
+    organization_id: str | None = None,
+    conversation_uuids: set[str] | None = None,
+) -> list[SearchResult]:
+    """Pure-SQL FTS5 fast path for ``context_size="snippet"`` queries.
+
+    Replaces the scatter-gather walk in :func:`_search_via_index` with
+    two SQL queries:
+
+      1. ``SearchIndex.query_with_snippets`` — body MATCH + FTS5
+         ``snippet()`` per row + conv-level metadata (title,
+         timestamps, project_path).
+      2. ``SearchIndex.title_match_snippets`` — LIKE-based title
+         substring sweep that also returns conv-level metadata so
+         title-only hits build SearchResult without a body row.
+
+    Zero conversation-file reads. Zero corpus walk. Latency target:
+    <200 ms cold / <50 ms warm on the user's 991-conv corpus
+    (PLANS/PERFORMANCE_PHASE_2.md §Workstream A measured payoff).
+
+    The output shape matches the legacy path's ``SearchResult`` /
+    ``MessageSnippet`` shape with an additional ``fragments`` field
+    populated on each body-match row. The legacy ``snippet`` /
+    ``match_start`` / ``match_end`` fields stay populated (derived
+    from the same fragments) so clients that don't consume
+    fragments continue working.
+
+    ``include_tool_calls=False`` is a known semantic gap on this
+    path: the FTS5 index always stores the FULL projection (the
+    upsert path doesn't know about the user's runtime toggle), so
+    snippet() can highlight a token whose only occurrence is in a
+    tool_use block. The Python scatter-gather path filters those
+    out post-hoc. For V1 we accept this divergence — the
+    user-facing impact is "occasionally a search highlights a
+    word inside a tool result that the user has chosen to hide";
+    the alternative is to keep paying the corpus-walk cost just
+    so we can filter, which defeats the whole workstream.
+    Documented as a Phase-2 R-class accepted residual.
+    """
+    # Step 1: body MATCH + snippet() — one SQL query, no JSON reads.
+    rows = idx.query_with_snippets(
+        query,
+        source=source,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
+    )
+
+    # Step 2: title-substring sweep (catches mid-token matches FTS5
+    # can't see via prefix tokenizer; e.g. "edul" in "scheduled").
+    title_hits = idx.title_match_snippets(
+        query,
+        source=source,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
+    )
+
+    # Group body matches by conv_uuid. We also stash the per-conv
+    # metadata from the first row we see — every row for a given
+    # conv carries the same title/project/timestamps so the first
+    # one wins.
+    by_conv: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        cu = r["conv_uuid"]
+        slot = by_conv.setdefault(
+            cu,
+            {
+                "title": r.get("title") or "Untitled",
+                "project_path": r.get("project_path") or None,
+                "conv_created_at": r.get("conv_created_at") or "",
+                "conv_updated_at": r.get("conv_updated_at") or "",
+                "body_messages": [],
+                "title_marked": None,
+            },
+        )
+
+        body_snippet_raw = r.get("body_snippet") or ""
+        # Skip rows whose body is empty AND not marked — these are the
+        # sentinel "title only" rows (upsert_conversation writes one
+        # for messageless convs). They don't carry useful snippet text
+        # and the title sweep handles title-only matches separately.
+        if not body_snippet_raw or (
+            _FRAG_OPEN not in body_snippet_raw and not body_snippet_raw.strip()
+        ):
+            continue
+
+        rendered, frags, m_start, m_end = _parse_snippet_to_fragments(
+            body_snippet_raw,
+        )
+        if not rendered:
+            continue
+        slot["body_messages"].append(
+            MessageSnippet(
+                message_uuid=r.get("message_uuid", "") or "",
+                sender=r.get("sender", "") or "",
+                snippet=rendered,
+                match_start=m_start,
+                match_end=m_end,
+                created_at=_parse_datetime(r.get("created_at")),
+                fragments=frags,
+            )
+        )
+
+    # Merge title-hit conv-uuids into the by_conv map. A conv that
+    # had no body hit but a title hit needs its metadata populated
+    # from the title-sweep result.
+    for cu, meta in title_hits.items():
+        slot = by_conv.setdefault(
+            cu,
+            {
+                "title": meta.get("title") or "Untitled",
+                "project_path": meta.get("project_path") or None,
+                "conv_created_at": meta.get("conv_created_at") or "",
+                "conv_updated_at": meta.get("conv_updated_at") or "",
+                "body_messages": [],
+                "title_marked": None,
+            },
+        )
+        # Stash the marked title for emission below.
+        slot["title_marked"] = meta.get("marked_title")
+
+    # Build SearchResult list.
+    results: list[SearchResult] = []
+    for cu, slot in by_conv.items():
+        matching: list[MessageSnippet] = []
+
+        # Title pseudo-message FIRST (mirrors linear-scan ordering).
+        if slot.get("title_marked"):
+            rendered, frags, m_start, m_end = _parse_snippet_to_fragments(
+                slot["title_marked"],
+            )
+            matching.append(
+                MessageSnippet(
+                    message_uuid="title",
+                    sender="title",
+                    snippet=rendered,
+                    match_start=m_start,
+                    match_end=m_end,
+                    fragments=frags,
+                )
+            )
+
+        matching.extend(slot["body_messages"])
+
+        if not matching:
+            continue
+
+        results.append(
+            SearchResult(
+                conversation_uuid=cu,
+                conversation_name=slot["title"],
+                conversation_updated_at=_parse_datetime(slot["conv_updated_at"]),
+                conversation_created_at=_parse_datetime(slot["conv_created_at"]),
+                project_name=_derive_project_name(slot["project_path"]),
+                matching_messages=matching,
+            )
+        )
+
+    return _sort_results(results, sort=sort, sort_order=sort_order)
 
 
 def _search_via_linear_scan(

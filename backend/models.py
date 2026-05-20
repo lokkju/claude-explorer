@@ -222,8 +222,40 @@ class ConversationTree(BaseModel):
     active_path: list[str] = Field(default_factory=list)
 
 
+class SnippetFragment(BaseModel):
+    """One contiguous piece of a search-result snippet.
+
+    Wire-format addition (PLANS/PERFORMANCE_PHASE_2.md §Workstream A):
+    the FTS5 fast path returns a list of these so the frontend can
+    render highlights without parsing inline HTML and without a
+    DOMPurify-style sanitizer dependency. Each fragment is either
+    plain text (``mark=False``) or a highlighted match
+    (``mark=True``); concatenating ``fragment.text`` in order
+    reconstructs the rendered snippet.
+
+    Invariants the producer (FTS5 snippet() parser) maintains:
+      * Non-empty ``text`` per fragment.
+      * Adjacent fragments alternate marked / unmarked (a
+        consumer can rely on no two consecutive marks).
+      * The concatenation equals the parent ``MessageSnippet.snippet``
+        for any snippet produced by the fast path.
+    """
+
+    text: str
+    mark: bool
+
+
 class MessageSnippet(BaseModel):
-    """A snippet from a message matching a search."""
+    """A snippet from a message matching a search.
+
+    Legacy fields ``snippet``, ``match_start``, ``match_end`` stay
+    populated on every code path so consumers that haven't switched
+    to ``fragments`` keep working (MCP, older frontends, the JSON
+    API contract). The new optional ``fragments`` field is populated
+    by the FTS5 fast path (``context_size="snippet"``) and is None
+    on the linear-scan fallback and on ``context_size="full"``
+    responses.
+    """
 
     message_uuid: str
     sender: str
@@ -231,6 +263,11 @@ class MessageSnippet(BaseModel):
     match_start: int
     match_end: int
     created_at: datetime | None = None
+    # Optional structured highlight fragments (Phase-2 A). When
+    # populated, ``"".join(f.text for f in fragments) == snippet``.
+    # When None, the legacy ``snippet`` + ``match_start`` + ``match_end``
+    # triple is the authoritative highlight signal.
+    fragments: list[SnippetFragment] | None = None
 
 
 class SearchResult(BaseModel):

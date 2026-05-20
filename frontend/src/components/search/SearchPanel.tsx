@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, Loader2, Pin, HelpCircle } from 'lucide-react'
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
@@ -587,6 +587,7 @@ const ResultCard = ({
           query={query}
           fallbackStart={match.matchStart}
           fallbackEnd={match.matchEnd}
+          fragments={match.fragments ?? null}
         />
       </div>
     </button>
@@ -601,6 +602,13 @@ interface HighlightedSnippetProps {
   fallbackStart: number
   /** Backend-supplied `match_end` — paired with `fallbackStart`. */
   fallbackEnd: number
+  /** Phase-2 Workstream A: structured highlight fragments from the FTS5
+   *  fast path. When non-null, the renderer uses them directly — the
+   *  backend's bm25-driven snippet() picks better multi-token clusters
+   *  than the legacy first-token-only heuristic. When null, falls back
+   *  to the live-query token scan (typing keeps highlights fresh under
+   *  debounce; same behavior as pre-Phase-2). */
+  fragments?: import('@/lib/types').SnippetFragment[] | null
 }
 
 /**
@@ -622,11 +630,40 @@ function HighlightedSnippet({
   query,
   fallbackStart,
   fallbackEnd,
+  fragments,
 }: HighlightedSnippetProps) {
-  const ranges = useMemo(
-    () => computeHighlightRanges(text, query, fallbackStart, fallbackEnd),
-    [text, query, fallbackStart, fallbackEnd],
-  )
+  // Phase-2 Workstream A: prefer backend-supplied fragments when
+  // present. The FTS5 fast path's bm25-driven snippet() picks the
+  // densest match cluster across multi-token queries — better than
+  // the legacy first-token-only heuristic. The live-query path
+  // (computeHighlightRanges) stays as the fallback so typing in
+  // the search box re-highlights against the most recent query
+  // even if the backend hasn't returned new results yet.
+  //
+  // We DON'T merge fragments with the live-query scan because the
+  // fragments already encode the authoritative highlight signal
+  // for the response the user is currently viewing. Merging would
+  // produce overlapping marks the user perceives as flicker.
+  if (fragments && fragments.length > 0) {
+    return (
+      <>
+        {fragments.map((f, i) =>
+          f.mark ? (
+            <mark
+              key={`f-${i}`}
+              className="rounded bg-yellow-200 px-0.5 font-medium dark:bg-yellow-800 dark:text-yellow-50"
+            >
+              {f.text}
+            </mark>
+          ) : (
+            <React.Fragment key={`f-${i}`}>{f.text}</React.Fragment>
+          ),
+        )}
+      </>
+    )
+  }
+
+  const ranges = computeHighlightRanges(text, query, fallbackStart, fallbackEnd)
 
   if (ranges.length === 0) {
     return <>{text}</>

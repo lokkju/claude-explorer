@@ -220,6 +220,20 @@ export interface ConversationTree {
 
 // Search types
 
+/**
+ * Structured highlight fragment (Phase-2 Workstream A wire-format
+ * addition). The FTS5 fast path emits a list of these so the
+ * renderer can wrap matches in `<mark>` without parsing inline
+ * HTML and without a sanitizer dependency. Each fragment is
+ * either plain text (`mark: false`) or a highlighted match
+ * (`mark: true`); concatenating `fragment.text` in order
+ * reconstructs the rendered snippet.
+ */
+export interface SnippetFragment {
+  text: string
+  mark: boolean
+}
+
 export interface MessageSnippet {
   message_uuid: string
   sender: string
@@ -227,6 +241,12 @@ export interface MessageSnippet {
   match_start: number
   match_end: number
   created_at: string | null
+  /** Structured highlight fragments populated by the FTS5 fast path
+   *  (context_size='snippet'). null on the linear-scan fallback and
+   *  on context_size='full' responses; in that case the renderer
+   *  falls back to the legacy snippet + match_start/match_end +
+   *  live-query token scan logic. */
+  fragments?: SnippetFragment[] | null
 }
 
 export interface SearchResult {
