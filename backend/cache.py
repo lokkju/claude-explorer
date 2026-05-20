@@ -5,9 +5,12 @@ This module provides:
 1. Memory cache with mtime-based invalidation
 2. Parallel file reading with ThreadPoolExecutor
 3. Fast JSON parsing with orjson
+4. Optional LRU eviction cap (``max_entries``) to bound memory growth
+   on long-running servers (see PLANS/PERFORMANCE_PHASE_2.md §C1 R8).
 """
 
 import threading
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,17 +27,48 @@ class CacheEntry:
 
 
 class FileCache:
-    """Thread-safe file cache with mtime-based invalidation."""
+    """Thread-safe file cache with mtime-based invalidation.
 
-    def __init__(self, max_workers: int = 8):
-        self._cache: dict[Path, CacheEntry] = {}
+    When ``max_entries`` is set to a positive integer, the cache evicts
+    the least-recently-used entry on insert past the cap. ``get`` hits
+    promote the entry to most-recently-used so a hot conversation
+    survives bursts of fresh reads.
+
+    When ``max_entries`` is ``None`` (the default), the cache grows
+    without bound — preserves the historical behavior for tests and
+    call sites that haven't opted in to a cap.
+
+    Threading: an ``RLock`` guards both the backing ``OrderedDict``
+    and the LRU bookkeeping. ``get`` takes the lock to record the
+    use, so concurrent readers serialize briefly. Acceptable for our
+    workload (file I/O dominates).
+    """
+
+    def __init__(
+        self,
+        max_workers: int = 8,
+        max_entries: int | None = None,
+    ):
+        # ``OrderedDict`` so we can call ``move_to_end`` for O(1) MRU
+        # promotion and ``popitem(last=False)`` for O(1) LRU eviction.
+        self._cache: OrderedDict[Path, CacheEntry] = OrderedDict()
         self._lock = threading.RLock()
         self._max_workers = max_workers
+        if max_entries is not None and max_entries < 1:
+            raise ValueError(
+                f"max_entries must be >= 1 or None; got {max_entries!r}"
+            )
+        self._max_entries = max_entries
 
     def get(self, path: Path) -> tuple[Any | None, bool]:
         """Get cached data if still valid.
 
         Returns (data, is_valid) - if is_valid is False, data is stale/missing.
+
+        On a HIT (entry present AND mtime matches), promotes the
+        entry to most-recently-used so a hot path survives eviction
+        under cap pressure. Stale/missing entries are NOT promoted
+        (returning ``(data, False)`` signals "drop and reload").
         """
         with self._lock:
             entry = self._cache.get(path)
@@ -44,15 +78,23 @@ class FileCache:
             try:
                 current_mtime = path.stat().st_mtime
                 if current_mtime == entry.mtime:
+                    # Hit — promote to MRU end.
+                    self._cache.move_to_end(path)
                     return entry.data, True
-                # File changed, cache is stale
+                # File changed, cache is stale; do NOT promote — the
+                # caller will reload via set() which re-positions.
                 return entry.data, False
             except OSError:
                 # File no longer exists
                 return None, False
 
     def set(self, path: Path, data: Any, mtime: float | None = None) -> None:
-        """Cache data for a file."""
+        """Cache data for a file.
+
+        Inserts at the MRU end. If a cap is configured and the cache
+        exceeds it after insert, evicts the LRU entry (the first item
+        in the OrderedDict).
+        """
         if mtime is None:
             try:
                 mtime = path.stat().st_mtime
@@ -60,7 +102,17 @@ class FileCache:
                 return  # Don't cache if we can't get mtime
 
         with self._lock:
+            # If the key already exists, move_to_end after assignment
+            # would be redundant — re-assigning a key in OrderedDict
+            # does not reposition it. Pop-then-reinsert is the canonical
+            # MRU-promotion pattern.
+            if path in self._cache:
+                del self._cache[path]
             self._cache[path] = CacheEntry(mtime=mtime, data=data)
+            # Evict LRU entries until we're under the cap.
+            if self._max_entries is not None:
+                while len(self._cache) > self._max_entries:
+                    self._cache.popitem(last=False)
 
     def invalidate(self, path: Path) -> None:
         """Remove a file from cache."""
@@ -194,8 +246,29 @@ def parse_jsonl_fast_limited(path: Path, max_lines: int = 30) -> list[dict]:
     return entries
 
 
-# Global cache instance - shared across requests
-_conversation_cache = FileCache(max_workers=8)
+# Global cache instance - shared across requests.
+#
+# ``max_entries=64`` caps in-memory growth at ~64 parsed conversation
+# dicts. The 64 most-recently-touched conversations cover virtually
+# every interactive UI use case (sidebar of N, viewing 1-2 at a time,
+# export of 1, FTS5 scatter-gather of a few dozen matches). The cap
+# is a soft guarantee, not a correctness invariant — the cache is
+# purely a perf optimization; cache misses fall back to a fresh
+# disk read which is exactly the pre-cache behavior.
+#
+# Rationale for 64 (PLANS/PERFORMANCE_PHASE_2.md §C1 R8): on a
+# heavy CC corpus the largest sessions are ~300 MB on disk and the
+# parsed dict is ~1.5-2x that in memory. 10 such heavy sessions
+# cached simultaneously would be ~5 GB, too high. But typical CC
+# sessions are <5 MB; 64 entries at typical mean ~150 MB resident,
+# bounded. If a user opens 64 heavy sessions in sequence we cap at
+# ~30 GB which is still high — but realistic interactive sessions
+# don't touch 64 distinct heavy convs without re-touching most of
+# them, so the LRU keeps the heavy hitters warm.
+#
+# A future refinement could weight by serialized size and cap on
+# memory bytes rather than entry count. Out of scope for V1.
+_conversation_cache = FileCache(max_workers=8, max_entries=64)
 
 
 def get_conversation_cache() -> FileCache:

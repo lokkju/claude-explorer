@@ -10,6 +10,7 @@ from .config import get_settings
 from .claude_code_reader import (
     list_claude_code_conversations,
     read_claude_code_conversation,
+    _load_conversation_cached,
     discover_jsonl_files,
 )
 from .models import (
@@ -484,10 +485,16 @@ class ConversationStore:
             if data and data.get("uuid") == uuid:
                 return data, path
 
-        # Then check Claude Code JSONL files
+        # Then check Claude Code JSONL files. Route through the FileCache
+        # wrapper (_load_conversation_cached) so warm detail-page and
+        # export calls don't re-parse the entire JSONL on every request.
+        # The Desktop branch above already uses self._load_conversation
+        # which goes through FileCache; CC was missed when the cache
+        # wrapper was added in a prior refactor. See
+        # PLANS/PERFORMANCE_PHASE_2.md §Workstream C1.
         for jsonl_path in discover_jsonl_files(self.claude_dir):
             if jsonl_path.stem == uuid:
-                data = read_claude_code_conversation(jsonl_path)
+                data = _load_conversation_cached(jsonl_path)
                 if data and data.get("uuid") == uuid:
                     return data, jsonl_path
 
