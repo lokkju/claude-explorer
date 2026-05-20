@@ -40,6 +40,21 @@ uv run playwright install chromium
 - General coding practices and project structure are documented in [CLAUDE.md](./CLAUDE.md).
 - Commit messages: conventional commits, no AI attribution lines.
 
+## Bumping GitHub Action versions
+
+Actions in `.github/workflows/` are SHA-pinned for supply-chain integrity — a moving tag like `@v4` could be silently retargeted to a malicious commit, but a 40-char SHA can't. To bump an action:
+
+1. Look up the new version's commit SHA from the GitHub API (don't trust release-notes text or an LLM — read the API directly):
+   ```bash
+   gh api repos/<owner>/<repo>/git/refs/tags/<tag>
+   ```
+   If the tag is annotated (`"type":"tag"` in the response), dereference it once more to get the underlying commit SHA:
+   ```bash
+   gh api repos/<owner>/<repo>/git/tags/<tag-object-sha>
+   ```
+2. Replace the SHA in the workflow file; update the trailing `# v<tag>` comment so the human-readable version stays accurate.
+3. Commit per-workflow with a message like `chore(ci): bump <action> to v<tag>`.
+
 ## Pull request process
 
 1. Open an issue describing the change (skip for typos / docs).
