@@ -538,3 +538,15 @@ export function useSearchPanel() {
   }
   return context
 }
+
+/** Optional variant: returns null when the provider is absent instead
+ *  of throwing. Used by leaf components (MessageBubble) that want to
+ *  consume the active query opportunistically — when rendered inside a
+ *  conversation page they get the live search query; when rendered in
+ *  isolation (vitest, snapshot tests, future Storybook), they degrade
+ *  to "no active query" without forcing every test fixture to wrap in
+ *  SearchPanelProvider. */
+// eslint-disable-next-line react-refresh/only-export-components -- same rationale as useSearchPanel above.
+export function useSearchPanelOptional() {
+  return useContext(SearchPanelContext)
+}

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { useConversationLightbox } from '@/contexts/ConversationLightboxContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
+import { useSearchPanelOptional } from '@/contexts/SearchPanelContext'
 import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent, isExcludableMarker } from '@/lib/utils'
 import { dedupeImageFiles } from '@/lib/imageFiles'
 import {
@@ -39,6 +40,14 @@ interface MessageBubbleProps {
 function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId, conversationSource }: MessageBubbleProps) {
   const isHuman = message.sender === 'human'
   const { showToolCalls, expandAllTools } = useSettings()
+  // Active full-text search query — when non-empty, MarkdownRenderer
+  // wraps matching substrings in <mark> so the user can spot the hit
+  // inside the bubble, not just in the SearchPanel snippet. (Issue 1,
+  // 2026-05-20.) Optional hook: outside the conversation page (tests,
+  // future Storybook), the SearchPanelProvider isn't mounted; degrade
+  // to "no active query" instead of throwing.
+  const searchPanel = useSearchPanelOptional()
+  const searchQuery = searchPanel?.query ?? ''
   const { isBookmarked, toggleBookmark } = useBookmarks()
   const [copied, setCopied] = useState(false)
   const bookmarked = conversationId ? isBookmarked(conversationId, message.uuid) : false
@@ -253,9 +262,14 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
               expandAll={expandAllTools}
               ccImageEntries={ccImageEntries}
               onOpenCcImage={onOpenCcImage}
+              searchQuery={searchQuery}
             />
           ) : (
-            <MarkdownRenderer content={message.text} showToolCalls={showToolCalls && !bubbleToolsCollapsed} />
+            <MarkdownRenderer
+              content={message.text}
+              showToolCalls={showToolCalls && !bubbleToolsCollapsed}
+              query={searchQuery}
+            />
           )}
         </div>
 
@@ -354,6 +368,7 @@ interface ContentBlockListProps {
   expandAll?: boolean
   ccImageEntries: CcImageEntries
   onOpenCcImage: (index: number) => void
+  searchQuery?: string
 }
 
 function ContentBlockList({
@@ -362,6 +377,7 @@ function ContentBlockList({
   expandAll,
   ccImageEntries,
   onOpenCcImage,
+  searchQuery,
 }: ContentBlockListProps) {
   return (
     <>
@@ -374,6 +390,7 @@ function ContentBlockList({
           expandAll={expandAll}
           ccImageEntries={ccImageEntries}
           onOpenCcImage={onOpenCcImage}
+          searchQuery={searchQuery}
         />
       ))}
     </>
@@ -387,6 +404,7 @@ interface ContentBlockRendererProps {
   expandAll?: boolean
   ccImageEntries: CcImageEntries
   onOpenCcImage: (index: number) => void
+  searchQuery?: string
 }
 
 // Pattern B: Claude Code sometimes inlines image references as
@@ -404,9 +422,10 @@ interface CcImageMarkerTextProps {
    *  get sequential indices. */
   startCcIndex: number
   onOpenCcImage: (index: number) => void
+  searchQuery?: string
 }
 
-function CcImageMarkerText({ content, showToolCalls, startCcIndex, onOpenCcImage }: CcImageMarkerTextProps) {
+function CcImageMarkerText({ content, showToolCalls, startCcIndex, onOpenCcImage, searchQuery }: CcImageMarkerTextProps) {
   // Use `matchAll` so we don't mutate `CC_IMAGE_MARKER_RE.lastIndex` during
   // render. The React 19 compiler flags module-scoped mutation as a render-
   // purity violation (and rightly so — two concurrent renders sharing the
@@ -427,7 +446,7 @@ function CcImageMarkerText({ content, showToolCalls, startCcIndex, onOpenCcImage
   }
   if (segments.length === 0 || (segments.length === 1 && segments[0].kind === 'text')) {
     // Fast path: no markers, fall through to standard markdown rendering.
-    return <MarkdownRenderer content={content} showToolCalls={showToolCalls} />
+    return <MarkdownRenderer content={content} showToolCalls={showToolCalls} query={searchQuery} />
   }
   let imageOrdinal = 0
   return (
@@ -437,7 +456,7 @@ function CcImageMarkerText({ content, showToolCalls, startCcIndex, onOpenCcImage
           // Skip empty / whitespace-only text segments (common when a
           // marker is the entire message body).
           if (!seg.value.trim()) return null
-          return <MarkdownRenderer key={i} content={seg.value} showToolCalls={showToolCalls} />
+          return <MarkdownRenderer key={i} content={seg.value} showToolCalls={showToolCalls} query={searchQuery} />
         }
         // Backend route validates the path is under ~/.claude/image-cache/
         // and serves the bytes. Encode the absolute path as a query
@@ -539,6 +558,7 @@ function ContentBlockRenderer({
   expandAll,
   ccImageEntries,
   onOpenCcImage,
+  searchQuery,
 }: ContentBlockRendererProps) {
   switch (block.type) {
     case 'text':
@@ -548,6 +568,7 @@ function ContentBlockRenderer({
           showToolCalls={showToolCalls}
           startCcIndex={ccImageEntries.blockOffsets[blockIndex] ?? 0}
           onOpenCcImage={onOpenCcImage}
+          searchQuery={searchQuery}
         />
       )
     case 'tool_use':

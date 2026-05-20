@@ -4,6 +4,7 @@ import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import { AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { HighlightedText } from '@/components/HighlightedText'
 
 // Import highlight.js styles
 import 'highlight.js/styles/github-dark.css'
@@ -88,10 +89,34 @@ interface MarkdownRendererProps {
    *  placeholder badge is intentionally always visible regardless of
    *  this flag — see the `code` handler below. */
   showToolCalls?: boolean
+  /** Active full-text search query. When non-empty (and ≥2 chars per
+   *  token), text inside inline-prose elements (p, li, strong, em, td,
+   *  th, blockquote, headings) is wrapped in <mark> for each match.
+   *  Code blocks (block AND inline) are intentionally excluded — the
+   *  rehype-highlight syntax spans don't compose with overlapping
+   *  marks without breaking token boundaries, and users typically
+   *  search prose, not syntax. */
+  query?: string
 }
 
-export function MarkdownRenderer({ content, className }: MarkdownRendererProps) {
+/** Map a list of element children through HighlightedText for the
+ *  string leaves, passing element children through unchanged. Used by
+ *  every inline-prose renderer override below when `query` is active.
+ */
+function wrapTextChildren(children: ReactNode, query: string): ReactNode {
+  if (!query || query.trim().length < 2) return children
+  return Children.map(children, (child, idx) => {
+    if (typeof child === 'string') {
+      return <HighlightedText key={idx} text={child} query={query} />
+    }
+    return child
+  })
+}
+
+export function MarkdownRenderer({ content, className, query }: MarkdownRendererProps) {
   const cleanedContent = stripToolPlaceholderText(content)
+  const wrap = (children: ReactNode) =>
+    query ? wrapTextChildren(children, query) : children
   return (
     <ReactMarkdown
       className={cn('prose prose-sm dark:prose-invert max-w-none', className)}
@@ -138,7 +163,8 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
             </code>
           )
         },
-        // External links open in new tab
+        // External links open in new tab. Link TEXT is highlighted when
+        // an active search query matches inside the visible label.
         a({ href, children, ...props }) {
           const isExternal = href?.startsWith('http')
           return (
@@ -148,9 +174,43 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
               className="text-blue-600 hover:underline dark:text-blue-400"
               {...props}
             >
-              {children}
+              {wrap(children)}
             </a>
           )
+        },
+        // Paragraphs: wrap text leaves for search-hit highlighting.
+        p({ children, ...props }) {
+          return <p {...props}>{wrap(children)}</p>
+        },
+        li({ children, ...props }) {
+          return <li {...props}>{wrap(children)}</li>
+        },
+        strong({ children, ...props }) {
+          return <strong {...props}>{wrap(children)}</strong>
+        },
+        em({ children, ...props }) {
+          return <em {...props}>{wrap(children)}</em>
+        },
+        blockquote({ children, ...props }) {
+          return <blockquote {...props}>{wrap(children)}</blockquote>
+        },
+        h1({ children, ...props }) {
+          return <h1 {...props}>{wrap(children)}</h1>
+        },
+        h2({ children, ...props }) {
+          return <h2 {...props}>{wrap(children)}</h2>
+        },
+        h3({ children, ...props }) {
+          return <h3 {...props}>{wrap(children)}</h3>
+        },
+        h4({ children, ...props }) {
+          return <h4 {...props}>{wrap(children)}</h4>
+        },
+        h5({ children, ...props }) {
+          return <h5 {...props}>{wrap(children)}</h5>
+        },
+        h6({ children, ...props }) {
+          return <h6 {...props}>{wrap(children)}</h6>
         },
         // Better pre styling
         pre({ children, ...props }) {
@@ -179,7 +239,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
               className="border border-zinc-300 bg-zinc-100 px-4 py-2 text-left dark:border-zinc-700 dark:bg-zinc-800"
               {...props}
             >
-              {children}
+              {wrap(children)}
             </th>
           )
         },
@@ -189,7 +249,7 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
               className="border border-zinc-300 px-4 py-2 dark:border-zinc-700"
               {...props}
             >
-              {children}
+              {wrap(children)}
             </td>
           )
         },
