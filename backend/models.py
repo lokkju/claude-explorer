@@ -368,6 +368,18 @@ class AppConfig(BaseModel):
     """
 
     data_dir: str
+    # Layer 3 of PLANS/2026.05.18-config-corruption-safe-mode.md.
+    #
+    # Mirrors ``Settings.config_corrupt_reason`` onto the wire so the
+    # frontend banner can render the failure reason verbatim. ``None``
+    # when ``config.json`` parsed cleanly (or was absent — fresh
+    # install isn't corruption).
+    #
+    # Always present in the response (Pydantic emits the key even
+    # when the value is None) so the frontend's optional-chaining
+    # read works without a key-existence check. External API
+    # consumers that ignore unknown fields are unaffected.
+    config_corrupt_reason: str | None = None
 
 
 class AppConfigStats(AppConfig):
