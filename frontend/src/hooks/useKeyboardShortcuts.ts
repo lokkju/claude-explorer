@@ -154,9 +154,19 @@ export function useKeyboardShortcuts() {
       // the SearchPanel itself is open (or when the focused input opts in via
       // data-allow-shortcuts).
 
-      // Cmd+K toggles the SearchPanel (open ↔ closed).
+      // Cmd+K toggles the SearchPanel (open ↔ closed). When opening,
+      // always force the right-pane tab to 'search' — Cmd+K means
+      // "go to Search", not "open whatever tab was last selected".
+      // The user's last-selected tab persists in preferences, so
+      // without this clamp a Bookmarks-tab user gets Bookmarks back
+      // on Cmd+K. (Manual finding 2026-05-14, mirrors Cmd+F's fix.)
+      // Toggle-close semantics preserved: if the panel is open, just
+      // close it without touching the tab state.
       if (cmdOrCtrl && e.key === 'k' && !e.altKey && !e.shiftKey) {
         e.preventDefault()
+        if (!searchPanel.isOpen) {
+          setRightPaneTab('search')
+        }
         searchPanel.toggle()
         return
       }

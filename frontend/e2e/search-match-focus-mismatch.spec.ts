@@ -86,6 +86,12 @@ const detail = makeDetail(summary, messages)
 // Match payloads for the two server modes. The mock /api/search route
 // below switches between them based on the `include_tool_calls` URL
 // param.
+// Backend ``_sort_results`` sorts ``matching_messages`` by per-message
+// ``created_at`` matching ``sort_order`` (so desc → newest first). The
+// mock must match real backend behavior: 2026-05-14 Bug B fix removed
+// the frontend's redundant ``matches.sort()`` re-sort in
+// ``SearchPanelContext.flatMatches``, so the order returned here is
+// now the order rendered in the sidebar.
 const fullResults: SearchResult[] = [{
   conversation_uuid: TM,
   conversation_name: summary.name,
@@ -94,14 +100,6 @@ const fullResults: SearchResult[] = [{
   project_name: null,
   matching_messages: [
     {
-      message_uuid: 'tm-0',
-      sender: 'human',
-      snippet: 'first message, plain text — needle here',
-      match_start: 28,
-      match_end: 34,
-      created_at: '2026-05-09T10:00:00Z',
-    },
-    {
       message_uuid: 'tm-tool',
       sender: 'assistant',
       snippet: 'echo needle in tool call',
@@ -109,6 +107,14 @@ const fullResults: SearchResult[] = [{
       match_end: 11,
       // Newest → slot 0 in default updated_at desc sort.
       created_at: '2026-05-09T11:00:00Z',
+    },
+    {
+      message_uuid: 'tm-0',
+      sender: 'human',
+      snippet: 'first message, plain text — needle here',
+      match_start: 28,
+      match_end: 34,
+      created_at: '2026-05-09T10:00:00Z',
     },
   ],
 }]

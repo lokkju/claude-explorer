@@ -136,20 +136,42 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // feel instantaneous. Also covers the case where conversation name or
   // message snippet contains the new query substring.
   //
-  // In snippet mode this can produce false negatives (match context may not
-  // include the new chars even if the source message does). Those matches
-  // reappear once the debounced backend call resolves. Acceptable tradeoff
-  // for instant perceived response.
+  // Multi-word AND semantics (V1 polish 2026-05-14): when the query contains
+  // whitespace we require every WORD (case-insensitive substring) to appear
+  // in the snippet — NOT the literal whole-query substring. With AND-of-tokens
+  // backend semantics, scattered tokens within a snippet are valid hits, so
+  // a literal `.includes(lower)` check would falsely drop them. Quoted phrase
+  // queries (`"foo bar baz"`) keep the literal-substring contract by stripping
+  // the quotes and matching the inner phrase.
+  //
+  // In snippet mode this can still produce false negatives (one token may live
+  // outside the ±150 char snippet window). Those matches reappear once the
+  // debounced backend call resolves. Acceptable tradeoff for instant feel.
   const results = useMemo<SearchResult[]>(() => {
     if (!rawResults) return []
     if (!query || query.length < 2) return rawResults
-    const lower = query.toLowerCase()
+    const trimmed = query.trim()
+    let needles: string[]
+    if (
+      trimmed.length >= 3 &&
+      trimmed.startsWith('"') &&
+      trimmed.endsWith('"')
+    ) {
+      // Phrase mode — strip quotes; match the literal inner phrase.
+      const inner = trimmed.slice(1, -1).trim().toLowerCase()
+      needles = inner ? [inner] : []
+    } else {
+      needles = trimmed.toLowerCase().split(/\s+/).filter(Boolean)
+    }
+    if (needles.length === 0) return rawResults
     const filtered: SearchResult[] = []
     for (const r of rawResults) {
-      const nameHit = r.conversation_name.toLowerCase().includes(lower)
-      const msgMatches = r.matching_messages.filter((m) =>
-        m.snippet.toLowerCase().includes(lower)
-      )
+      const nameLower = r.conversation_name.toLowerCase()
+      const nameHit = needles.every((n) => nameLower.includes(n))
+      const msgMatches = r.matching_messages.filter((m) => {
+        const snippetLower = m.snippet.toLowerCase()
+        return needles.every((n) => snippetLower.includes(n))
+      })
       if (msgMatches.length > 0 || nameHit) {
         filtered.push({
           ...r,
@@ -160,9 +182,30 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     return filtered
   }, [rawResults, query])
 
-  // Flatten results into navigable matches. Matches are then globally
-  // re-sorted for time-based sort fields so the newest/oldest matching
-  // MESSAGE (not session) lands at the top of the flat list.
+  // Flatten results into navigable matches. The order is conversation-major,
+  // message-minor — exactly the shape the backend returns from
+  // `_sort_results` in `backend/search.py:_sort_results`. The backend is
+  // the SINGLE SOURCE OF TRUTH for sort field + sort order; the frontend
+  // does NOT re-sort.
+  //
+  // Sort contract (V1 polish 2026-05-14, Bug B SECOND fix):
+  //   * Conversation-level sort key is `conversation_updated_at` (or
+  //     `conversation_created_at`) directly — matching the date label
+  //     the UI renders in each result card.
+  //   * Within a conversation, messages sort by their own `created_at`
+  //     (null → conversation_updated_at fallback). That's intentional:
+  //     multiple matched messages inside the same conv group should
+  //     appear in time order under the conv's title.
+  //   * The previous version used `max(matched_msg.created_at)` as the
+  //     conv-level key. That inverted the visible date column for any
+  //     conv where the matched body was older than the conv's most
+  //     recent activity. See backend/tests/test_search_sort_by_conversation_updated_at.py
+  //     for the pin.
+  //
+  // `sortField`/`sortOrder` are NOT dependencies of this useMemo because
+  // the backend already sorted `results`; the queryKey on `useSearch`
+  // re-fires the request whenever they change, and `results` is re-derived
+  // from `rawResults`.
   const flatMatches = useMemo<SearchMatch[]>(() => {
     const matches: SearchMatch[] = []
     for (const result of results) {
@@ -202,53 +245,8 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
         })
       }
     }
-
-    // Global re-sort by message timestamp for time-based sort fields.
-    //
-    // Fallback semantics (mirrors backend/search.py:167-179): if a match has
-    // no per-message created_at (title-only matches, or stale-cache data
-    // from before the backend fix landed), fall back to the conversation's
-    // updated_at (for updated_at sort) or created_at (for created_at sort).
-    // This prevents two failure modes:
-    //  1. Title matches being force-pushed to the bottom regardless of age.
-    //  2. Stale-cache responses silently degrading to the server's
-    //     session-level order — which is what the user reported as
-    //     "sort is by session, not by message".
-    //
-    // Sort is NaN-guarded: unparseable timestamps deterministically sort
-    // last (desc) or first (asc) via ±Infinity, so Array.sort never sees a
-    // NaN from the comparator (which is engine-defined behavior).
-    if (sortField === 'updated_at' || sortField === 'created_at') {
-      const desc = sortOrder === 'desc'
-
-      const toMs = (value: string | null | undefined): number | null => {
-        if (!value) return null
-        // Normalize microsecond ISO strings (e.g. "...973000Z") to
-        // milliseconds before Date.parse. Chromium handles microseconds,
-        // but older Safari/Firefox return NaN — cheap defense.
-        const normalized = value.replace(/(\.\d{3})\d+Z$/, '$1Z')
-        const ms = Date.parse(normalized)
-        return Number.isFinite(ms) ? ms : null
-      }
-
-      matches.sort((a, b) => {
-        const aFallback =
-          sortField === 'created_at'
-            ? a.conversationCreatedAt
-            : a.conversationUpdatedAt
-        const bFallback =
-          sortField === 'created_at'
-            ? b.conversationCreatedAt
-            : b.conversationUpdatedAt
-
-        const at = toMs(a.createdAt ?? aFallback) ?? (desc ? -Infinity : Infinity)
-        const bt = toMs(b.createdAt ?? bFallback) ?? (desc ? -Infinity : Infinity)
-
-        return desc ? bt - at : at - bt
-      })
-    }
     return matches
-  }, [results, sortField, sortOrder])
+  }, [results])
 
   // Reset activeMatchIndex whenever the query changes
   useEffect(() => {

@@ -3,6 +3,7 @@ import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, 
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
 import { useNavigateToMatch } from '@/components/search/navigateToMatch'
+import { computeHighlightRanges } from '@/components/search/highlightRanges'
 import { useSettings } from '@/contexts/SettingsContext'
 import { BookmarksPanel } from '@/components/bookmarks/BookmarksPanel'
 import {
@@ -454,6 +455,7 @@ export function SearchPanel() {
                   match={match}
                   isActive={isActive}
                   contextSize={contextSize}
+                  query={query}
                   onClick={() => handleCardClick(match)}
                 />
               )
@@ -471,6 +473,8 @@ interface ResultCardProps {
   match: SearchMatch
   isActive: boolean
   contextSize: 'snippet' | 'full'
+  /** Live user query — drives multi-token highlight in the snippet body. */
+  query: string
   onClick: () => void
 }
 
@@ -479,6 +483,7 @@ const ResultCard = ({
   match,
   isActive,
   contextSize,
+  query,
   onClick,
 }: ResultCardProps & { ref?: React.Ref<HTMLButtonElement> }) => {
   const isTitleMatch = match.messageUuid === 'title'
@@ -546,8 +551,9 @@ const ResultCard = ({
       >
         <HighlightedSnippet
           text={match.snippet}
-          start={match.matchStart}
-          end={match.matchEnd}
+          query={query}
+          fallbackStart={match.matchStart}
+          fallbackEnd={match.matchEnd}
         />
       </div>
     </button>
@@ -556,33 +562,62 @@ const ResultCard = ({
 
 interface HighlightedSnippetProps {
   text: string
-  start: number
-  end: number
+  /** Live user query — every occurrence of every token gets a `<mark>`. */
+  query: string
+  /** Backend-supplied `match_start` — used as fallback / drift safety. */
+  fallbackStart: number
+  /** Backend-supplied `match_end` — paired with `fallbackStart`. */
+  fallbackEnd: number
 }
 
 /**
- * Renders a snippet with the range [start, end) wrapped in <mark>. Falls back
- * to plain text if the indices look bogus (out of bounds or inverted).
+ * Renders a snippet with EVERY occurrence of every query token wrapped
+ * in `<mark>`. The backend's `match_start`/`match_end` is treated as a
+ * fallback range — it's seeded into the highlight set before token-scan
+ * so a stemmer/diacritic drift hit (FTS5 matches `running` for query
+ * `run`; literal substring scan misses) still shows a yellow band.
+ *
+ * Multi-token logic lives in
+ * `@/components/search/highlightRanges#computeHighlightRanges`; this
+ * component owns only the React rendering (interleaved `<>{text}<mark>…
+ * </mark>{text}</>`). If the helper returns zero ranges we render plain
+ * text (true zero-highlight state — happens when query is empty AND the
+ * backend reported no range).
  */
-function HighlightedSnippet({ text, start, end }: HighlightedSnippetProps) {
-  if (
-    start < 0 ||
-    end <= start ||
-    start >= text.length ||
-    end > text.length
-  ) {
+function HighlightedSnippet({
+  text,
+  query,
+  fallbackStart,
+  fallbackEnd,
+}: HighlightedSnippetProps) {
+  const ranges = useMemo(
+    () => computeHighlightRanges(text, query, fallbackStart, fallbackEnd),
+    [text, query, fallbackStart, fallbackEnd],
+  )
+
+  if (ranges.length === 0) {
     return <>{text}</>
   }
-  const before = text.slice(0, start)
-  const match = text.slice(start, end)
-  const after = text.slice(end)
-  return (
-    <>
-      {before}
-      <mark className="rounded bg-yellow-200 px-0.5 font-medium dark:bg-yellow-800 dark:text-yellow-50">
-        {match}
-      </mark>
-      {after}
-    </>
-  )
+
+  const segments: React.ReactNode[] = []
+  let cursor = 0
+  for (let i = 0; i < ranges.length; i++) {
+    const { start, end } = ranges[i]
+    if (start > cursor) {
+      segments.push(text.slice(cursor, start))
+    }
+    segments.push(
+      <mark
+        key={`m-${start}-${end}`}
+        className="rounded bg-yellow-200 px-0.5 font-medium dark:bg-yellow-800 dark:text-yellow-50"
+      >
+        {text.slice(start, end)}
+      </mark>,
+    )
+    cursor = end
+  }
+  if (cursor < text.length) {
+    segments.push(text.slice(cursor))
+  }
+  return <>{segments}</>
 }

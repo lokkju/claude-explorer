@@ -213,6 +213,69 @@ SNIPPET_CONTEXT = 150  # Characters of context on each side of the match (~3 lin
 WORD_BOUNDARY_SEARCH = 25  # Max chars to extend outward to avoid cutting mid-word
 
 
+def parse_user_query(query: str) -> tuple[str | None, list[str]]:
+    """Split a free-form user query into (phrase, tokens).
+
+    Returns:
+      * Phrase mode: ``("foo bar", ["foo bar"])`` when the user's entire query
+        is wrapped in matching double quotes — exact-phrase semantics.
+      * Token mode: ``(None, ["foo", "bar", "baz"])`` when the query is
+        unquoted whitespace-separated — AND-of-tokens semantics.
+      * Single token: ``(None, ["foo"])`` — same as token mode with one term.
+      * Empty: ``(None, [])`` — caller skips search.
+
+    The phrase detection is intentionally narrow (entire query quoted, no
+    mixed `foo "bar baz"` syntax). That keeps the predicate stable and
+    matches user expectations: quotes mean "the whole thing is literal".
+
+    Why no boundary characters in the returned tokens: the snippet regex
+    built downstream (see ``_make_snippet_regex``) deliberately avoids
+    ``\\b`` boundaries because the FTS5 index uses the ``porter`` stemmer +
+    ``unicode61 remove_diacritics 1`` tokenizer (search_index.py:121).
+    FTS5 matches ``running`` for query ``run`` and ``café`` for ``cafe``;
+    a Python regex with ``\\b`` would fail to find those tokens in the
+    raw message text and silently drop FTS5 hits. The fallback path in
+    the callers handles that drift by emitting a 0-length highlight when
+    no Python match is found.
+    """
+    stripped = query.strip()
+    if not stripped:
+        return None, []
+    # Phrase mode: starts and ends with " (and has at least 3 chars so we
+    # don't treat a single empty-string "" as a phrase).
+    if len(stripped) >= 3 and stripped[0] == '"' and stripped[-1] == '"':
+        inner = stripped[1:-1].strip()
+        if inner:
+            return inner, [inner]
+    return None, stripped.split()
+
+
+def _make_snippet_regex(phrase: str | None, tokens: list[str]) -> "re.Pattern[str] | None":
+    """Build the regex used to locate a highlight position in a message.
+
+    Phrase mode → literal escaped phrase. Token mode (>=1 token) → an
+    alternation ``(t1|t2|...)`` matching ANY token. No word boundaries —
+    see ``parse_user_query`` for the stemmer-drift rationale.
+
+    Returns ``None`` when there are no tokens (caller short-circuits).
+    """
+    if phrase is not None:
+        return re.compile(re.escape(phrase), re.IGNORECASE)
+    if not tokens:
+        return None
+    return re.compile(
+        "|".join(re.escape(t) for t in tokens),
+        re.IGNORECASE,
+    )
+
+
+# Default length of the leading-text fallback snippet emitted when the
+# Python regex can't find a query token in an FTS5-matched message body
+# (stemmer/diacritic drift). 300 chars ≈ 6 lines of prose — enough for
+# the user to recognize what they matched even without a yellow <mark>.
+_FALLBACK_SNIPPET_LEN = 300
+
+
 def create_snippet(text: str, match_start: int, match_end: int) -> tuple[str, int, int]:
     """Create a snippet with context around the match.
 
@@ -373,8 +436,17 @@ def _search_via_linear_scan(
     1.5GB corpus) but always correct and never depends on an index file
     being present.
     """
-    query_lower = query.lower()
-    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    phrase, tokens = parse_user_query(query)
+    if not tokens:
+        return []
+    pattern = _make_snippet_regex(phrase, tokens)
+    if pattern is None:
+        return []
+    # Lowercased token list used to AND-filter messages on the linear path
+    # (phrase mode is a single literal "token"). The FTS5 path filters
+    # AND-semantics in SQL; the linear path is the fallback and must
+    # enforce the same contract here.
+    tokens_lower = [t.lower() for t in tokens]
     results = []
 
     for conv in store.get_all_conversations_raw(source=source):
@@ -389,9 +461,17 @@ def _search_via_linear_scan(
                 continue
         matching_messages: list[MessageSnippet] = []
 
-        # Search in conversation name
+        # Search in conversation name. Title-match policy:
+        #   * Phrase mode → literal substring (the whole phrase appears).
+        #   * Token mode  → CURRENT behavior preserved: substring match on
+        #     the FULL query string (so a typed 3-word query that wasn't
+        #     intended as a title hunt doesn't unexpectedly match more
+        #     titles). This is intentionally conservative; revisit if a
+        #     user reports title hits being too narrow.
         name = conv.get("name", "")
-        if query_lower in name.lower():
+        name_lower = name.lower()
+        title_needle = (phrase if phrase is not None else query).lower()
+        if title_needle and title_needle in name_lower:
             # Add a pseudo-message for title match. Titles are short, so we
             # always use the snippet helper here regardless of context_size.
             match = pattern.search(name)
@@ -436,10 +516,27 @@ def _search_via_linear_scan(
             if not text:
                 continue
 
+            # AND-of-tokens gate (linear path): every required token must
+            # appear (case-insensitive substring) in the message text.
+            # Phrase mode reduces to "the phrase must appear" because
+            # tokens_lower has a single element equal to the phrase. This
+            # matches the FTS5 path's MATCH semantics. Without this gate,
+            # the snippet regex's alternation (foo|bar) would happily
+            # surface a message containing only "foo" — silent OR drift.
+            text_lower = text.lower()
+            if not all(t in text_lower for t in tokens_lower):
+                continue
+
             msg_created_at = _parse_datetime(msg.get("created_at"))
 
-            # Search for matches
-            for match in pattern.finditer(text):
+            # Snippet placement: find the FIRST token occurrence (any
+            # token; first-match wins). The frontend's HighlightedSnippet
+            # only supports a single contiguous <mark>, so highlighting
+            # multiple tokens isn't worth the complexity — the user sees
+            # WHY they landed, and the ±150 char window typically shows
+            # the other tokens around it.
+            match = pattern.search(text)
+            if match is not None:
                 if context_size == "full":
                     snippet = text
                     start = match.start()
@@ -448,18 +545,29 @@ def _search_via_linear_scan(
                     snippet, start, end = create_snippet(
                         text, match.start(), match.end()
                     )
-                matching_messages.append(
-                    MessageSnippet(
-                        message_uuid=msg.get("uuid", ""),
-                        sender=msg.get("sender", ""),
-                        snippet=snippet,
-                        match_start=start,
-                        match_end=end,
-                        created_at=msg_created_at,
+            else:
+                # Fallback: tokens AND-pass but regex didn't find them
+                # literally (stemmer-drift on the FTS5 side OR a unicode
+                # normalization quirk). Emit a leading-text snippet with
+                # a 0-length highlight rather than dropping the FTS5 hit.
+                if context_size == "full":
+                    snippet = text
+                else:
+                    snippet = text[:_FALLBACK_SNIPPET_LEN] + (
+                        "..." if len(text) > _FALLBACK_SNIPPET_LEN else ""
                     )
+                start = 0
+                end = 0
+            matching_messages.append(
+                MessageSnippet(
+                    message_uuid=msg.get("uuid", ""),
+                    sender=msg.get("sender", ""),
+                    snippet=snippet,
+                    match_start=start,
+                    match_end=end,
+                    created_at=msg_created_at,
                 )
-                # Only include first match per message to avoid duplicates
-                break
+            )
 
         if matching_messages:
             results.append(
@@ -521,6 +629,11 @@ def _search_via_index(
     )
     body_matched_uuids: set[str] = {m["conv_uuid"] for m in matches}
 
+    # Parse user query once — drives both title sweep and snippet regex.
+    phrase, tokens = parse_user_query(query)
+    if not tokens:
+        return []
+    title_needle = phrase if phrase is not None else query
     # Step 2: title-substring sweep. The linear scan emits a title pseudo-
     # message when the conversation NAME contains the query (case-
     # insensitive substring). FTS5 catches token-aligned title matches,
@@ -530,10 +643,15 @@ def _search_via_index(
     # truth — it's stored UNINDEXED so a SELECT DISTINCT is cheap and
     # avoids the multi-second cost of ``store.list_conversations()``
     # (which rebuilds the agent index on every call).
-    query_lower = query.lower()
+    #
+    # Multi-word note: we sweep on the FULL query string (or stripped
+    # phrase) — conservative substring semantics, mirroring the linear
+    # path. Token-level AND on titles is a future enhancement (see
+    # `_search_via_linear_scan` for the matching policy).
+    query_lower = title_needle.lower()
     title_matched_uuids: set[str] = set()
     title_sql_clauses = ["title LIKE ?"]
-    title_sql_params: list[Any] = [f"%{query}%"]
+    title_sql_params: list[Any] = [f"%{title_needle}%"]
     if conversation_uuid is not None:
         title_sql_clauses.append("conv_uuid = ?")
         title_sql_params.append(conversation_uuid)
@@ -582,9 +700,12 @@ def _search_via_index(
 
     # Step 3: walk ONLY the matched conversations. For each matched
     # conv, find which of its messages were FTS5-hit, then run the
-    # existing per-message regex on those messages to produce snippets
-    # byte-for-byte identical to the linear path.
-    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    # snippet regex on those messages to produce snippets byte-for-byte
+    # identical to the linear path.
+    pattern = _make_snippet_regex(phrase, tokens)
+    if pattern is None:
+        return []
+    tokens_lower = [t.lower() for t in tokens]
     msgs_per_conv: dict[str, set[str]] = {}
     for m in matches:
         cu = m["conv_uuid"]
@@ -644,8 +765,27 @@ def _search_via_index(
                 msg[cache_key] = text
             if not text:
                 continue
+            # FTS5 returns a row for every message in a conversation
+            # whose TITLE column matches (title is indexed too); a
+            # title-only hit will surface every message row for that
+            # conv. To match the linear path's body-only emission, we
+            # require the body to contain every token (case-insensitive
+            # substring) before emitting a body snippet. This is also
+            # the gate that lets us emit a fallback snippet for stemmer
+            # drift (e.g. query `run` finds `running` in body — the
+            # substring check passes, the regex fails, fallback fires).
+            text_lower = text.lower()
+            if not all(t in text_lower for t in tokens_lower):
+                continue
             msg_created_at = _parse_datetime(msg.get("created_at"))
-            for match in pattern.finditer(text):
+            # FTS5 already filtered by MATCH (AND-of-tokens). The regex
+            # below is for PLACING the highlight, not gating inclusion.
+            # If the regex finds nothing, that's stemmer/diacritic drift
+            # (porter+unicode61 on FTS5 side vs literal regex on Python
+            # side) — we still emit a leading-text fallback snippet so
+            # the user sees the FTS5 hit instead of an invisible drop.
+            match = pattern.search(text)
+            if match is not None:
                 if context_size == "full":
                     snippet = text
                     start = match.start()
@@ -654,18 +794,25 @@ def _search_via_index(
                     snippet, start, end = create_snippet(
                         text, match.start(), match.end()
                     )
-                matching_messages.append(
-                    MessageSnippet(
-                        message_uuid=msg.get("uuid", ""),
-                        sender=msg.get("sender", ""),
-                        snippet=snippet,
-                        match_start=start,
-                        match_end=end,
-                        created_at=msg_created_at,
+            else:
+                if context_size == "full":
+                    snippet = text
+                else:
+                    snippet = text[:_FALLBACK_SNIPPET_LEN] + (
+                        "..." if len(text) > _FALLBACK_SNIPPET_LEN else ""
                     )
+                start = 0
+                end = 0
+            matching_messages.append(
+                MessageSnippet(
+                    message_uuid=msg.get("uuid", ""),
+                    sender=msg.get("sender", ""),
+                    snippet=snippet,
+                    match_start=start,
+                    match_end=end,
+                    created_at=msg_created_at,
                 )
-                # Only first match per message — same as linear path.
-                break
+            )
 
         if matching_messages:
             results.append(
@@ -691,7 +838,36 @@ def _sort_results(
     sort_order: SortOrder,
 ) -> list[SearchResult]:
     """Same sort logic as _search_via_linear_scan's tail block. Extracted
-    so both paths share the implementation byte-for-byte."""
+    so both paths share the implementation byte-for-byte.
+
+    Bug B fix (V1 polish 2026-05-14, second attempt): for sort fields
+    ``updated_at`` and ``created_at``, the conversation-level sort key
+    is ``r.conversation_updated_at`` / ``r.conversation_created_at``
+    EXACTLY — no max/min over matched-message timestamps.
+
+    Why we removed the prior message-aware sort:
+
+      * The UI displays the conversation's own ``updated_at`` in the
+        date column of each result card (frontend SearchPanel.tsx
+        renders ``match.createdAt`` first, then falls back to the
+        conversation timestamp). The sort label in the same panel is
+        "Last Activity" — users reasonably read that as conversation
+        activity, not "newest matched message time".
+      * The prior key ``max([m.created_at for m in matching_messages])``
+        produced a user-visible inversion: a conversation updated
+        yesterday whose matched message body is a month old would sort
+        BELOW a conversation updated last week with a recent matched
+        message. The user sees "yesterday" labeled card BELOW "last
+        week" labeled card. Live reproduced 2026-05-14:
+          curl /api/search?q=comprehensive+medium&sort=updated_at&sort_order=desc
+        showed position 4 with conv_updated_at=2026-05-14 BELOW position 3
+        with conv_updated_at=2026-05-01.
+
+    Within-conversation message ordering is unchanged: messages inside
+    a single result card group are still sorted by their per-message
+    ``created_at`` (with fallback to conversation_updated_at for nulls),
+    so multiple matches inside the same conversation show in time order.
+    """
     reverse = sort_order == "desc"
 
     def _match_time(m: MessageSnippet, fallback):
@@ -706,9 +882,6 @@ def _sort_results(
 
     if sort in ("updated_at", "created_at"):
         def _conv_time_key(r: SearchResult):
-            times = [m.created_at for m in r.matching_messages if m.created_at]
-            if times:
-                return max(times) if sort == "updated_at" else min(times)
             return (
                 r.conversation_updated_at
                 if sort == "updated_at"

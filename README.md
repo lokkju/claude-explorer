@@ -18,7 +18,7 @@ If you'd rather hack on the project than install it, see [From source (for contr
 ## Features
 
 - **Browse conversations** from both Claude Desktop and Claude Code
-- **Full-text search** across all messages with instant results
+- **Full-text search** across all messages with instant results — multi-word queries AND tokens (all words must appear in the same message, any order); wrap in `"double quotes"` to require an exact phrase
 - **Export** to Markdown or PDF
 - **Dark mode** with automatic system preference detection
 - **Keyboard navigation** with Emacs and Vim modes
@@ -209,6 +209,8 @@ This opens Chromium, navigates to claude.ai, and waits for you to log in. Once a
 **Options:**
 - `--timeout N` — Max seconds to wait for login (default: 300)
 
+**Auditing the trust path.** Credential capture is implemented in `fetcher/playwright_capture.py` (function `capture_credentials`). It does exactly two things: read the `sessionKey` cookie out of the Playwright browser context after you log in, and write that cookie plus the org id to `~/.claude-explorer/credentials.json`. The capture step itself has no network egress beyond the browser you're already using to log into Claude.
+
 #### Method B: Proxy Interception (--proxy)
 
 Use this method when you **can't log into the web UI** but Claude Desktop is still authenticated. This was a lifesaver for recovering conversations from a work account after losing access to the SSO login.
@@ -254,7 +256,7 @@ Both methods save credentials to `~/.claude-explorer/credentials.json`.
 uv run claude-explorer fetch
 ```
 
-This downloads all your conversations as JSON files to `~/.claude-explorer/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded.
+This downloads all your conversations as JSON files to `~/.claude-explorer/conversations/`. A rate-limited 0.3s delay between requests keeps things polite. Incremental mode (default) skips conversations you've already downloaded. Attachment bytes (images, PDFs, canvas transcripts) land alongside the JSON in a sibling `~/.claude-explorer/files/` directory keyed by conversation and file UUID.
 
 Options:
 - `--full-refresh` — Re-download all conversations
