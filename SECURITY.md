@@ -2,16 +2,32 @@
 
 ## Reporting a vulnerability
 
-This is a solo-maintained project. To report a vulnerability or a suspected supply-chain issue, please:
+This is a solo-maintained project. Two disclosure channels, in order of preference:
 
-- For non-sensitive issues: open a GitHub issue at <https://github.com/rpeck/claude-explorer/issues>.
-- For anything you would not want to disclose publicly before a fix lands: email the maintainer at `raymondpeckiii@gmail.com` with the subject prefix `[claude-explorer security]`.
+1. **GitHub Security Advisories (preferred)**: open a private report at <https://github.com/rpeck/claude-explorer/security/advisories/new>. This is discoverable from the repo "Security" tab and routes directly to the maintainer without exposing the report publicly. Use this whenever possible — it threads cleanly into a private fix draft and a published GHSA on disclosure.
+2. **Email (fallback)**: for reporters without a GitHub account, email `raymondpeckiii@gmail.com` with the subject prefix `[claude-explorer security]`.
+
+For non-sensitive issues (no vulnerability content), open a regular GitHub issue at <https://github.com/rpeck/claude-explorer/issues>.
 
 There is no formal SLA; I aim to acknowledge within a few days and ship a fix as soon as practical.
 
 ## Supply-chain audits
 
 A dated log of upstream supply-chain incidents that touched (or potentially touched) this project's dependency tree, and what we verified for each.
+
+### 2026-05-20 — Dev-dependency CVE inventory (npm audit)
+
+`npm audit` against `frontend/package-lock.json` flags 6 vulnerabilities (2 moderate, 4 high). **Production runtime is clean** — `npm audit --omit=dev` returns 0 vulnerabilities, and every reachable parent is in `devDependencies`:
+
+| Package | Version | Severity | Parent (all in `devDependencies`) | Production bundle? |
+|---|---|---|---|---|
+| `brace-expansion` | 1.1.12 / 5.0.4 | moderate | `eslint`, `typescript-eslint` | no |
+| `flatted` | 3.3.4 | high | `eslint` (`file-entry-cache`) | no |
+| `picomatch` | 4.0.3 | high | `vite`, `vitest` | no (build-time only) |
+| `postcss` | 8.5.8 | moderate | `vite` | no (CSS transformed at build, postcss itself not bundled) |
+| `undici` | 7.22.0 | high | `jsdom` (via `vitest`) | no |
+
+The fixes are all `npm audit fix`-able when contributors next bump tooling. No action gates the V1 public flip — none of these reach the shipped frontend bundle (`frontend/dist/`) or the PyPI wheel.
 
 ### 2026-05-16 — Mini Shai-Hulud worm (TanStack ecosystem)
 
