@@ -302,6 +302,31 @@ export interface SearchResponse {
   truncated: boolean
 }
 
+/**
+ * Runtime predicate for the `/api/search` envelope.
+ *
+ * Replaces `res.json() as Promise<SearchResponse>` casts in `lib/api.ts`:
+ * the cast was a runtime lie — TypeScript trusted it, but a backend
+ * shape regression would propagate undefined through `results.map(...)`
+ * and crash the SearchPanel with no actionable error.
+ *
+ * Validates only the 4 top-level required fields. Per-result shape
+ * (SearchResult, MessageSnippet) is downstream of this gate; if the
+ * envelope is right but a result is malformed, downstream rendering
+ * still throws — but the error will be local to a single card, not the
+ * whole panel.
+ */
+export function isSearchResponse(v: unknown): v is SearchResponse {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  const obj = v as Record<string, unknown>
+  return (
+    Array.isArray(obj.results) &&
+    typeof obj.total_messages_matched === 'number' &&
+    typeof obj.returned_messages === 'number' &&
+    typeof obj.truncated === 'boolean'
+  )
+}
+
 // Filter types
 
 export type SourceFilter = 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE'

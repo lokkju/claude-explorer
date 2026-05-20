@@ -12,7 +12,7 @@ import type {
   Bookmark,
   ApiError as ApiErrorType,
 } from './types'
-import { ApiError } from './types'
+import { ApiError, isSearchResponse } from './types'
 import { mockConversations, mockConversationDetails, filterConversations } from './mockData'
 
 const BASE_URL = '/api'
@@ -156,7 +156,11 @@ export const api = {
       if (!res.ok) {
         throw new ApiError(res.status, await res.text())
       }
-      return res.json() as Promise<SearchResponse>
+      const body: unknown = await res.json()
+      if (!isSearchResponse(body)) {
+        throw new ApiError(500, 'malformed /api/search response envelope')
+      }
+      return body
     }
 
     const params = new URLSearchParams({ q: query })
@@ -182,7 +186,11 @@ export const api = {
     if (!response.ok) {
       throw new ApiError(response.status, await response.text())
     }
-    return response.json() as Promise<SearchResponse>
+    const body: unknown = await response.json()
+    if (!isSearchResponse(body)) {
+      throw new ApiError(500, 'malformed /api/search response envelope')
+    }
+    return body
   },
 
   getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),
