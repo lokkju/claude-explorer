@@ -6,6 +6,34 @@ Distilled from Raymond E. Peck III's existing Medium series, *"Best Practices fo
 
 ---
 
+## Active voice (critical)
+
+**This is the single most load-bearing voice rule in the cheatsheet.** It is on par with the no-em-dash and no-"X, not Y" rules: a draft that nails every other rule but slips into stative or passive constructions will still read as not-mine. When in doubt, the grammatical subject of every sentence should be doing something.
+
+Scan each sentence's main verb. If it's *"is"*, *"was"*, *"are"*, *"were"*, *"be"*, or *"been"*, look for a transitive verb hiding in the predicate that should be promoted.
+
+Four patterns to watch for and rewrite:
+
+1. **Passive voice proper.**
+   - ❌ *"The file is saved by the back end."*
+   - ✅ *"The back end saves the file."*
+
+2. **Copula-plus-participle ("X is Y made Z").** The main verb is *"is"* and the meaning is carried by a postmodifying participle. Promote the participle to the main verb.
+   - ❌ *"The sidebar is the unified corpus made visible."*
+   - ✅ *"The sidebar makes the unified corpus visible."*
+
+3. **Hedged copula ("X is what does Z", "X is the kind of Y that does Z").** Replace with the direct active form.
+   - ❌ *"The watcher is what protects you from rotation."*
+   - ✅ *"The watcher protects you from rotation."*
+
+4. **Stative noun phrases ("there is X", "there are Y").** Find the verb that's actually happening and lead with it.
+   - ❌ *"There is a refresh button at the top of the sidebar that triggers a Desktop fetch."*
+   - ✅ *"A refresh button at the top of the sidebar triggers a Desktop fetch."*
+
+Why it matters: the active verb is shorter and clearer; the grammatical subject becomes the semantic actor (so the reader does not have to unwind an equation); repeated *"is"* / *"are"* as main verbs reads as AI-generated drift. The same instinct underlies the "X, not Y" ban below: prefer concrete predication over rhetorical posing.
+
+---
+
 ## Pronouns
 
 - **"we"** for the shared journey: *"we'll see how we can…"*, *"let's walk through…"*
@@ -85,6 +113,8 @@ The article ends up with a **two-stage tease**: an early hint here, the full set
   - ❌ *"FastAPI is Sebastián Ramírez's work, the same ecosystem I cover in [my best-practices column]."* (the *"I cover"* hangs off Sebastián as a tail clause; two ideas crammed into one sentence)
   - ✅ *"FastAPI is from Sebastián Ramírez. I cover FastAPI in detail in [my best-practices column]."* (two sentences, two subjects, each doing one thing)
 
+- **Active voice is the top-level rule** — see the *"Active voice (critical)"* section near the top of this file. Every other rhythm guideline below assumes you're already drafting in active voice.
+
 - **Compress collaborator credits into naming when you can.** When the credit can ride alongside the introduction of the tool itself, the prose reads tighter than two-clauses-with-restating.
   - ❌ *"The back end is FastAPI; FastAPI is Sebastián Ramírez's work..."* (introduces FastAPI, then re-references it as the subject of the credit clause)
   - ✅ *"The back end is FastAPI from Sebastián Ramírez..."* (the credit is part of the naming itself)
@@ -157,6 +187,7 @@ Every part ends with an **H2 "Wrapping Up!"** (with exclamation). Content:
 
 ## Style cheat-sheet (quick reference)
 
+- **Active voice on every sentence** — scan main verbs; rewrite anything stative or passive. (See *"Active voice (critical)"* above.) Equal weight with the no-em-dash and no-"X, not Y" bans.
 - Italic-bold one-line lede. Link to prior part(s). *"If you missed that, make sure to go back and read it!"*
 - "we" for the journey, "I" for the opinions and jokes.
 - Each section: prose framing → code block → design commentary explaining *why* each decision matters.

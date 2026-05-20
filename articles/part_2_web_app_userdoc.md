@@ -88,7 +88,7 @@ To pull in your Claude Desktop history, click the **Refresh** button in the top 
 
 ## The Conversation List (Sidebar)
 
-The sidebar is the unified corpus made visible: one list containing both Claude Desktop conversations and Claude Code sessions, with a few affordances that make it usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read!
+The sidebar makes the unified corpus visible: one list containing both Claude Desktop conversations and Claude Code sessions, with a few affordances that make it usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read!
 
 <div align="center">
 <img src="Pasted image 20260514121201.png" alt="The Claude Explorer sidebar showing the source filter dropdown, project grouping, starred sessions, and the refresh button" width="300">
