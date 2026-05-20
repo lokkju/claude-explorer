@@ -26,7 +26,13 @@ export function useConversations(
   // backend warm path is ~87ms.
   const query = useQuery({
     queryKey: queryKeys.conversations.list(serverFilters),
-    queryFn: () => api.getConversations(serverFilters),
+    // 2026-05-18 (Hunt #5): plumb queryFn's AbortSignal into api.getConversations
+    // so component unmount cancels the in-flight list fetch. Also defuses the
+    // React 19 StrictMode dev-mode double-fire: the first mount's request is
+    // aborted when StrictMode immediately remounts, instead of completing,
+    // landing in the cache, and triggering the placeholderData/observer
+    // settle path twice.
+    queryFn: ({ signal }) => api.getConversations(serverFilters, signal),
     enabled: options?.enabled ?? true,
   })
 
@@ -66,17 +72,27 @@ export function useConversation(uuid: string, leaf?: string) {
     queryKey: leaf
       ? [...queryKeys.conversations.detail(uuid), 'leaf', leaf]
       : queryKeys.conversations.detail(uuid),
-    queryFn: () => api.getConversation(uuid, leaf),
+    // 2026-05-18 (Hunt #5): plumb queryFn's AbortSignal into api.getConversation
+    // so navigating between conversations via keyboard (fast back-to-back
+    // mounts) cancels the in-flight multi-MB detail fetch for the conversation
+    // the user left. Without this the backend keeps serializing a large payload
+    // the cache will discard.
+    queryFn: ({ signal }) => api.getConversation(uuid, leaf, signal),
     enabled: !!uuid,
   })
 }
 
 export function useConversationTree(uuid: string) {
+  // Hunt #5 (2026-05-18): was `staleTime: Infinity`, which is wrong because
+  // the tree IS mutable — the fetch pipeline can ingest a new branch for an
+  // already-loaded conversation, and `Infinity` would have suppressed
+  // refetchOnWindowFocus so the tree modal showed pre-branch state until a
+  // hard refresh. 5min mirrors useConversation's setQueryDefaults TTL.
   return useQuery({
     queryKey: queryKeys.conversations.tree(uuid),
     queryFn: () => api.getConversationTree(uuid),
     enabled: !!uuid,
-    staleTime: Infinity,
+    staleTime: 5 * 60 * 1000,
   })
 }
 
@@ -113,7 +129,13 @@ export function useSearch(
     // call and React Query doesn't return a stale cached payload that
     // contains tool-block snippets.
     queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls),
-    queryFn: () => api.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls),
+    // 2026-05-18 (Hunt #5): plumb queryFn's AbortSignal into api.search so
+    // a queryKey change OR component unmount cancels the in-flight `/api/search`
+    // request. Critical for the FTS-fallback slow path (multi-second) where
+    // orphan searches were burning local-backend CPU after the user kept
+    // typing past the 200ms debounce.
+    queryFn: ({ signal }) =>
+      api.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls, signal),
     enabled: debouncedQuery.length >= 2,
     staleTime: 60 * 1000, // 1 minute
     placeholderData: keepPreviousData, // keep last results visible while narrowing query
@@ -143,10 +165,17 @@ export function useSearch(
 export function useConfigStats() {
   // Slower /config/stats endpoint that populates conversation_count.
   // Use ONLY where the user is willing to wait (e.g. Settings page).
+  //
+  // Hunt #5 (2026-05-18): was `staleTime: Infinity`, which is wrong because
+  // `conversation_count` changes after every `claude-explorer fetch` run
+  // and the Settings page is exactly where users go to see "how many
+  // conversations do I have?". `Infinity` left the page showing the
+  // pre-fetch count after a successful refresh. 60s is a reasonable TTL
+  // given the endpoint's cost; window-focus refetch fills the gap.
   return useQuery({
     queryKey: ['config-stats'],
     queryFn: () => api.getConfigStats(),
-    staleTime: Infinity,
+    staleTime: 60 * 1000,
   })
 }
 

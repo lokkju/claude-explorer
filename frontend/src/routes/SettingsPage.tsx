@@ -41,10 +41,15 @@ export function SettingsPage() {
   // /config is fast (no directory walk) and used everywhere; the slow
   // /config/stats variant populates conversation_count and is fetched
   // only here on the Settings page where the user is willing to wait.
+  //
+  // Hunt #5 (2026-05-18): dropped `staleTime: Infinity` to inherit the
+  // queryClient default (30s). The inline `Infinity` here used to OVERRIDE
+  // the useConfigStats hook's TTL per-observer, so even after fixing the
+  // hook to 60s, the Settings page mount would have kept showing the
+  // pre-fetch count indefinitely. Lockstep with useConversations.ts.
   const { data: stats } = useQuery({
     queryKey: ['config-stats'],
     queryFn: () => api.getConfigStats(),
-    staleTime: Infinity,
   })
 
   return (

@@ -20,8 +20,14 @@ const BASE_URL = '/api'
 // Set to true to use mock data (for development without backend)
 const USE_MOCK_DATA = false
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(`${BASE_URL}${url}`)
+// 2026-05-18 (Hunt #5): optional AbortSignal forwarded into fetch().
+// Threaded from TanStack Query v5's queryFn `({ signal }) => api.X(args, signal)`
+// for the two heaviest read paths (`useConversations` list + `useConversation`
+// detail). Smaller/static endpoints (config, orgs, preferences) intentionally
+// skip the plumbing per Hunt #5 council decision — the warm-path latency is
+// shorter than a React lifecycle tick, so the abort would be dead code there.
+async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${BASE_URL}${url}`, { signal })
   if (!response.ok) {
     throw new ApiError(response.status, await response.text())
   }
@@ -33,7 +39,10 @@ export const api = {
   // (backend split, see PLANS/SPLIT_CONVERSATION_SCHEMA.md).
   // ConversationListItem strips summary, human_message_count, and
   // git_branch from the wire payload — none are read by the sidebar.
-  getConversations: async (filters?: ConversationFilters): Promise<ConversationListItem[]> => {
+  getConversations: async (
+    filters?: ConversationFilters,
+    signal?: AbortSignal,
+  ): Promise<ConversationListItem[]> => {
     if (USE_MOCK_DATA) {
       // Simulate network delay
       await new Promise((resolve) => setTimeout(resolve, 300))
@@ -49,12 +58,19 @@ export const api = {
     if (filters?.includePhantom) params.set('include_phantom', 'true')
     if (filters?.organization_id) params.set('organization_id', filters.organization_id)
     const query = params.toString()
-    return fetchJson<ConversationListItem[]>(`/conversations${query ? `?${query}` : ''}`)
+    return fetchJson<ConversationListItem[]>(
+      `/conversations${query ? `?${query}` : ''}`,
+      signal,
+    )
   },
 
   getOrgs: (): Promise<OrgsResponse> => fetchJson<OrgsResponse>('/orgs'),
 
-  getConversation: async (uuid: string, leaf?: string): Promise<ConversationDetail> => {
+  getConversation: async (
+    uuid: string,
+    leaf?: string,
+    signal?: AbortSignal,
+  ): Promise<ConversationDetail> => {
     if (USE_MOCK_DATA) {
       await new Promise((resolve) => setTimeout(resolve, 200))
       const detail = mockConversationDetails[uuid]
@@ -64,7 +80,7 @@ export const api = {
       return detail
     }
     const qs = leaf ? `?leaf=${encodeURIComponent(leaf)}` : ''
-    return fetchJson<ConversationDetail>(`/conversations/${uuid}${qs}`)
+    return fetchJson<ConversationDetail>(`/conversations/${uuid}${qs}`, signal)
   },
 
   getConversationTree: (uuid: string): Promise<ConversationTree> =>
@@ -95,6 +111,14 @@ export const api = {
     // Making this mandatory means TypeScript catches any new call site
     // that forgets to wire useSettings().showToolCalls.
     includeToolCalls: boolean,
+    // 2026-05-18 (Hunt #5): optional AbortSignal. Wired from useSearch's
+    // queryFn `({ signal }) => api.search(..., signal)` so a queryKey
+    // change (user keeps typing past the 200ms debounce) or an unmount
+    // cancels the in-flight `/api/search` request instead of letting the
+    // backend spend seconds on FTS-fallback work the user no longer cares
+    // about. React Query v5 dedupes by key but does NOT auto-abort the
+    // prior in-flight request on key change unless `signal` is wired.
+    signal?: AbortSignal,
   ): Promise<SearchResponse> => {
     // Transport choice (spec §2, 2026-05-14): GET CSV is unsafe past
     // ~6 KB of UUIDs. When `conversationUuids` is set AND non-trivially
@@ -127,6 +151,7 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal,
       })
       if (!res.ok) {
         throw new ApiError(res.status, await res.text())
@@ -148,7 +173,16 @@ export const api = {
     // Only append the query param when filtering — keeps URLs short
     // for the common-case (tool calls visible) request.
     if (!includeToolCalls) params.set('include_tool_calls', 'false')
-    return fetchJson<SearchResponse>(`/search?${params.toString()}`)
+    // GET branch — signal threaded through fetchJson so a queryKey change
+    // (user keeps typing) aborts the in-flight request mirror-image of the
+    // POST branch above. Without this the React Query queryKey-change path
+    // dedupes but does not cancel; backend keeps computing.
+    const url = `/search?${params.toString()}`
+    const response = await fetch(`${BASE_URL}${url}`, { signal })
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text())
+    }
+    return response.json() as Promise<SearchResponse>
   },
 
   getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),
