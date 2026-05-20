@@ -50,6 +50,7 @@ dependencies = [
     "mitmproxy>=10.0",
     "fastmcp>=3.0",
     "portalocker>=2.8",
+    "watchdog>=4.0",
 ]
 
 [project.urls]

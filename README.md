@@ -9,9 +9,15 @@ A tool to extract, browse, search, and export your Claude conversation history �
 ```bash
 # install uv if needed: https://docs.astral.sh/uv/getting-started/installation/
 uvx claude-explorer serve
+
+# In another terminal, install the always-on image-cache watcher
+# (strongly recommended — see "Continuous Image-Cache Watcher" below):
+uvx claude-explorer install-watcher
 ```
 
 That's it. Open `http://localhost:8765` in your browser and your Claude Code sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
+
+The watcher is a one-time install that registers a tiny background job with your OS supervisor (launchd / systemd / Task Scheduler) so Claude Code can't quietly rotate your screenshots and pasted images off disk before they get mirrored. Without it, you only have image protection while `claude-explorer serve` is running.
 
 If you'd rather hack on the project than install it, see [From source (for contributors)](#from-source-for-contributors) below.
 
@@ -486,6 +492,51 @@ In Claude Code you can also run `/mcp` to see the server status and the list of 
   "env": { "CLAUDE_EXPLORER_DATA_DIR": "/path/to/conversations" }
   ```
 - **Stale session outlines after a branch switch** — outlines are cached in `~/.claude-explorer/cache.db`. Delete that file to force a full rebuild.
+
+---
+
+## Image-Cache Watcher — Technical Details
+
+The Quick Start above tells you to run `claude-explorer install-watcher`. This section explains what that actually does, where to look when it breaks, and how to tune it.
+
+**Architecture: event-driven primary + backstop poll.** The watcher subscribes to OS-native filesystem events (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows, all via the [`watchdog`](https://github.com/gorakhargosh/watchdog) library) and copies new files within sub-second latency at near-zero idle CPU. A periodic backstop poll (default 600s = 10 min) re-runs the full directory walk to catch the rare event the OS dropped or coalesced. On a sandboxed Python or an unsupported filesystem (NFS, etc.) `watchdog` falls back to its `PollingObserver` automatically — strictly worse latency, same correctness — and the watcher logs which backend got selected so misconfigurations are diagnosable.
+
+```bash
+# Verify it's running (per platform):
+launchctl list | grep claude-explorer                                  # macOS
+systemctl --user status claude-explorer-cc-watcher.service             # Linux
+schtasks /Query /TN ClaudeExplorerCCWatcher                            # Windows
+
+# Tune the backstop poll interval (default 600s = 10min; events handle
+# the latency-critical work, so smaller values do not improve normal
+# capture latency):
+claude-explorer install-watcher --interval 60
+
+# Uninstall:
+claude-explorer install-watcher --uninstall
+```
+
+**Where the unit lives + how it's supervised:**
+
+| Platform | Mechanism                        | Path                                                                   |
+|----------|----------------------------------|------------------------------------------------------------------------|
+| macOS    | launchd user agent               | `~/Library/LaunchAgents/com.claude-explorer.cc-watcher.plist`           |
+| Linux    | systemd **user** unit             | `~/.config/systemd/user/claude-explorer-cc-watcher.service`             |
+| Windows  | Task Scheduler task (logon trigger)| `ClaudeExplorerCCWatcher` (launcher at `%USERPROFILE%\.claude-explorer\cc-watcher.py`) |
+
+All three run the same Python entry point (`backend.cc_image_watcher.run_watcher`), which combines the `watchdog` Observer with the periodic backstop poll. Only the supervisor differs. macOS uses `KeepAlive`, Linux uses `Restart=always`, Windows uses an on-logon trigger — each restarts on crash.
+
+**Where logs go:**
+
+| Platform | Logs                                                                                |
+|----------|-------------------------------------------------------------------------------------|
+| macOS    | `~/Library/Logs/claude-explorer-cc-watcher.{out,err}`                                |
+| Linux    | `journalctl --user -u claude-explorer-cc-watcher.service -f`                         |
+| Windows  | Suppressed (uses `pythonw.exe` so no console pops up). For debugging, run `pythonw.exe %USERPROFILE%\.claude-explorer\cc-watcher.py` from `cmd.exe` to see output. |
+
+**Where mirrored images live:** `~/.claude-explorer/cc-images/<sess>/<sess>--<N>.<sha8>.<ext>` — content-addressed, append-only. Safe even if Claude Code rotates the original, even if you reinstall, even if the conversation JSONL itself is deleted later by `cleanupPeriodDays`.
+
+**Linux note — surviving logout:** systemd user units stop when you log out by default. To keep the watcher running across logout (or on a headless box), run once: `sudo loginctl enable-linger $USER`.
 
 ---
 

@@ -30,6 +30,11 @@ uvx claude-explorer serve
 # install Chromium for in-process credential capture
 # (skip if you only care about Claude Code sessions; they need no capture)
 uvx --from claude-explorer playwright install chromium
+
+# Strongly recommended: install the always-on image-cache watcher
+# (one-time; runs as a launchd / systemd / Task Scheduler job so
+# Claude Code can't quietly rotate your screenshots off disk).
+uvx claude-explorer install-watcher
 ```
 
 That's it for the terminal. Open `http://localhost:8765` and your Claude Code sessions are visible immediately; those JSONL files already live under `~/.claude/projects/` and the back end reads them live at request time.
@@ -109,43 +114,115 @@ Claude Code sometimes spawns sessions with only local-command scaffolding and no
 
 Below the source dropdown, the sidebar carries a small *named-filter* picker for keeping title-pattern filters around and switching between them. Each filter is a name plus a behavior (*hide matches* or *show only matches*) plus one or more patterns; a single `cron jobs` filter can carry every chore pattern you want gone, and toggling it on hides them all. The active selection is sticky across reloads, so tomorrow's view of the archive is whichever one you closed with today.
 
-Filters can also be composed into groups that AND / OR other named filters together, which is handy when you want one filter that hides chores AND keeps client-A work without juggling two toggles. Exactly one filter is active at a time: pick *Hide work-day chores* to narrow, pick *All conversations* to broaden.
-## Full-Text Search (`⌘+K`)
+Filters can also be composed into groups that AND / OR other named filters together, which is handy when you want one filter that, e.g., hides cron jobs AND keeps client-A work without juggling two toggles. Exactly one filter is active at a time: pick *Hide work-day chores* to narrow, pick *All conversations* to broaden.
+## Searching and Navigating with the Keyboard
 
-Full-text search is bound to `⌘+K`, which has become the standard across modern apps for *"I want a fast, global search"* . It slides in as a right sidebar so we can see the conversations list and the search hits list at the same time.
+Claude Explorer is really a three-pane app: the sidebar, the conversation detail, and a transient search palette that pops in when you hit `⌘+K`. The whole UI is built for keyboard-first navigation; you can search the global archive, step through matches, and read long sessions without your hands ever leaving the keys. Searches stay fast (sub-second on archives in the thousands of conversations) because the back end maintains a **SQLite FTS5** inverted index over every message, including tool calls and tool results; we'll get to the benchmarks at the end of the section.
+
+One quick note on key labels: throughout this section I write shortcuts using the `⌘` glyph because I'm on macOS; on Windows and Linux, every place you see `⌘`, use `Ctrl` instead. The code in `frontend/src/hooks/useKeyboardShortcuts.ts` accepts both modifiers (`metaKey || ctrlKey`), so the shortcuts work everywhere; only the labels are Mac-flavored.
 
 ![[Pasted image 20260514161227.png]]
 
-### What `⌘+K` does
+### Overview
 
-When you type a query and hit enter, the UI sends it to a full-text search endpoint; the back end runs the same query across both sources and returns a single list of hits. Each hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text. If you click a hit, the UI loads the corresponding conversation and scrolls you straight to the matching message, not to "roughly the right neighborhood." If you've ever tried to implement scroll-to-match over a virtualized list, you know why I'm calling it out; this is one of those places where a tiny bit of structure buys you a lot of polish.
+All of the search functions tie into a small set of keyboard shortcuts, so we can step through matches without our hands ever leaving the keyboard. `⌘+K` opens the search panel and runs the query, `⌘+G` jumps to the next match across the whole result set, `⌘+Shift+G` jumps to the previous one, and pressing `Enter` on a highlighted hit focuses that message in the conversation pane. The search itself covers every message in the archive, from both the user and the assistant, and that includes tool calls and tool results inside those messages (the `ripgrep` invocations, the test-runner output, the web-search blocks). Searches also compose with whatever scope the sidebar is showing; the active filter, the source dropdown, and the conversation-level Tools toggle all narrow the result set together. This keyboard-driven flow relies on a strict focus model to keep the shortcuts predictable.
+
+### The three-pane focus model
+
+Two of those panes are always there and the third is on demand, which is great visually, but it can become a keyboard mess if the app doesn't make focus explicit; you end up with half-working shortcuts, random scroll capture, and that familiar feeling of *"why did the key I just pressed do something totally different than it did five seconds ago?"*
+
+This UI avoids that by making one focus rule paramount: exactly one of `{sidebar, detail}` has focus at any moment, and the keys apply to the focused pane only. Click anywhere in either pane (background included) to focus it; use `Enter` to descend from the sidebar into the detail pane, and `Esc` to pop focus back to the sidebar. Once you internalize that model, everything else becomes predictable.
+
+### Running a search (`⌘+K`)
+
+Full-text search is bound to `⌘+K`, which has become the standard across modern apps for *"I want a fast, global search"*. It slides in as a right sidebar so we can see the conversations list and the search hits list at the same time.
+
+When you type a query and hit enter, the UI sends it to a full-text search endpoint; the back end runs the same query across both sources and returns a single list of hits. Each hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text.
+
+### What gets searched
+
+Search also includes tool calls and tool results. This matters more than it sounds once you use Claude Code heavily. Engineers tend to remember the *effect* of a tool invocation ("the `ripgrep` output showed the string in three files," "the test runner printed that traceback") even when they have forgotten the exact assistant text around it. The same logic covers Claude Desktop sessions where the assistant ran a tool block (web search, web fetch, code execution) inside the conversation; that content is searchable too.
 
 ### Query syntax: terms vs phrases
 
 There are two modes you'll use day-to-day, and the distinction matters because each one answers a different question:
 
-- **Multi-word, unquoted** — `comprehensive medium`. All words must appear in the same matched message, but in any order and not necessarily adjacent. This is the right tool when you remember a couple of distinctive words from a conversation but not the exact phrasing; the FTS5 index does the heavy lifting of finding messages where both tokens co-occur. Backed by `FTS5 MATCH 'comprehensive medium'` semantics under the hood, which is "AND" by default.
-- **Quoted phrase** — `"comprehensive medium"`. The words must appear in that exact sequence. This is the right tool when you remember a specific turn of phrase verbatim, or when the unquoted version returns too many results and you want to narrow to literal occurrences. Wrap the whole query in double quotes; the backend translates that to an FTS5 phrase clause, and the snippet only highlights matches of the full phrase.
+- **Multi-word, unquoted**, e.g. `comprehensive medium`. All words must appear in the same matched message, in any order, possibly with other words between them. This is the right tool when you remember a couple of distinctive words from a conversation but have forgotten the exact phrasing; an FTS5 index does the heavy lifting of finding messages where both tokens co-occur. 
+- **Quoted phrase**, e.g. `"comprehensive medium"`. The words must appear in that exact sequence. This is the right tool when you remember a specific turn of phrase verbatim, or when the unquoted version returns too many results and you want to narrow to literal occurrences. Wrap the whole query in double quotes; the back end translates that to an FTS5 phrase clause, and the snippet only highlights matches of the full phrase.
 
 Both modes highlight every matched token (or phrase) in the snippet, so you can tell at a glance which words triggered the hit.
 
-### What gets searched
+### Search-and-Copy Navigation (`⌘+G`, `⌘+C`, `⌘+F`)
 
-Search also includes tool calls and tool results. This matters more than it sounds once you use Claude Code heavily. Engineers tend to remember the *effect* of a tool invocation ("the `ripgrep` output showed the string in three files," "the test runner printed that traceback") even when they don't remember the exact assistant text around it. The same logic covers Claude Desktop sessions where the assistant ran a tool block (web search, web fetch, code execution) inside the conversation; that content is searchable too.
+After you run a search, you're usually in a loop: find a match, read around it, hop to the next one, then copy something out. Claude Explorer supports that loop with a small set of bindings that are easy to memorize because they mirror what many of us already use in editors.
 
-Search results respect the **Tools** toggle in the conversation header; with Tools off, a hit you couldn't see in the viewer never shows up in the result list either.
+#### `⌘+G` and `⌘+Shift+G` jump forward and back
+`⌘+G` advances to the next match across the whole result set; `⌘+Shift+G` goes backward. The search panel header carries a small inline "N of M matches" counter, and there's also a screen-reader-only aria-live region that announces the same "Match N of M" string as you advance, so sighted users get the affordance inline and screen-reader users hear the change without focus moving. 
 
-### Search honors the sidebar's active scope
+The best part is that `⌘+G` works across the whole result set, jumping between conversations as naturally as it does between matches in a single thread. If match #7 is in one conversation and match #8 is in another, `⌘+G` takes you there anyway; you keep your hands on the keyboard and you keep moving forward. Under the hood, the UI takes a synchronous fast path for in-conversation matches, then warms the target conversation's data in the background so the cross-conversation jump feels instant. In practice, you can treat a search result set like a playlist; you hit `⌘+G` until you see the thing you wanted, and you never have to re-open the palette unless you want a different query.
 
-Both surfaces — the title-search input at the top of the sidebar AND the right-pane full-text search — also honor whatever scope the sidebar is currently showing. That includes the **source dropdown** (`All Conversations` / `Claude Desktop` / `Claude Code`), the **workspace dropdown** (for Claude Code sessions, lets you scope to a single project), and the **active filter** (any of your saved atom or group filters from the *Manage Filters* modal). What you can't see in the sidebar list can't appear in either search surface either.
+If you prefer the mouse, clicking a hit in the results list loads the corresponding conversation and scrolls you precisely to the matching message. If you've ever tried to implement scroll-to-match over a virtualized list, you know why I'm calling it out; this is one of those places where a tiny bit of structure buys you a lot of polish.
+#### `⌘+C` to copy the focused message
+Once a match is focused, `⌘+C` copies the focused message cell to your clipboard. Most conversation viewers make you drag-select text inside a bubble, which is fine for one-off copying but slow when you're collecting multiple snippets for notes; here, focus is explicit, so copy is explicit, and you can search, move, copy, and repeat without switching modes.
 
-This composes with the pin scope and Tools toggle covered above; intersections, never unions. The mental model is "the sidebar is the lens; search asks questions through it." Flip a filter off and the previously-hidden matches re-appear without you having to re-type the query, because the search auto-re-runs whenever the scope changes. Same on the MCP side: `list_sessions` already accepts `source` and `project` arguments that mirror the dropdowns; an MCP-aware client (another Claude session) gets the same scoping vocabulary.
+By the way, *"copy the focused cell"* means *"copy what you're looking at."* The clipboard payload is the message text, plus the speaker and timestamp; if the cell is a tool block (and you've toggled tool blocks on, which we'll get to), you get the tool input or output verbatim. There's no separate "copy as plain text" / "copy as Markdown" mode for the cell; the surrounding viewer already controls how content is presented, and copy mirrors that.
+#### `⌘+F` to jump back to the search text
+If you want to adjust the query instead of navigating matches, `⌘+F` jumps focus into the find input. Combined with the *"select a hit and focus the matching cell"* behavior, this makes a nice one-handed flow: run `⌘+K`, pick a hit, then do `⌘+F` to tweak the query or refine it, and `⌘+C` to copy the focused cell. It's the kind of thing you only notice after you've done it a dozen times, which is exactly the point; the best UI features are the ones you stop noticing because they match how you already work.
 
-### Performance
+### Scope composition
 
-Performance-wise, the tuned path is fast enough that you stop thinking about it on a typical archive. The numbers below come from `scripts/bench_perf.py` running against my own data directory (about 800 conversations across Desktop and Claude Code, several hundred MB of JSON on disk, warm OS file cache, FTS5 index built), so they should give you a realistic feel rather than a synthetic best case.
+Both search surfaces (the title-search input at the top of the left sidebar and the right-pane full-text search) honor whatever scope the sidebar is currently showing. That includes the **source dropdown** (`All Conversations` / `Claude Desktop` / `Claude Code`), the **workspace dropdown** (for Claude Code sessions, scoping you to a single project), and the **active filter** (any of your saved atom or group filters from the *Manage Filters* modal). Search results also respect the **Tools** toggle in the conversation header, so a hit you couldn't see in the viewer never shows up in the result list either. What you can't see in the sidebar list can't appear in either search surface; every active filter narrows the result set further.
 
-The headline change is that the search path is now a **SQLite FTS5 inverted index** instead of a linear scan over every conversation, and the difference is large enough to feel:
+The mental model is "the sidebar is the lens; search asks questions through it." Flip a filter off and the previously-hidden matches re-appear without you having to re-type the query, because the search auto-re-runs whenever the scope changes. Same on the MCP side: `list_sessions` already accepts `source` and `project` arguments that mirror the dropdowns; an MCP-aware client (another Claude session) gets the same scoping vocabulary. (There is also a per-conversation *pin* scope, which I'll get to in the next section; it composes the same way.)
+
+### Scoping search to a conversation or project (Pin)
+
+Search defaults to global, which is the behavior most people expect; you opened the app to find something across the whole archive. There's also a complementary mode that matters whenever you've drilled into a specific session: *"search this conversation only"* (or *"this project only,"* for Claude Code sessions grouped under a `cwd`). In Claude Explorer, that's a **pin**.
+
+There's a small `Search scope` button next to the conversation title with a dropdown carrying two entries: `Pin this conversation` and (when applicable) `Pin this project`. Click one and you're scoped; the SearchPanel sprouts a chip that says `In: <Conversation Title>` (or the project name), and the sidebar dims any rows that fall outside the scope so you can see at a glance what's currently in play.
+
+This design owes a lot to chip-style scope indicators in macOS Finder, GitHub's repo and org search, and Slack's channel/DM filter; the pattern works because it makes a *mode* visible at the point of decision, instead of hiding it behind a toggle the user might forget they set. The dim, rather than a hard filter, was a deliberate call: the sidebar already does real filtering through the `All / Claude Desktop / Claude Code` source dropdown, and stacking two different *"not applicable"* semantics (*hidden* and *grayed*) would make the sidebar harder to read. Dim says *"still here, just not in scope right now,"* which is a clear description of the state.
+
+The pin is *sticky*. It survives panel close, conversation switching, and a full page reload, because the scope is encoded in the URL as `?pin=conv:<uuid>` or `?pin=project:<path>` rather than in component state. That makes it shareable too; paste a URL with a pin param and the recipient ends up in the same scoped mode.
+
+The pin clears on exactly two events: the user clicks the explicit *unpin* control (either the chip's `×` or the `Unpin and search all →` button that appears in the empty state of a scoped search), or the user types in the **sidebar's title-search box**. That second rule is worth a sentence: the sidebar's title-search is global by construction (it filters the visible conversation list across the entire archive), so running one is the user signaling *"I want to broaden,"* and the pin clears to match.
+
+`⌘+G` honors the scope: when you're pinned to a conversation, `⌘+G` wraps within that conversation's matches; pinned to a project, it wraps within all sessions in that project. The aria-live region in the SearchPanel header announces *"Match N of M"* as you advance, so screen-reader users hear the change without focus moving; `⌘+G` is *"find again,"* and find-again should never yank focus out of the input.
+
+Press Enter on a result to focus the corresponding message bubble (the panel stays open); press Esc to close the panel and stay on whatever message you ended up on, ready to scroll and read with `j` / `k`. Again, `⌘+C` will copy the contents of the message that's in focus.
+
+### Emacs by default, Vim for you heathens 😉
+
+By default, the app uses an Emacs-ish set of bindings (which you're probably used to from `bash` / `zsh` / etc), because a lot of us already have those muscle memories from terminals and editors:
+
+- `Ctrl+N` / `Ctrl+P` move within the focused pane.
+- `Alt+N` / `Alt+P` page (within the conversation detail).
+- `Alt+<` / `Alt+>` jump to first / last message.
+- `Esc` exits the current focus mode (or pops you back to the sidebar).
+- `Ctrl+C` behaves as you'd expect in a UI that respects copy behavior.
+- `⌘+F` (or `Ctrl+F`) toggles the full-text search panel. Yes, that overrides the classic Emacs `forward-char` reflex; in practice the app is for reading and searching, not editing text, and `⌘+F` for "find" is the muscle memory most people are reaching for here anyway.
+
+If Vim is more your speed, you can opt in on the settings page. In Vim mode, `j` / `k` move line by line, `g` / `G` jump to top and bottom (single-key rather than `gg`), and `/` starts search; the UI still keeps the same explicit focus model, so Vim keys never leak into the wrong pane.
+
+There are also a few bindings that are specific to the *"read a conversation"* experience. In the detail pane, `u` and `a` jump to the next user message and the next assistant message; `U` and `A` reverse direction. I like these because they let you skim by speaker, which is often how you want to review a long thread. If you're hunting for *"what did I actually ask?"* you can jump by `u`; if you're hunting for *"where did the assistant propose that design?"* you can jump by `a`.
+
+The UI also binds `⌘+R` to the refresh action (the same one the sidebar button triggers) so you don't accidentally reload the single-page app and lose your place. This is one of those *"engineers wrote this UI for themselves"* decisions; we all have that reflexive `⌘+R` habit, and it's nicer to make it do the right thing than to scold people for having muscle memory.
+
+If you ever forget a binding, hit `?` to open the help modal. The modal lists every binding for both modes; it's the cheat sheet you'd otherwise keep in a note somewhere, except you don't have to keep it.
+
+### Sidebar navigation polish
+
+One last bit of polish in the sidebar that ties this all together: when you press `Ctrl+P` or `Ctrl+N` to step through sessions, the UI does not eagerly load each conversation as you scroll. It blanks the conversation pane and renders a hint ("Hit `Enter` to select this conversation.") instead. Loading a heavy session is an explicit action; you scan the list with your fingers on the keyboard, and you only commit to opening one when you actually want to read it. That single decision is the difference between *"keyboard nav is fast"* and *"keyboard nav makes the whole app feel slow because every step opens a new conversation."*
+
+### Performance (FTS5 index)
+
+Skip ahead if the internal architecture doesn't interest you. The rest of this section covers the FTS5 search index under the hood.
+
+Under the hood, a **SQLite FTS5 inverted index** built at backend startup is what keeps things fast, even on archives in the thousands of conversations; the same watcher that protects the CC image cache keeps it warm as new conversations land. The pre-FTS5 path (`orjson` parsing plus an mtime-keyed `FileCache` plus parallel reads via a `ThreadPoolExecutor`) is still in the codebase as a safety-net fallback that triggers if FTS5 isn't available (some Linux distros' stock sqlite3 builds) or if the index hasn't finished its first walk yet. So search never goes "down": the FTS5 path is fast, and the fallback is correct.
+
+Performance-wise, the tuned FTS5 path is fast enough that you stop thinking about it on a typical archive. The numbers below come from `scripts/bench_perf.py` running against my own data directory (about 800 conversations across Desktop and Claude Code, several hundred MB of JSON on disk, warm OS file cache, FTS5 index built), so they should give you a realistic feel rather than a synthetic best case.
+
+The gap between the old linear scan and the FTS5 index is large enough to feel:
 
 | Query | Pre-FTS5 (linear scan) | FTS5 (current) | Speedup |
 |---|---|---|---|
@@ -158,122 +235,19 @@ The headline change is that the search path is now a **SQLite FTS5 inverted inde
 
 That's well inside the *"feels interactive"* zone for the UI work it powers; the sidebar paints, the search palette returns hits, and `⌘+K` doesn't make you sit and wait.
 
-Under the hood, the FTS5 index is built at backend startup and updated continuously by the same watcher that protects the CC image cache, so it stays warm as new conversations come in. The pre-FTS5 path (`orjson` parsing plus an mtime-keyed `FileCache` plus parallel reads via a `ThreadPoolExecutor`) is still in the codebase as a safety-net fallback that triggers if FTS5 isn't available (some Linux distros' stock sqlite3 builds) or if the index hasn't finished its first walk yet. So search never goes "down": the FTS5 path is fast, and the fallback is correct.
-
 If you want to take your own measurements, the bench script ships with the repo.
-
-So: `⌘+K` gets you to a match quickly. The next question is what you do once you're staring at the match, because most of the time you want to move through matches and copy the useful bits out.
-
-## Search-and-Copy Navigation (`⌘+G`, `⌘+C`, `⌘+F`)
-
-After you run a search, you're usually in a loop: find a match, read around it, hop to the next one, then copy something out. Claude Explorer supports that loop with a small set of bindings that are easy to memorize because they mirror what many of us already use in editors.
-
-![[Pasted image 20260428102508.png]]
-
-`⌘+G` advances to the next match across the whole result set; `⌘+Shift+G` goes backward. The search panel header carries a small inline "N of M matches" counter, and there's also a screen-reader-only aria-live region that announces the same "Match N of M" string as you advance, so sighted users get the affordance inline and screen-reader users hear the change without focus moving. Either way, your brain relaxes because it always answers *"where am I in this set?"* without you having to count anything.
-
-The best part is that `⌘+G` works across the whole result set, jumping between conversations as naturally as it does between matches in a single thread. If match #7 is in one conversation and match #8 is in another, `⌘+G` takes you there anyway; you keep your hands on the keyboard and you keep moving forward. Under the hood, the UI takes a synchronous fast path for in-conversation matches, then warms the target conversation's data in the background so the cross-conversation jump feels instant. In practice, you can treat a search result set like a playlist; you hit `⌘+G` until you see the thing you wanted, and you never have to re-open the palette unless you want a different query.
-
-Once a match is focused, `⌘+C` copies the focused message cell to your clipboard. Most conversation viewers make you drag-select text inside a bubble, which is fine for one-off copying but slow when you're collecting multiple snippets for notes; here, focus is explicit, so copy is explicit, and you can search, move, copy, and repeat without switching modes.
-
-If you want to adjust the query instead of navigating matches, `⌘+F` jumps focus into the find input. Combined with the *"select a hit and focus the matching cell"* behavior, this makes a nice one-handed flow: run `⌘+K`, pick a hit, then do `⌘+F` to tweak the query or refine it, and `⌘+C` to copy the focused cell. It's the kind of thing you only notice after you've done it a dozen times, which is exactly the point; the best UI features are the ones you stop noticing because they match how you already work.
-
-By the way, *"copy the focused cell"* means *"copy what you're looking at."* The clipboard payload is the message text, plus the speaker and timestamp; if the cell is a tool block (and you've toggled tool blocks on, which we'll get to), you get the tool input or output verbatim. There's no separate "copy as plain text" / "copy as Markdown" mode for the cell; the surrounding viewer already controls how content is presented, and copy mirrors that.
-
-### Scoping Search to a Conversation or Project (Pin)
-
-Search defaults to global, which is the behavior most people expect; you opened the app to find something across the whole archive. There's also a complementary mode that matters whenever you've drilled into a specific session: *"search this conversation only"* (or *"this project only,"* for Claude Code sessions grouped under a `cwd`). In Claude Explorer, that's a **pin**.
-
-There's a small `Search scope` button next to the conversation title with a dropdown carrying two entries: `Pin this conversation` and (when applicable) `Pin this project`. Click one and you're scoped; the SearchPanel sprouts a chip that says `In: <Conversation Title>` (or the project name), and the sidebar dims any rows that fall outside the scope so you can see at a glance what's currently in play.
-
-This design owes a lot to chip-style scope indicators in macOS Finder, GitHub's repo and org search, and Slack's channel/DM filter; the pattern works because it makes a *mode* visible at the point of decision, instead of hiding it behind a toggle the user might forget they set. The dim, rather than a hard filter, was a deliberate call: the sidebar already does real filtering through the `All / Claude Desktop / Claude Code` source dropdown, and stacking two different *"not applicable"* semantics (*hidden* and *grayed*) would make the sidebar harder to read. Dim says *"still here, just not in scope right now,"* which is a more honest description of the state.
-
-The pin is *sticky*. It survives panel close, conversation switching, and a full page reload, because the scope is encoded in the URL as `?pin=conv:<uuid>` or `?pin=project:<path>` rather than in component state. That makes it shareable too; paste a URL with a pin param and the recipient ends up in the same scoped mode.
-
-The pin clears on exactly two events: the user clicks the explicit *unpin* control (either the chip's `×` or the `Unpin and search all →` button that appears in the empty state of a scoped search), or the user types in the **sidebar's title-search box**. That second rule is worth a sentence: the sidebar's title-search is global by construction (it filters the visible conversation list across the entire archive), so running one is the user signaling *"I want to broaden,"* and the pin clears to match.
-
-`⌘+G` honors the scope: when you're pinned to a conversation, `⌘+G` wraps within that conversation's matches; pinned to a project, it wraps within all sessions in that project. The aria-live region in the SearchPanel header announces *"Match N of M"* as you advance, so screen-reader users hear the change without focus moving; `⌘+G` is *"find again,"* and find-again should never yank focus out of the input.
-
-Press Enter on a result to focus the corresponding message bubble (the panel stays open); press Esc to close the panel and stay on whatever message you ended up on, ready to scroll and read with `j` / `k`.
-
-With search and match navigation in hand, we can step back to the bigger navigation story, because this app is intentionally keyboard-friendly in a way that most web apps are not.
-
-## Three-Pane Keyboard Navigation (Emacs by Default, Vim for You Heathens 😉)
-
-Claude Explorer is really a three-pane app: the sidebar on the left, the conversation detail on the right, and a transient search palette that pops in over the top when you hit `⌘+K`. Two of those panes are always there and the third is on demand, which is great visually, but it can become a keyboard mess if the app doesn't make focus explicit; you end up with half-working shortcuts, random scroll capture, and that familiar feeling of *"why did the key I just pressed do something totally different than it did five seconds ago?"*
-
-One quick note on key labels: throughout this section I write shortcuts using the `⌘` glyph because I'm on macOS; on Windows and Linux, every place you see `⌘`, use `Ctrl` instead. The code in `frontend/src/hooks/useKeyboardShortcuts.ts` accepts both modifiers (`metaKey || ctrlKey`), so the shortcuts work everywhere; only the labels are Mac-flavored.
-
-### The focus model
-
-This UI avoids that by making one idea load-bearing: exactly one of `{sidebar, detail}` has focus at any moment, and the keys apply to the focused pane only. Click anywhere in either pane (background included) to focus it; use `Enter` to descend from the sidebar into the detail pane, and `Esc` to pop focus back to the sidebar. Once you internalize that model, everything else becomes predictable.
-
-![[Pasted image 20260428102944.png]]
-
-### Emacs default, Vim opt-in
-
-By default, the app uses an Emacs-ish set of bindings, because a lot of us already have those muscle memories from terminals and editors:
-
-- `Ctrl+N` / `Ctrl+P` move within the focused pane.
-- `Alt+N` / `Alt+P` page (within the conversation detail).
-- `Alt+<` / `Alt+>` jump to first / last message.
-- `Esc` exits the current focus mode (or pops you back to the sidebar).
-- `Ctrl+C` behaves as you'd expect in a UI that respects copy behavior.
-- `⌘+F` (or `Ctrl+F`) toggles the full-text search panel. Yes, that overrides the classic Emacs `forward-char` reflex; in practice the app is for reading and searching, not editing text, and `⌘+F` for "find" is the muscle memory most people are reaching for here anyway.
-
-If Vim is more your speed, you can opt in on the settings page. In Vim mode, `j` / `k` move line by line, `g` / `G` jump to top and bottom (single-key, not `gg`), and `/` starts search; the UI still keeps the same explicit focus model, so Vim keys never leak into the wrong pane.
-
-There are also a few bindings that are specific to the *"read a conversation"* experience. In the detail pane, `u` and `a` jump to the next user message and the next assistant message; `U` and `A` reverse direction. I like these because they let you skim by speaker, which is often how you want to review a long thread. If you're hunting for *"what did I actually ask?"* you can jump by `u`; if you're hunting for *"where did the assistant propose that design?"* you can jump by `a`.
-
-The UI also binds `⌘+R` to the refresh action (the same one the sidebar button triggers) so you don't accidentally reload the single-page app and lose your place. This is one of those *"engineers wrote this UI for themselves"* decisions; we all have that reflexive `⌘+R` habit, and it's nicer to make it do the right thing than to scold people for having muscle memory.
-
-If you ever forget a binding, hit `?` to open the help modal. The modal lists every binding for both modes; it's the cheat sheet you'd otherwise keep in a note somewhere, except you don't have to keep it.
-
-### How the shortcut routing works
-
-The only tiny bit of code I'll show in this part is the shape of the keyboard shortcut hook, because it communicates the design without turning this into an internals article:
-
-```ts
-// Inputs that opt-in to letting specific global shortcuts (⌘+K, ⌘+F,
-// ⌘+G, ⌘+Shift+G, Escape) still fire even while they hold focus.
-// The SearchPanel input sets this attribute so typing in it doesn't block
-// its own navigation shortcuts.
-function allowsShortcuts(target: EventTarget | null): boolean {
-  if (!target || !(target instanceof HTMLElement)) return false
-  return target.closest('[data-allow-shortcuts]') !== null
-}
-
-const cmdOrCtrl = e.metaKey || e.ctrlKey
-
-// ⌘+R triggers the same Build-9 capture+fetch pipeline the sidebar
-// Refresh button runs (preventDefault stops the browser-level reload
-// so the SPA state survives).
-if (e.key === 'r' && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-  e.preventDefault()
-  if (!isRefreshRunning) {
-    startRefresh(true)
-  }
-  return
-}
-```
-
-The important thing is not the implementation; it's that the app routes shortcuts through explicit focus and explicit actions, so the behavior remains stable as the UI grows. If you've ever tried to retrofit good keyboard navigation into an app after the fact, you know why I'm smiling as I type that sentence; I commented the heck out of it when I first saw it working consistently.
-
-### Sidebar navigation polish
-
-One last bit of polish in the sidebar that ties this all together: when you press `Ctrl+P` or `Ctrl+N` to step through sessions, the UI does not eagerly load each conversation as you scroll. It blanks the conversation pane and renders a hint ("Hit `Enter` to select this conversation.") instead. Loading a heavy session is an explicit action; you scan the list with your fingers on the keyboard, and you only commit to opening one when you actually want to read it. That single decision is the difference between *"keyboard nav is fast"* and *"keyboard nav makes the whole app feel slow because every step opens a new conversation."*
-
-Now that we can move around efficiently, we can look at what it feels like to read a session in the detail pane.
 
 ## Reading Individual Sessions
 
+Now that we can move around efficiently, we can look at what it feels like to read a session in the detail pane.
+
 When you select a conversation in the sidebar (and hit `Enter`, because loading is explicit), the detail pane renders the full session as a sequence of message bubbles. The goal here is straightforward: preserve the structure of the original exchange, but make it easy to skim, search, and export.
 
-![[Pasted image 20260428103419.png]]
+![[Pasted image 20260515131449.png]]
 
 ### Timestamps and content blocks
 
-Each message shows a local timestamp, on both sides of the conversation. That matters more than you'd think, because time is part of the story; *"this was a ten-minute back-and-forth"* feels different than *"this took three hours and spanned lunch."* Putting timestamps in local time keeps it readable without mental arithmetic.
+Each message shows a local timestamp, on both sides of the conversation. That matters more than you'd think, because time is part of the story; *"this was a ten-minute back-and-forth"* feels different than *"this took three hours and spanned lunch."*
 
 Messages can contain multiple content blocks. In practice, you'll see three:
 
@@ -285,19 +259,25 @@ Messages can contain multiple content blocks. In practice, you'll see three:
 
 Image attachments live next to the content blocks rather than inside them; Claude Desktop ships them on the message itself (in `files[]`), and the viewer renders them inline as thumbnails. Single attachments display at their natural aspect ratio (capped to a readable height); multiple attachments fall into a tidy two-column grid of square tiles, with a `+N` overflow tile when a single message carries more than five images.
 
+![[Pasted image 20260515132702.png]]
+
 Click any thumbnail and a full-screen lightbox opens; arrow keys move between images, `Esc` closes, `d` downloads, and `o` opens the original in a new tab.
 
 The thumbnail and the lightbox both load through the same local backend proxy that handles your other Claude Desktop fetches, so images keep working even when you're offline from claude.ai itself. The proxy refuses any request that tries to escape the data directory via `..` or absolute-path injection: `/api/attachments` and `/api/cc-image` both resolve the request path against the configured root and refuse with a 4xx error if it doesn't fall inside, so no amount of clever URL crafting can read a file outside `~/.claude-explorer/`.
 
 ### Image caching (Desktop and Claude Code)
 
-Images live in two different places depending on which Claude they came from, and Claude Explorer keeps a permanent local copy of both so they don't disappear from under you. Claude Desktop attachments (images, PDFs, anything else attached to a message) come down with the conversation fetch and live at `~/.claude-explorer/files/<conv-uuid>/<file-uuid>/{thumbnail|preview|original|document}`.
+Images live in two places depending on which Claude they came from. Claude Desktop attachments (images, PDFs, anything else attached to a message) come down with the conversation fetch. Claude Code is more interesting: it stores its image-cache files at `~/.claude/image-cache/<sess>/<N>.png` and **deletes them on its own rotation schedule**, so a screenshot you pasted last month may already be gone by the time you go looking for it. Claude Explorer keeps its own permanent local copy of both — and the `install-watcher` you ran during install is what makes that protection always-on, even while the dev server isn't running.
 
-Claude Code is more interesting: it stores image-cache files at `~/.claude/image-cache/<sess>/<N>.png` and rotates them on its own schedule, so a screenshot you pasted last month may already be gone.
+#### Under the hood (for the curious)
 
-Claude Explorer copies referenced image-cache files into `~/.claude-explorer/cc-images/<sess>/<sess>--<N>.<sha8>.<ext>` along three independent paths: eagerly when the back end reads the conversation, lazily when the viewer requests an image via `/api/cc-image`, and continuously via a 5-second background watcher that walks the live image-cache directory and copies anything new. Three paths because losing an image is irreversible (by the time the explorer notices CC has rotated a file, the bytes are gone), so the cache opportunistically captures everything that exists at any moment we're observing.
+Desktop attachments land at `~/.claude-explorer/files/<conv-uuid>/<file-uuid>/{thumbnail|preview|original|document}` as part of the fetch.
 
-On top of those three, every `claude-explorer serve` start kicks off a background walk that warms the cache for any session you haven't yet opened in the UI; you no longer need to remember to run anything. There *is* a `claude-explorer warm-cc-cache` CLI command for when you want to force a re-walk right now (or when the launchd watcher is doing the heavy lifting and you'd like one-shot diagnostics); it's an override for cases the background watcher doesn't cover.
+Claude Code images get mirrored into `~/.claude-explorer/cc-images/<sess>/<sess>--<N>.<sha8>.<ext>` along three independent paths: eagerly when the back end reads the conversation, lazily when the viewer requests an image via `/api/cc-image`, and continuously via an event-driven background watcher (`watchdog` on top of FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) with a 10-minute backstop poll for the rare event the OS drops or coalesces. Three paths because losing an image is irreversible — by the time the explorer notices CC has rotated a file, the bytes are gone — so the cache opportunistically captures everything that exists at any moment we're observing. The mirror is content-addressed (sha8 in the filename) and append-only, so duplicates dedup and a captured image stays captured.
+
+`install-watcher` extends that protection beyond the `claude-explorer serve` lifetime: launchd on macOS, a systemd user unit on Linux, Task Scheduler on Windows, all running the same event-driven watcher continuously at login, with restart-on-crash. The CLI dispatches by `sys.platform` so a single command works everywhere; verify with `launchctl list | grep claude-explorer` (or `systemctl --user status claude-explorer-cc-watcher.service`, or `schtasks /Query /TN ClaudeExplorerCCWatcher`). On Linux, one extra step (`sudo loginctl enable-linger $USER`) keeps it alive across logout — without that, your watcher pauses every time you close the GUI session, and so does your protection.
+
+There's also a `claude-explorer warm-cc-cache` command for forcing a one-shot re-walk; you shouldn't normally need it — the background watcher covers normal use.
 
 ### Tool blocks and slash commands
 
@@ -394,7 +374,19 @@ At this point, we've covered the UI tour: install and first run, the unified sid
 
 ## Your History, On Your Disk
 
-Claude Desktop keeps your conversations server-side; Claude Code keeps sessions on your machine but doesn't give you UI to browse them. Claude Explorer takes those two realities and gives you a single archive you can read and search locally, without needing to remember which interface holds which half of your history.
+Claude Desktop keeps your conversations server-side, so you need to be online and signed in to read them; Claude Code keeps sessions on your machine, but by default it deletes session transcripts older than 30 days from `~/.claude/projects/` at startup (and rotates its image cache off disk on its own schedule). The session-transcript retention is controlled by the `cleanupPeriodDays` setting in `~/.claude/settings.json`; the default is 30, the minimum is 1, and a large value like 36500 effectively preserves transcripts indefinitely:
+
+```json
+{
+  "cleanupPeriodDays": 36500
+}
+```
+
+I learned about that setting the hard way: Claude Code deleted a batch of sessions out from under me one morning, and I had to restore them from Time Machine. Add the setting before you start trusting your local archive.
+
+If you're on a Mac and you've already been bitten, `utils/restore-deleted-sessions-and-images.sh` in the repo will pull both the missing session JSONLs and the image-cache PNGs back out of a Time Machine disk. It walks Time Machine snapshots newest-first, restores anything that's gone from `~/.claude/projects/` and `~/.claude/image-cache/`, refuses to overwrite files that still exist, and supports `--dry-run` so you can see the plan before anything moves.
+
+Claude Explorer takes those realities and gives you a single archive you can read and search locally, without needing to remember which interface holds which half of your history or whether the bit you want has already aged out.
 
 The payoff is not that the UI is pretty (it's fine), or that the keyboard shortcuts are clever (they're consistent), or that export works (it does). The payoff is that the long sessions you almost remember, the ones that taught you something real, stop being ephemeral. You can find them again, quote them, reuse them, and hand them to your future self, who will actually be able to read them.
 

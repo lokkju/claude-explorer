@@ -122,26 +122,39 @@ claude-explorer serve --port 9000
 claude-explorer serve --reload
 ```
 
-#### `claude-explorer install-watcher` (macOS — strongly recommended)
+#### `claude-explorer install-watcher` (cross-platform — strongly recommended)
 
-Install a launchd job that runs the CC image-cache watcher
+Install a supervised job that runs the CC image-cache watcher
 continuously, independent of `claude-explorer serve`. **Without this,
 the watcher only runs while the dev server is up — Claude Code can
 rotate images off disk during downtime, causing permanent data loss.**
 
+The CLI dispatches by `sys.platform`:
+
+  * macOS  → launchd user agent (`~/Library/LaunchAgents/com.claude-explorer.cc-watcher.plist`)
+  * Linux  → systemd user unit (`~/.config/systemd/user/claude-explorer-cc-watcher.service`); also run `sudo loginctl enable-linger $USER` to survive logout
+  * Windows → Task Scheduler task `ClaudeExplorerCCWatcher` (logon-triggered, runs the launcher at `%USERPROFILE%\.claude-explorer\cc-watcher.py` via `pythonw.exe`)
+
+The watcher uses **`watchdog` for event-driven capture** (FSEvents on
+macOS, inotify on Linux, ReadDirectoryChangesW on Windows) — sub-
+second latency, near-zero idle CPU. A periodic backstop poll
+(default 600s = 10 min, overridable via `--interval` or env var
+`CLAUDE_EXPLORER_CC_WATCHER_INTERVAL_SEC`) catches the rare event the
+OS dropped or coalesced.
+
 ```bash
-# Install (writes ~/Library/LaunchAgents/com.claude-explorer.cc-watcher.plist
-# and `launchctl load`s it; runs at login, restarts on crash):
 uv run claude-explorer install-watcher
 
-# Verify it's running:
-launchctl list | grep claude-explorer
+# Verify (per platform):
+launchctl list | grep claude-explorer                                 # macOS
+systemctl --user status claude-explorer-cc-watcher.service            # Linux
+schtasks /Query /TN ClaudeExplorerCCWatcher                           # Windows
 
-# Logs:
+# Logs (macOS):
 tail -f ~/Library/Logs/claude-explorer-cc-watcher.{out,err}
 
-# Customize scan interval (default 5s):
-uv run claude-explorer install-watcher --interval 10
+# Tune the backstop poll interval (default 600s):
+uv run claude-explorer install-watcher --interval 60
 
 # Uninstall:
 uv run claude-explorer install-watcher --uninstall
@@ -152,8 +165,9 @@ uv run claude-explorer install-watcher --uninstall
 Force a rebuild of the SQLite FTS5 search index at
 `~/.claude-explorer/search-index.sqlite`. **You should not need this in
 normal operation:** the index is built automatically at backend startup
-(non-blocking lifespan task) and kept in sync by the same 5s watcher
-loop that handles CC images. Use only when:
+(non-blocking lifespan task) and kept in sync by the same watcher
+loop that handles CC images (event-driven via `watchdog`, with a
+600s backstop poll). Use only when:
 
 - the index file got corrupted (delete it, then run this);
 - you want a known-fresh full rebuild;
@@ -182,8 +196,10 @@ uv run claude-explorer reindex-search --drift
   Result: byte-for-byte identical `SearchResult` shape to the linear
   path for whole-word queries.
 - The CC image watcher (`backend/cc_image_watcher.py:scan_once`) runs
-  the search-index drift pass once per scan (5s); failures in either
-  pass are isolated.
+  the search-index drift pass once per backstop scan (600s default).
+  Image-cache events fire instantly via `watchdog` but do NOT trigger
+  a drift pass — search picks up new sessions on the next backstop
+  poll. Failures in either pass are isolated.
 
 If you change the schema, bump `backend/search_index.SCHEMA_VERSION`
 and the next process startup will drop+rebuild on its own.

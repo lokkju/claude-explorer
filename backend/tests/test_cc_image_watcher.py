@@ -236,3 +236,234 @@ def test_source_rotated_between_scans_does_not_break_watcher(watcher_env):
     # Subsequent scan does NOT re-handle the missing path.
     handled = cc_image_watcher.scan_once()
     assert handled == 0
+
+
+# ---------------------------------------------------------------------------
+# Event-driven path (watchdog migration, 2026-05-15)
+# ---------------------------------------------------------------------------
+#
+# The production code uses ``watchdog.observers.Observer`` which auto-
+# selects the OS-native backend (FSEvents/inotify/RDCW). FSEvents in
+# particular is hard to test deterministically — events fire on the
+# kernel's own schedule, with macOS-specific coalescing latencies of
+# a few hundred ms even in the best case. So these tests use
+# ``watchdog.observers.polling.PollingObserver`` directly with a tight
+# poll interval, which is the same code path the production
+# auto-selector falls back to on unsupported filesystems (NFS, etc.)
+# and on sandboxed Pythons. Behaviorally identical from the watcher's
+# perspective; just deterministic on CI.
+
+
+def test_handle_one_path_idempotent(watcher_env):
+    """Calling handle_one_path twice on the same file does NOT
+    re-cache. Pins the per-process _seen guarantee that both
+    scan_once and the event handler depend on for dedup.
+    """
+    from backend import cc_image_watcher
+
+    _drop_image(watcher_env["image_cache"], "sess-once", "1", TINY_PNG_BYTES)
+    src = watcher_env["image_cache"] / "sess-once" / "1.png"
+
+    assert cc_image_watcher.handle_one_path(src) is True
+    assert cc_image_watcher.handle_one_path(src) is False
+    cached = _cached_files(watcher_env["perm_cache_root"], "sess-once", "1")
+    assert len(cached) == 1
+
+
+def test_handle_one_path_skips_non_image(watcher_env):
+    """Non-image suffixes are remembered as ignored; not retried."""
+    from backend import cc_image_watcher
+
+    sess_dir = watcher_env["image_cache"] / "sess-skip"
+    sess_dir.mkdir(parents=True)
+    src = sess_dir / "notes.txt"
+    src.write_bytes(b"not an image")
+
+    assert cc_image_watcher.handle_one_path(src) is False
+    # Marked seen so subsequent calls don't re-stat.
+    assert src in cc_image_watcher._seen
+
+
+def test_handle_one_path_missing_file_returns_false(watcher_env):
+    """A path that doesn't exist returns False without raising."""
+    from backend import cc_image_watcher
+
+    src = watcher_env["image_cache"] / "sess-gone" / "1.png"
+    assert cc_image_watcher.handle_one_path(src) is False
+
+
+def test_event_handler_funnels_create_through_handle_one_path(watcher_env):
+    """The watchdog FileSystemEventHandler fires handle_one_path on
+    create events. Pinned via direct synthetic event injection so we
+    don't depend on a live FSEvents/inotify backend.
+
+    Bug it would surface: an event handler that swallows or
+    misroutes events would silently regress the latency win the
+    whole watchdog migration is for.
+    """
+    from backend import cc_image_watcher
+
+    sess_dir = watcher_env["image_cache"] / "sess-evt"
+    sess_dir.mkdir(parents=True)
+    src = sess_dir / "1.png"
+    src.write_bytes(TINY_PNG_BYTES)
+
+    handler = cc_image_watcher._build_event_handler()
+
+    class _FakeEvent:
+        def __init__(self, src_path: str, is_directory: bool = False) -> None:
+            self.src_path = src_path
+            self.is_directory = is_directory
+
+    handler.on_created(_FakeEvent(str(src)))
+    cached = _cached_files(watcher_env["perm_cache_root"], "sess-evt", "1")
+    assert len(cached) == 1
+    assert cached[0].read_bytes() == TINY_PNG_BYTES
+
+    # Idempotent: repeat event is a no-op.
+    handler.on_created(_FakeEvent(str(src)))
+    cached2 = _cached_files(watcher_env["perm_cache_root"], "sess-evt", "1")
+    assert len(cached2) == 1
+
+
+def test_event_handler_ignores_directory_events(watcher_env):
+    """Directory-create events (e.g., a new sess-XXX subdir) must
+    not be treated as files. A bare on_created on a dir would have
+    handle_one_path attempt path.is_file() → False, so this is a
+    cheap-but-real correctness pin.
+    """
+    from backend import cc_image_watcher
+
+    sess_dir = watcher_env["image_cache"] / "sess-dir"
+    sess_dir.mkdir(parents=True)
+
+    handler = cc_image_watcher._build_event_handler()
+
+    class _FakeDirEvent:
+        src_path = str(sess_dir)
+        is_directory = True
+
+    handler.on_created(_FakeDirEvent())
+    # Dir wasn't added to _seen — it was filtered by is_directory check.
+    assert sess_dir not in cc_image_watcher._seen
+
+
+def test_run_watcher_with_pollingobserver_captures_event(watcher_env, monkeypatch):
+    """End-to-end: drop a file AFTER run_watcher has started its
+    Observer; the event-driven path picks it up before the backstop
+    poll fires.
+
+    Uses PollingObserver (deterministic) substituted into
+    ``_try_start_observer`` so the test doesn't depend on FSEvents
+    being available in the test runner's sandbox.
+    """
+    import asyncio
+
+    from watchdog.observers.polling import PollingObserver
+
+    from backend import cc_image_watcher
+
+    # Force PollingObserver with a tight 100ms poll so the test
+    # finishes in well under the backstop interval.
+    def _fake_try_start_observer():
+        from watchdog.events import FileSystemEventHandler
+
+        class _Handler(FileSystemEventHandler):
+            def on_created(self, event):
+                if not event.is_directory:
+                    cc_image_watcher.handle_one_path(__import__("pathlib").Path(event.src_path))
+            def on_modified(self, event):
+                if not event.is_directory:
+                    cc_image_watcher.handle_one_path(__import__("pathlib").Path(event.src_path))
+
+        observer = PollingObserver(timeout=0.1)
+        root = cc_image_watcher._live_image_cache_root()
+        root.mkdir(parents=True, exist_ok=True)
+        observer.schedule(_Handler(), str(root), recursive=True)
+        observer.start()
+        return observer
+
+    monkeypatch.setattr(
+        cc_image_watcher, "_try_start_observer", _fake_try_start_observer
+    )
+    # Make backstop interval enormous so we know the win came from
+    # events, not from a backstop scan.
+    monkeypatch.setattr(cc_image_watcher, "SCAN_INTERVAL_SEC", 3600.0)
+
+    async def _scenario():
+        stop_event = asyncio.Event()
+        watcher_task = asyncio.create_task(
+            cc_image_watcher.run_watcher(stop_event)
+        )
+
+        # Wait briefly for Observer to come up, then drop a file.
+        await asyncio.sleep(0.3)
+        _drop_image(
+            watcher_env["image_cache"], "sess-live", "1", TINY_PNG_BYTES
+        )
+
+        # Give the Observer up to 3 seconds to notice + handle.
+        deadline = asyncio.get_event_loop().time() + 3.0
+        while asyncio.get_event_loop().time() < deadline:
+            cached = _cached_files(
+                watcher_env["perm_cache_root"], "sess-live", "1"
+            )
+            if cached:
+                break
+            await asyncio.sleep(0.1)
+
+        stop_event.set()
+        await asyncio.wait_for(watcher_task, timeout=10.0)
+
+        return _cached_files(
+            watcher_env["perm_cache_root"], "sess-live", "1"
+        )
+
+    cached = asyncio.run(_scenario())
+    assert len(cached) == 1, (
+        "Event-driven path must capture a file dropped AFTER the "
+        "watcher started, well before the backstop poll fires."
+    )
+
+
+def test_run_watcher_falls_back_to_polling_when_observer_unavailable(
+    watcher_env, monkeypatch
+):
+    """If _try_start_observer returns None (e.g., watchdog missing,
+    sandboxed Python, NFS mount), run_watcher must still complete
+    its initial + backstop scans without raising.
+
+    We force the Observer to "fail to start" and verify the initial
+    scan_once still picks up files.
+    """
+    import asyncio
+
+    from backend import cc_image_watcher
+
+    monkeypatch.setattr(cc_image_watcher, "_try_start_observer", lambda: None)
+    # Tight backstop so we don't hang the test.
+    monkeypatch.setattr(cc_image_watcher, "SCAN_INTERVAL_SEC", 0.1)
+
+    _drop_image(
+        watcher_env["image_cache"], "sess-poll-only", "1", TINY_PNG_BYTES
+    )
+
+    async def _scenario():
+        stop_event = asyncio.Event()
+        watcher_task = asyncio.create_task(
+            cc_image_watcher.run_watcher(stop_event)
+        )
+        # Initial scan is synchronous-within-task; one tick is plenty.
+        await asyncio.sleep(0.05)
+        stop_event.set()
+        await asyncio.wait_for(watcher_task, timeout=5.0)
+
+    asyncio.run(_scenario())
+
+    cached = _cached_files(
+        watcher_env["perm_cache_root"], "sess-poll-only", "1"
+    )
+    assert len(cached) == 1, (
+        "Polling-only fallback path must still process pre-existing "
+        "files via the eager initial scan_once."
+    )
