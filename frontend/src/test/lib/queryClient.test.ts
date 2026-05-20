@@ -38,3 +38,47 @@ describe('queryClient configuration (Task A6)', () => {
     expect(opts.staleTime).toBe(5 * 60 * 1000)
   })
 })
+
+// 2026-05-18 (type-assertion-lies audit): the retry callback used to read
+// `(error as any).status` — `as any` disables the type checker, so a
+// non-numeric `status` (e.g. the string '404' from a hand-rolled fake)
+// silently slipped through `=== 404` as false and we'd retry instead of
+// short-circuiting. These tests pin the contract so the narrowing rewrite
+// stays honest: only Errors with a numeric `status` of 404 short-circuit.
+describe('queryClient retry behavior (type-assertion-lies audit)', () => {
+  function retryFn() {
+    const opts = queryClient.getDefaultOptions()
+    const retry = opts.queries?.retry
+    if (typeof retry !== 'function') throw new Error('expected retry function')
+    return retry
+  }
+
+  it('does NOT retry when error is Error with numeric status 404', () => {
+    const err = Object.assign(new Error('not found'), { status: 404 })
+    expect(retryFn()(0, err)).toBe(false)
+  })
+
+  it('DOES retry when error is Error with status as a string "404"', () => {
+    // The whole point of dropping `as any`: typeof status === 'number' must
+    // be required. A string '404' is malformed; we keep retrying.
+    const err = Object.assign(new Error('boom'), { status: '404' })
+    expect(retryFn()(0, err)).not.toBe(false)
+  })
+
+  it('DOES retry when error is a plain object with status 404 (not instanceof Error)', () => {
+    // instanceof Error must remain part of the guard; the previous cast
+    // didn't check this, the narrowed form must.
+    const err = { status: 404, message: 'not found' } as unknown as Error
+    expect(retryFn()(0, err)).not.toBe(false)
+  })
+
+  it('DOES retry when error has no status field', () => {
+    const err = new Error('network')
+    expect(retryFn()(0, err)).not.toBe(false)
+  })
+
+  it('stops retrying after 5 attempts on retriable errors', () => {
+    const err = new Error('network')
+    expect(retryFn()(5, err)).toBe(false)
+  })
+})

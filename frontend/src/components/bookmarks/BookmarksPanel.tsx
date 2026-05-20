@@ -12,8 +12,16 @@ function bookmarksToMarkdown(bookmarks: Bookmark[]): string {
   const lines: string[] = ['# Bookmarks', '']
   const byConv = new Map<string, Bookmark[]>()
   for (const b of bookmarks) {
-    if (!byConv.has(b.conversation_id)) byConv.set(b.conversation_id, [])
-    byConv.get(b.conversation_id)!.push(b)
+    // Insert-or-get: the previous `byConv.get(id)!.push(b)` was logically
+    // safe (preceded by `byConv.set(id, [])`) but relied on a non-null
+    // assertion to satisfy the type checker. Hold the bucket reference
+    // directly so the type system can see it can't be undefined.
+    let bucket = byConv.get(b.conversation_id)
+    if (!bucket) {
+      bucket = []
+      byConv.set(b.conversation_id, bucket)
+    }
+    bucket.push(b)
   }
   for (const [convId, bms] of byConv.entries()) {
     lines.push(`## Conversation ${convId}`, '')
@@ -37,8 +45,12 @@ export function BookmarksPanel() {
   const grouped = useMemo(() => {
     const byConv = new Map<string, Bookmark[]>()
     for (const b of bookmarks) {
-      if (!byConv.has(b.conversation_id)) byConv.set(b.conversation_id, [])
-      byConv.get(b.conversation_id)!.push(b)
+      let bucket = byConv.get(b.conversation_id)
+      if (!bucket) {
+        bucket = []
+        byConv.set(b.conversation_id, bucket)
+      }
+      bucket.push(b)
     }
     return Array.from(byConv.entries())
   }, [bookmarks])

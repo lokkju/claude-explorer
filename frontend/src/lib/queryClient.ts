@@ -23,8 +23,17 @@ export const queryClient = new QueryClient({
       staleTime: 30 * 1000, // 30 seconds
       gcTime: 10 * 60 * 1000, // 10 minutes — React Query v5 (renamed from cacheTime).
       retry: (failureCount, error) => {
-        // Don't retry 404s
-        if (error instanceof Error && 'status' in error && (error as any).status === 404) {
+        // Don't retry 404s. The previous form used `(error as any).status`
+        // which disabled the type checker entirely — a string `"404"` from
+        // a malformed error would slip past `=== 404` as false. TS 4.9+'s
+        // `in` operator narrows `error` to `Error & Record<'status',
+        // unknown>`, so the explicit `typeof` check is now load-bearing.
+        if (
+          error instanceof Error &&
+          'status' in error &&
+          typeof error.status === 'number' &&
+          error.status === 404
+        ) {
           return false
         }
         // Retry connection errors more times (backend might be starting)

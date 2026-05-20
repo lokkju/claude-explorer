@@ -266,10 +266,16 @@ export function ConversationList({
       } else {
         groupKey = 'Untagged (re-fetch to assign workspace)'
       }
-      if (!groups.has(groupKey)) {
-        groups.set(groupKey, [])
+      // Insert-or-get pattern (was: `groups.get(k)!.push(conv)` with a
+      // non-null assertion that only satisfied the type checker). Holding
+      // the bucket reference directly removes the assertion without
+      // changing behavior.
+      let bucket = groups.get(groupKey)
+      if (!bucket) {
+        bucket = []
+        groups.set(groupKey, bucket)
       }
-      groups.get(groupKey)!.push(conv)
+      bucket.push(conv)
     }
 
     // Groups inherit sort order from their first member (conversations is already sorted by sortField/sortOrder)
