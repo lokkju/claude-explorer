@@ -1,0 +1,110 @@
+# Security
+
+## Reporting a vulnerability
+
+This is a solo-maintained project. To report a vulnerability or a suspected supply-chain issue, please:
+
+- For non-sensitive issues: open a GitHub issue at <https://github.com/rpeck/claude-explorer/issues>.
+- For anything you would not want to disclose publicly before a fix lands: email the maintainer at `raymondpeckiii@gmail.com` with the subject prefix `[claude-explorer security]`.
+
+There is no formal SLA; I aim to acknowledge within a few days and ship a fix as soon as practical.
+
+## Supply-chain audits
+
+A dated log of upstream supply-chain incidents that touched (or potentially touched) this project's dependency tree, and what we verified for each.
+
+### 2026-05-16 — Mini Shai-Hulud worm (TanStack ecosystem)
+
+**Incident.** On 2026-05-11, the Mini Shai-Hulud npm supply-chain worm (attributed by [StepSecurity](https://github.com/TanStack/router/issues/7383) to the threat group **TeamPCP**) compromised 42 packages across 84 versions in the `@tanstack/*` namespace, via a GitHub Actions cache-poisoning + OIDC-token-extraction attack chain. The payload was an ~80 KB obfuscated credential-stealer that targeted CI/CD tokens, cloud credentials, npm tokens, and SSH keys. Full advisory: [GHSA-g7cv-rxg3-hmpx](https://github.com/advisories/GHSA-g7cv-rxg3-hmpx). TanStack's postmortem: <https://tanstack.com/blog/npm-supply-chain-compromise-postmortem>.
+
+**Our exposure.** `frontend/package.json` declares two `@tanstack/*` direct dependencies. The resolved tree per `frontend/package-lock.json` is:
+
+| Package | Resolved version | Family |
+|---|---|---|
+| `@tanstack/react-query` | 5.90.21 | `query*` |
+| `@tanstack/query-core` | 5.90.20 | `query*` (transitive of `react-query`) |
+| `@tanstack/react-virtual` | 3.13.19 | `virtual*` |
+| `@tanstack/virtual-core` | 3.13.19 | `virtual*` (transitive of `react-virtual`) |
+
+**Audit result: clean.** Verified 2026-05-16. Fourteen independent checks across the dependency tree, the on-disk install, the CI configuration, the source-control history, the shipped artifact, and the maintainer's machine:
+
+*Dependency tree*
+
+1. **None of our four resolved `@tanstack/*` versions appear in [GHSA-g7cv-rxg3-hmpx](https://github.com/advisories/GHSA-g7cv-rxg3-hmpx).** The advisory covers the `router*`, `start*`, `history`, `eslint-plugin-*`, `vue-router*`, `solid-router*`, and adapter families in the 1.x version range. Our deps are in the `query*` and `virtual*` families at 5.x and 3.x respectively. The TanStack postmortem also lists the `query*`, `table*`, `form*`, `virtual*`, and `store` families as explicitly clean.
+2. **`frontend/package-lock.json` mtime is 2026-03-20** — pinned 7+ weeks before the attack. `git log -- frontend/package-lock.json` shows zero commits in the 2026-05-10..2026-05-17 attack window.
+3. **No other lockfile types are present.** No `yarn.lock`, `pnpm-lock.yaml`, or `npm-shrinkwrap.json` anywhere in the repo, so the resolved dependency tree is fully described by the single npm lockfile we audited.
+4. **None of the other named-compromised packages from the broader incident are in our tree.** Verified absence of `@opensearch-project/opensearch`, `@uipath/apollo-core`, `@squawk/*`, `mistralai`, and `guardrails-ai` from `frontend/package-lock.json`.
+
+*On-disk IoCs*
+
+5. **Zero hits for IoC strings** anywhere in `frontend/node_modules/` or `frontend/dist/`. Scanned for: `shai-hulud`, `shai_hulud`, `sha1-hulud` (typo variant), `voicproducoes`, `79ac49eedf`, the `webhook[.]site/bb8ca5f6-4175-45d2-b042-fc9ebb8170b7` exfiltration endpoint, `trufflehog`, and `git-tanstack.com`.
+6. **No malware-named files in `node_modules`.** `find frontend/node_modules` for `setup_bun.js`, `bun_environment.js`, and `router_init.js` returned zero hits.
+7. **None of our installed `@tanstack/*` packages declare `postinstall` or `preinstall` scripts.** The only `*install` hooks anywhere in `frontend/node_modules/` are `msw` (Mock Service Worker — testing library, expected) and `esbuild` (build tool, expected).
+
+*CI and source-control state*
+
+8. **`.github/workflows/` contains three files**, all hand-authored by the maintainer: `cla.yml` (CLA Assistant), `release.yml` (PyPI Trusted Publishing), `test.yml` (tests). No `codeql_analysis.yml` (a known worm-planted vector). The only `npx`/network-touching commands in any workflow are `npx playwright install --with-deps chromium` and `npx playwright test --reporter=line` — vanilla Playwright CI.
+9. **`git log --all --author="claude@users.noreply.github.com"`** returns zero matches across all refs (worm-typical author signature absent).
+
+*Project-level persistence*
+
+10. **No project-level persistence vectors.** `.vscode/tasks.json` does not exist. `.claude/` exists but contains only `settings.local.json` whose top-level keys are `["permissions"]` (no `hooks`, no IoC strings). Our `frontend/package.json` declares no `install` / `postinstall` / `preinstall` / `prepare` / `prepack` / `postpack` lifecycle scripts.
+
+*Maintainer's machine*
+
+11. **`~/.claude/settings.json` hooks block contains only legitimate, hand-authored entries:** a `Notification` hook that plays `/System/Library/Sounds/Submarine.aiff`, and a `Stop` hook that runs `~/.claude/hooks/notify-if-slow.sh`. No IoC strings in the file. The Stop-hook script is 253 bytes, mtime `2026-02-18` (3 months before the attack), plays a sound if Claude took >15s, no network calls, no shell exec, no destructive operations.
+12. **`~/.vscode/tasks.json`** does not exist.
+13. **No `gh-token-monitor` or `git-tanstack` processes running** (`ps -Ao pid,command`). No `git-tanstack.com` entry in `/etc/hosts`.
+14. **No `Shai-Hulud` repository exists under the maintainer's GitHub account** (`gh repo list rpeck`) or under any account authenticated against the local `gh` CLI. The worm's signature exfiltration artifact is absent.
+
+*Shipped artifact*
+
+15. **The shipped `frontend/dist/assets/index-*.js` bundle** (971,735 bytes, built 2026-05-13) is clean per the IoC scan in (5).
+
+**Reproducing this audit.** From the repo root:
+
+```bash
+# (A) Dependency tree
+grep -E '"@tanstack/' frontend/package-lock.json
+ls frontend/yarn.lock frontend/pnpm-lock.yaml frontend/npm-shrinkwrap.json \
+   yarn.lock pnpm-lock.yaml npm-shrinkwrap.json 2>/dev/null \
+   || echo "Clean: npm lockfile only"
+grep -E '"@opensearch-project/opensearch"|"@uipath/apollo-core"|"@squawk/|"mistralai"|"guardrails-ai"' \
+  frontend/package-lock.json
+# Cross-reference our @tanstack versions against:
+#   https://github.com/advisories/GHSA-g7cv-rxg3-hmpx
+
+# (B) On-disk IoCs
+grep -rln -i "shai.hulud\|shai_hulud\|sha1-hulud\|voicproducoes\|79ac49eedf\|webhook\.site/bb8ca5f6\|trufflehog\|git-tanstack\.com" \
+  frontend/node_modules frontend/dist
+find frontend/node_modules -type f \
+  \( -name "setup_bun.js" -o -name "bun_environment.js" -o -name "router_init.js" \)
+find frontend/node_modules -maxdepth 4 -name package.json \
+  | xargs grep -l '"postinstall"\|"preinstall"' 2>/dev/null
+# Expected hits: only msw and esbuild for the postinstall scan; zero for everything else.
+
+# (C) CI and source-control state
+ls .github/workflows/
+git log --all --author="claude@users.noreply.github.com" --oneline
+
+# (D) Project-level persistence
+ls .vscode/tasks.json .claude/ 2>&1
+python3 -c "import json; print(json.load(open('frontend/package.json'))['scripts'])"
+
+# (E) Maintainer-machine persistence
+python3 -c "import json; d=json.load(open('/Users/rpeck/.claude/settings.json')); print(json.dumps(d.get('hooks', {}), indent=2))"
+grep -iE "shai|hulud|gh-token-monitor|webhook\.site|trufflehog|voicproducoes|git-tanstack" \
+  ~/.claude/settings.json
+ls ~/.vscode/tasks.json 2>&1
+ps -Ao pid,command | grep -iE "gh-token-monitor|git-tanstack" | grep -v grep
+grep -i "git-tanstack\|tanstack" /etc/hosts
+gh repo list rpeck --limit 200 | grep -i "shai\|hulud" \
+  || echo "Clean: no Shai-Hulud repo"
+```
+
+**What this audit does NOT cover.** The audit reasons strictly about the contents of this repository plus the maintainer's local Claude / VSCode configuration. It cannot rule out:
+
+- Other machines that share npm tokens, GitHub tokens, or SSH keys with this one (a teammate's box, a CI runner with cached credentials, a personal work laptop). If any of those installed a poisoned package, the credentials they stole could in principle be used against this repo's GitHub remote later. Mitigation lives at those machines, not here.
+- Future drift: a later `npm install` against the lockfile is safe by construction (the lockfile pins exact versions), but an `npm update` or a manual edit to `package.json` followed by a re-lock could pull in compromised versions that were not yet in the GHSA at audit time. Re-run this audit before any future lockfile bump.
+
+Some claims in widely-shared social-media triage prompts about this worm (cumulative-downloads-as-infection-count, a tripwire `rm -rf ~/` payload) lack a primary technical source. None of that changes the audit conclusion (we are clean), but treat the GHSA advisory and the TanStack postmortem as the load-bearing references, and tertiary social posts as triage prose.

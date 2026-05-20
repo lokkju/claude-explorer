@@ -670,6 +670,12 @@ Pass the **parent of the dated directory** (the `<machine-uuid>` level) as `--tm
 
 ---
 
+## Security
+
+For vulnerability reporting and the running log of supply-chain audits against this project's dependency tree (most recently a check against the 2026-05-11 Mini Shai-Hulud worm that hit the `@tanstack/*` ecosystem), see [SECURITY.md](./SECURITY.md).
+
+---
+
 ## Contributing
 
 PRs welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for prerequisites, dev workflow, code style, and the CLA process.
