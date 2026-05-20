@@ -20,10 +20,11 @@ from pathlib import Path
 from typing import Any
 
 import orjson
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import get_settings
+from ..deps import refuse_if_config_corrupt
 
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
@@ -107,7 +108,13 @@ async def get_preferences() -> PreferencesEnvelope:
     return PreferencesEnvelope(version=blob["version"], data=blob["data"])
 
 
-@router.put("", response_model=PreferencesEnvelope)
+@router.put(
+    "",
+    response_model=PreferencesEnvelope,
+    # Layer 2 of PLANS/2026.05.18-config-corruption-safe-mode.md:
+    # refuse writes when config.json is corrupt. GET is unchanged.
+    dependencies=[Depends(refuse_if_config_corrupt)],
+)
 async def put_preferences(payload: PreferencesWrite) -> PreferencesEnvelope:
     if not isinstance(payload.data, dict):
         raise HTTPException(status_code=400, detail="`data` must be an object")
@@ -117,7 +124,12 @@ async def put_preferences(payload: PreferencesWrite) -> PreferencesEnvelope:
     return PreferencesEnvelope(version=blob["version"], data=blob["data"])
 
 
-@router.patch("", response_model=PreferencesEnvelope)
+@router.patch(
+    "",
+    response_model=PreferencesEnvelope,
+    # See put_preferences for Layer-2 gate rationale.
+    dependencies=[Depends(refuse_if_config_corrupt)],
+)
 async def patch_preferences(payload: PreferencesWrite) -> PreferencesEnvelope:
     if not isinstance(payload.data, dict):
         raise HTTPException(status_code=400, detail="`data` must be an object")

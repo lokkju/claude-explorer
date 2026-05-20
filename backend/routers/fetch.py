@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import AsyncGenerator, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -26,6 +26,8 @@ from fetcher.bulk_fetch import (
 )
 from fetcher.playwright_capture import capture_credentials
 from fetcher.credentials import save_credentials
+
+from ..deps import refuse_if_config_corrupt
 
 
 logger = logging.getLogger(__name__)
@@ -385,7 +387,14 @@ async def fetch_conversations_stream(
         })
 
 
-@router.post("/fetch/conversation/{uuid}")
+@router.post(
+    "/fetch/conversation/{uuid}",
+    # Layer 2 of PLANS/2026.05.18-config-corruption-safe-mode.md:
+    # writes a fresh copy of the conversation to data_dir; refuse when
+    # the config that resolved data_dir is corrupt. /fetch/status (read)
+    # is NOT gated.
+    dependencies=[Depends(refuse_if_config_corrupt)],
+)
 async def force_refetch_conversation(uuid: str) -> dict:
     """Force re-fetch of a single conversation, bypassing the incremental skip.
 
@@ -464,7 +473,13 @@ async def force_refetch_conversation(uuid: str) -> dict:
     return {"uuid": uuid, "status": "refetched", "name": full_conv.get("name", "")}
 
 
-@router.get("/fetch/start")
+@router.get(
+    "/fetch/start",
+    # Layer 2: refuse when config corrupt. The gate fires before the
+    # StreamingResponse is constructed so the client sees a real
+    # HTTP 503, not a stream emitting SSE `error` frames after 200 OK.
+    dependencies=[Depends(refuse_if_config_corrupt)],
+)
 async def fetch_conversations(
     incremental: bool = True,
     # Hunt #4 (API boundaries): bound to positive ints up to 5000.
@@ -1131,7 +1146,13 @@ async def refresh_pipeline_stream(
         _refresh_in_progress = False
 
 
-@router.get("/fetch/refresh")
+@router.get(
+    "/fetch/refresh",
+    # Layer 2: see /fetch/start for SSE-timing rationale. /fetch/refresh
+    # is the primary user-visible writer path (sidebar Refresh button),
+    # so this is the single most important gate.
+    dependencies=[Depends(refuse_if_config_corrupt)],
+)
 async def refresh_pipeline(
     incremental: bool = True,
     # Hunt #4 (API boundaries): same bound as /fetch/start.

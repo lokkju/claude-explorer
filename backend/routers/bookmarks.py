@@ -28,8 +28,10 @@ from pathlib import Path
 from typing import Literal
 
 import orjson
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
+
+from ..deps import refuse_if_config_corrupt
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +153,16 @@ async def list_bookmarks() -> BookmarkList:
     return BookmarkList(bookmarks=_read_all())
 
 
-@router.post("", response_model=Bookmark, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=Bookmark,
+    status_code=status.HTTP_201_CREATED,
+    # Layer 2 of PLANS/2026.05.18-config-corruption-safe-mode.md:
+    # refuse writes when config.json is corrupt to avoid orphaning the
+    # archive at the default data_dir. GET (list_bookmarks) is NOT
+    # gated — the user needs read access while they fix the file.
+    dependencies=[Depends(refuse_if_config_corrupt)],
+)
 async def create_bookmark(payload: BookmarkCreate) -> Bookmark:
     bookmark = Bookmark(
         id=str(uuid.uuid4()),
@@ -168,7 +179,12 @@ async def create_bookmark(payload: BookmarkCreate) -> Bookmark:
     return bookmark
 
 
-@router.patch("/{bookmark_id}", response_model=Bookmark)
+@router.patch(
+    "/{bookmark_id}",
+    response_model=Bookmark,
+    # See create_bookmark for Layer-2 gate rationale.
+    dependencies=[Depends(refuse_if_config_corrupt)],
+)
 async def update_bookmark(bookmark_id: str, payload: BookmarkUpdate) -> Bookmark:
     bookmarks = _read_all()
     for i, bm in enumerate(bookmarks):
@@ -186,7 +202,12 @@ async def update_bookmark(bookmark_id: str, payload: BookmarkUpdate) -> Bookmark
     raise HTTPException(status_code=404, detail="Bookmark not found")
 
 
-@router.delete("/{bookmark_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{bookmark_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    # See create_bookmark for Layer-2 gate rationale.
+    dependencies=[Depends(refuse_if_config_corrupt)],
+)
 async def delete_bookmark(bookmark_id: str) -> None:
     bookmarks = _read_all()
     next_list = [b for b in bookmarks if b.id != bookmark_id]

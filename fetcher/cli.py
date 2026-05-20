@@ -74,6 +74,31 @@ def fetch(
     Requires credentials captured via the mitmproxy addon.
     Run 'claude-explorer capture' first if you haven't yet.
     """
+    # Layer 2 of PLANS/2026.05.18-config-corruption-safe-mode.md:
+    # refuse to write when the user's config.json didn't parse — the
+    # data_dir we'd write to is the wrong-default in that case, and
+    # silently building a parallel archive there is the orphaning
+    # failure mode this layer was created to fix. The HTTP gate
+    # surfaces this as 503; the CLI surfaces it as a clean
+    # ClickException with the same recovery hint, so users see
+    # identical actionable copy regardless of the entry point.
+    #
+    # NOTE: ``install-watcher`` is EXEMPT from this gate (its writes
+    # land in ~/Library/LaunchAgents / ~/.config/systemd / a launcher
+    # file outside data_dir; it IS the recovery affordance). Don't
+    # add the same check to install-watcher without revisiting
+    # the L2 EXEMPTION decision record.
+    from backend.config import get_settings
+    from backend.deps import CONFIG_CORRUPT_REFUSAL_TEMPLATE
+
+    settings = get_settings()
+    if settings.config_corrupt_reason:
+        raise click.ClickException(
+            CONFIG_CORRUPT_REFUSAL_TEMPLATE.format(
+                reason=settings.config_corrupt_reason
+            )
+        )
+
     from fetcher.bulk_fetch import ClaudeFetcher, load_credentials
 
     # Get credentials
