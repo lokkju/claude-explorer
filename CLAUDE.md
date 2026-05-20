@@ -280,6 +280,12 @@ brew install pango cairo libffi
 
 # Ubuntu/Debian
 apt-get install libpango-1.0-0 libpangocairo-1.0-0 libcairo2
+
+# Windows (via MSYS2 — https://www.msys2.org)
+# In the MSYS2 shell:
+pacman -S mingw-w64-x86_64-pango
+# Or skip the system-library install entirely by using the standalone
+# WeasyPrint .exe from the WeasyPrint GitHub releases page.
 ```
 
 See: https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#installation

@@ -21,11 +21,13 @@ In the previous installation of this series, we covered the three moving parts t
 
 `claude-explorer` is a local tool you can get running in just a few minutes: install dependencies, start the server, open it in your browser, and let the UI handle credential capture and the first fetch on its own. We'll leave the MCP server for the next article in the series; it lets you use the same corpus of Claude conversations to have Claude analyze itself for a bunch of different use cases.
 
-We use `uvx` (from [Astral](https://docs.astral.sh/uv/getting-started/installation/), which is [joining OpenAI](https://openai.com/index/openai-to-acquire-astral/)) to do the heavy lifting; one command installs `claude-explorer` into an isolated, cached environment and runs it, so it feels closer to launching a native app than to a typical Python install. If you'd rather install from source, the [README](https://github.com/rpeck/claude-explorer#readme) and [`CONTRIBUTING.md`](https://github.com/rpeck/claude-explorer/blob/main/CONTRIBUTING.md) have the `git clone` + `uv sync` flow. 
+We use `uvx` (from [Astral](https://docs.astral.sh/uv/getting-started/installation/), which is [joining OpenAI](https://openai.com/index/openai-to-acquire-astral/)) to do the heavy lifting; one command installs `claude-explorer` into an isolated, cached environment and runs it, so it feels closer to launching a native app than to a typical Python install. If you'd rather install from source, the [README.md](https://github.com/rpeck/claude-explorer#readme) and [CONTRIBUTING.md](https://github.com/rpeck/claude-explorer/blob/main/CONTRIBUTING.md) have the `git clone` + `uv sync` flow. 
 
 Here's the "happy path" install and first run, end to end:
 
 ```bash
+which uvx
+
 # install uv/uvx if needed: https://docs.astral.sh/uv/getting-started/installation/
 
 # One-time setup, in any order:
@@ -40,8 +42,13 @@ uvx --from claude-explorer playwright install chromium
 uvx claude-explorer install-watcher
 
 # Optional: install the system libraries WeasyPrint needs for PDF export
-# (skip if you'll only export to Markdown). Linux: use your distro's
-# pango / cairo / libffi packages instead of brew.
+# (skip if you'll only export to Markdown).
+#   macOS:   run the brew command below
+#   Linux:   use your distro's pango / cairo / libffi packages
+#   Windows: install MSYS2 (https://www.msys2.org), then in its shell run
+#            `pacman -S mingw-w64-x86_64-pango`. Or grab the standalone
+#            WeasyPrint .exe from the GitHub releases page to skip the
+#            system-library dance entirely.
 brew install pango cairo libffi
 
 # Then run the app (this one blocks; leave it running and open the URL in your browser):
@@ -80,11 +87,29 @@ To pull in your Claude Desktop history, click the **Refresh** button in the top 
 
 ### Tech Stack
 
-Skip ahead if the stack doesn't interest you. The back end is FastAPI from Sebastián Ramírez for the REST API plus [FastMCP](https://github.com/jlowin/fastmcp) for the MCP server we'll meet in Part 3. I cover FastAPI in detail in [my best-practices column](https://medium.com/@raymondpeck/column-best-practices-in-modern-python-0cc40b50170e). The front end is a bundled React app, served by the back end directly; no separate server is needed.
+Skip ahead if the stack doesn't interest you.
+
+The back end is FastAPI from Sebastián Ramírez for the REST API, served by uvicorn, with [FastMCP](https://github.com/jlowin/fastmcp) layered on for the MCP server you'll meet in Part 3. I cover FastAPI in detail in [my best-practices column](https://medium.com/@raymondpeck/column-best-practices-in-modern-python-0cc40b50170e). PDF export goes through WeasyPrint (the optional `brew install` line earlier in the install block was for its system libs). The whole Python side runs inside a `uv`-managed venv; `uv` is also how `uvx` ran the install command at the top of this section.
+
+The front end is React 18 + TypeScript, built with Vite, styled with Tailwind CSS v4, and assembled out of shadcn/ui components, with TanStack Query for server-state caching. The whole thing builds to a static bundle that the FastAPI process serves directly; one server, no separate dev origin in production.
+
+Credential capture uses Playwright for the default browser-login path and mitmproxy for the SSO-blocked-account fallback (we'll get to both in the next section). The fetcher itself uses httpx for the HTTP calls and curl_cffi for the TLS fingerprint Cloudflare expects from a real desktop browser.
+
+Search is SQLite FTS5 for the fast path and a linear-scan fallback (orjson + an mtime-keyed FileCache + a ThreadPoolExecutor) for the case where FTS5 is not available in a given sqlite3 build. We'll get to the details when we get to search.
+
+Packaging is hatchling, and the PyPI wheel ships with the pre-built React bundle inside it. That's the trick that lets `uvx claude-explorer serve` be a single line: nothing to clone, nothing to build, just run.
 
 ### Some details about auth and fetching
 
-Skip ahead if the auth internals don't interest you. See the [README](https://github.com/rpeck/claude-explorer#quick-start) for what happens under the hood: the credential-capture trust path, the unofficial `chat_conversations` API, the SSO-locked-account `--proxy` workaround, the `--full-refresh` / `--limit N` flags, and the headless CLI escape hatches for cron and scripted pipelines.
+Skip ahead if the auth internals don't interest you.
+
+Claude Desktop's history lives behind a session cookie called `sessionKey`. The default capture path opens a Chromium window via Playwright, lets you log into Claude the normal way (email, Google, your work SSO, whatever your account uses), and on success reads the `sessionKey` cookie plus the active org ID out of the browser context. Those two values get written to `~/.claude-explorer/credentials.json` with mode `0o600`, atomically. The capture step has no network egress beyond the browser tab you used to log in; the code path is `fetcher/playwright_capture.py::capture_credentials` if you want to audit it.
+
+There's one common failure mode the default path can't handle: an SSO-locked work account where the web login no longer works for you, but Claude Desktop on your machine is still authenticated. For that case there's a proxy-interception fallback. Run `uv run claude-explorer capture --proxy` to start a local mitmproxy on port 8080, then launch Claude Desktop through that proxy with `--proxy-server="127.0.0.1:8080" --ignore-certificate-errors`. Click around in Desktop for a few seconds; the addon snatches the `sessionKey` out of the intercepted traffic and writes it the same way the Playwright flow does. The one prereq is a real ANSI terminal (Terminal.app, iTerm2, etc); mitmproxy will not run inside non-TTY shells.
+
+With credentials in hand, the fetch step uses the unofficial `chat_conversations` API at `GET /api/organizations/{org_id}/chat_conversations` to list IDs and `GET /api/organizations/{org_id}/chat_conversations/{uuid}` to pull each full conversation tree. The fetcher rate-limits itself to a 0.3s polite pause between requests. It is incremental by default (skips conversations already on disk); `--full-refresh` re-pulls everything, `--limit N` caps the run, `--verbose` shows progress. JSON lands in `~/.claude-explorer/conversations/`; attachment bytes land in a sibling `~/.claude-explorer/files/` keyed by conversation and file UUID.
+
+`sessionKey` expires eventually. When that happens, the next Refresh click gets a `401` / `403` / `cf-mitigated` response, and the back end automatically launches the Playwright login flow again so you get a new cookie without dropping to the CLI. The same headless CLI commands (`claude-explorer capture`, `claude-explorer fetch`) are also available for the days when you'd rather drive the whole pipeline from a cron job or another script.
 
 ## The Conversation List (Sidebar)
 

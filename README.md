@@ -15,8 +15,13 @@ uvx claude-explorer serve
 uvx claude-explorer install-watcher
 
 # Optional: install the system libraries WeasyPrint needs for PDF export
-# (skip if you only care about Markdown export). On Linux, use your
-# distro's pango / cairo / libffi packages instead of brew.
+# (skip if you only care about Markdown export).
+#   macOS:   run the brew command below
+#   Linux:   use your distro's pango / cairo / libffi packages
+#   Windows: install MSYS2 (https://www.msys2.org), then in its shell run
+#            `pacman -S mingw-w64-x86_64-pango`. Or grab the standalone
+#            WeasyPrint .exe from the GitHub releases to skip the
+#            system-library dance entirely.
 brew install pango cairo libffi
 ```
 
@@ -205,8 +210,13 @@ uv sync
 uv run playwright install chromium
 
 # Optional: install the system libraries WeasyPrint needs for PDF export
-# (skip if you only care about Markdown export). On Linux, use your
-# distro's pango / cairo / libffi packages instead of brew.
+# (skip if you only care about Markdown export).
+#   macOS:   run the brew command below
+#   Linux:   use your distro's pango / cairo / libffi packages
+#   Windows: install MSYS2 (https://www.msys2.org), then in its shell run
+#            `pacman -S mingw-w64-x86_64-pango`. Or grab the standalone
+#            WeasyPrint .exe from the GitHub releases to skip the
+#            system-library dance entirely.
 brew install pango cairo libffi
 ```
 

@@ -6,8 +6,10 @@ Thanks for the interest. This is a solo-maintained project; PRs are welcome but 
 
 - Python 3.11+ (uv will bootstrap if missing)
 - Node.js 20+ + npm (for the React frontend build)
-- macOS system libs: `brew install pango cairo libffi` (for PDF export)
-- Linux system libs: `apt install libpango-1.0-0 libcairo2 libffi-dev` (for PDF export)
+- System libraries for PDF export (skip if you only care about Markdown export):
+    - macOS: `brew install pango cairo libffi`
+    - Linux (Debian/Ubuntu): `apt install libpango-1.0-0 libcairo2 libffi-dev`
+    - Windows: install [MSYS2](https://www.msys2.org), then in its shell run `pacman -S mingw-w64-x86_64-pango`. Or grab the standalone WeasyPrint .exe from the [WeasyPrint GitHub releases](https://github.com/Kozea/WeasyPrint/releases) to skip the system-library dance entirely.
 
 ## Repo setup
 

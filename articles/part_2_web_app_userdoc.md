@@ -27,6 +27,8 @@ We use `uvx` (from [Astral](https://docs.astral.sh/uv/getting-started/installati
 Here's the "happy path" install and first run, end to end:
 
 ```bash
+which uvx
+
 # install uv/uvx if needed: https://docs.astral.sh/uv/getting-started/installation/
 
 # One-time setup, in any order:
@@ -41,8 +43,13 @@ uvx --from claude-explorer playwright install chromium
 uvx claude-explorer install-watcher
 
 # Optional: install the system libraries WeasyPrint needs for PDF export
-# (skip if you'll only export to Markdown). Linux: use your distro's
-# pango / cairo / libffi packages instead of brew.
+# (skip if you'll only export to Markdown).
+#   macOS:   run the brew command below
+#   Linux:   use your distro's pango / cairo / libffi packages
+#   Windows: install MSYS2 (https://www.msys2.org), then in its shell run
+#            `pacman -S mingw-w64-x86_64-pango`. Or grab the standalone
+#            WeasyPrint .exe from the GitHub releases page to skip the
+#            system-library dance entirely.
 brew install pango cairo libffi
 
 # Then run the app (this one blocks; leave it running and open the URL in your browser):
