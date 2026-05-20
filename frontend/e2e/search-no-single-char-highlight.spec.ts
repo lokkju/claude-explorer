@@ -129,7 +129,12 @@ async function installSearchMock(page: Page) {
     // backend AND-filter behavior).
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify(results),
+      body: JSON.stringify({
+        results,
+        total_messages_matched: results.length,
+        returned_messages: results.length,
+        truncated: false,
+      }),
     })
   })
 }

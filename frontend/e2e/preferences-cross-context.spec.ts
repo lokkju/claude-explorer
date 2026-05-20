@@ -96,7 +96,15 @@ async function installSharedMocks(
     fulfill(route, { contentType: 'application/json', body: '[]' })
   })
   await context.route('**/api/search**', (route) => {
-    fulfill(route, { contentType: 'application/json', body: '[]' })
+    fulfill(route, {
+      contentType: 'application/json',
+      body: JSON.stringify({
+        results: [],
+        total_messages_matched: 0,
+        returned_messages: 0,
+        truncated: false,
+      }),
+    })
   })
   await context.route('**/api/bookmarks', (route) => {
     fulfill(route, {

@@ -22,9 +22,18 @@ from typing import Literal
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from ..models import SearchResult
+from ..models import SearchResponse
 from ..store import ConversationStore
 from ..search import search_conversations
+
+
+# HTTP route LIMIT. Keeps the FTS5 fast path bounded so the snippet()
+# pass stays in the ~140 ms ballpark on the user's corpus. The MCP
+# server uses a higher LIMIT (5000) for programmatic / LLM consumers
+# that can usefully reason about broader result sets; the difference is
+# wired in via the per-route ``limit=`` kwarg on
+# ``search_conversations`` (plan §C).
+HTTP_SEARCH_LIMIT = 1000
 
 router = APIRouter(tags=["search"])
 
@@ -42,7 +51,7 @@ def _parse_csv_uuid_set(raw: str | None) -> set[str] | None:
     return {u.strip() for u in raw.split(",") if u.strip()} if raw.strip() else set()
 
 
-@router.get("/search", response_model=list[SearchResult])
+@router.get("/search", response_model=SearchResponse)
 async def search(
     q: str = Query(..., min_length=1, description="Search query"),
     source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = Query(
@@ -95,7 +104,7 @@ async def search(
             "compat for external scripts hitting /api/search directly."
         ),
     ),
-) -> list[SearchResult]:
+) -> SearchResponse:
     """Search across all conversations (GET form)."""
     store = ConversationStore()
     bookmark_set = _parse_csv_uuid_set(bookmarks)
@@ -113,6 +122,7 @@ async def search(
         include_tool_calls=include_tool_calls,
         organization_id=organization_id,
         conversation_uuids=conversation_uuids_set,
+        limit=HTTP_SEARCH_LIMIT,
     )
 
 
@@ -138,8 +148,8 @@ class SearchRequest(BaseModel):
     include_tool_calls: bool = True
 
 
-@router.post("/search", response_model=list[SearchResult])
-async def search_post(body: SearchRequest) -> list[SearchResult]:
+@router.post("/search", response_model=SearchResponse)
+async def search_post(body: SearchRequest) -> SearchResponse:
     """Search across all conversations (POST form).
 
     Identical semantics to the GET endpoint; the only difference is
@@ -166,4 +176,5 @@ async def search_post(body: SearchRequest) -> list[SearchResult]:
             if body.conversation_uuids is not None
             else None
         ),
+        limit=HTTP_SEARCH_LIMIT,
     )

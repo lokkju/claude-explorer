@@ -238,7 +238,7 @@ def test_unscoped_returns_all_three(fixture_three):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle"})
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == sorted([UUID_A, UUID_B, UUID_C])
 
 
@@ -247,7 +247,7 @@ def test_source_claude_code_returns_b_and_c(fixture_three):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle", "source": "CLAUDE_CODE"})
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == sorted([UUID_B, UUID_C])
 
 
@@ -256,7 +256,7 @@ def test_project_path_foo_returns_a_and_c(fixture_three):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle", "project_path": "/work/foo"})
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == sorted([UUID_A, UUID_C])
 
 
@@ -268,7 +268,7 @@ def test_source_and_project_compose(fixture_three):
         params={"q": "needle", "source": "CLAUDE_CODE", "project_path": "/work/foo"},
     )
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == [UUID_C]
 
 
@@ -288,7 +288,7 @@ def test_organization_id_filter_org_a_returns_only_conv_a(fixture_three):
     org_a = fixture_three["org_a"]
     r = client.get("/api/search", params={"q": "needle", "organization_id": org_a})
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == [UUID_A]
 
 
@@ -303,7 +303,7 @@ def test_organization_id_composes_with_source(fixture_three):
         params={"q": "needle", "organization_id": org_a, "source": "CLAUDE_CODE"},
     )
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json()["results"] == []
 
 
 def test_organization_id_composes_with_project_path(fixture_three):
@@ -315,7 +315,7 @@ def test_organization_id_composes_with_project_path(fixture_three):
         params={"q": "needle", "organization_id": org_a, "project_path": "/work/foo"},
     )
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == [UUID_A]
 
 
@@ -327,7 +327,7 @@ def test_unknown_organization_id_returns_empty(fixture_three):
         params={"q": "needle", "organization_id": UUID_NONEXISTENT},
     )
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json()["results"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ def test_conversation_uuids_csv_filters_to_set(fixture_three):
         params={"q": "needle", "conversation_uuids": f"{UUID_A},{UUID_C}"},
     )
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == sorted([UUID_A, UUID_C])
 
 
@@ -355,7 +355,7 @@ def test_conversation_uuids_with_unknown_uuid_silently_ignored(fixture_three):
         params={"q": "needle", "conversation_uuids": f"{UUID_A},{UUID_NONEXISTENT}"},
     )
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == [UUID_A]
 
 
@@ -368,7 +368,7 @@ def test_conversation_uuids_empty_string_returns_empty(fixture_three):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle", "conversation_uuids": ""})
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json()["results"] == []
 
 
 def test_conversation_uuids_absent_means_no_constraint(fixture_three):
@@ -376,7 +376,7 @@ def test_conversation_uuids_absent_means_no_constraint(fixture_three):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle"})  # no conversation_uuids
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == sorted([UUID_A, UUID_B, UUID_C])
 
 
@@ -392,7 +392,7 @@ def test_conversation_uuids_composes_with_source(fixture_three):
         },
     )
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == [UUID_C]
 
 
@@ -412,7 +412,7 @@ def test_conversation_uuids_composes_with_organization_id(fixture_three):
         },
     )
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json()["results"] == []
 
 
 def test_pin_conversation_uuid_overrides_conversation_uuids(fixture_three):
@@ -431,7 +431,7 @@ def test_pin_conversation_uuid_overrides_conversation_uuids(fixture_three):
         },
     )
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     # conversation_uuid (singular) wins over the set; ConvB matches.
     assert uuids == [UUID_B]
 
@@ -450,7 +450,7 @@ def test_post_search_with_json_body_returns_filtered_set(fixture_three):
     }
     r = client.post("/api/search", json=body)
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == sorted([UUID_A, UUID_C])
 
 
@@ -460,7 +460,7 @@ def test_post_search_empty_conversation_uuids_returns_empty(fixture_three):
     body = {"q": "needle", "conversation_uuids": []}
     r = client.post("/api/search", json=body)
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json()["results"] == []
 
 
 def test_post_search_absent_conversation_uuids_means_no_constraint(fixture_three):
@@ -469,7 +469,7 @@ def test_post_search_absent_conversation_uuids_means_no_constraint(fixture_three
     body = {"q": "needle"}
     r = client.post("/api/search", json=body)
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == sorted([UUID_A, UUID_B, UUID_C])
 
 
@@ -491,7 +491,7 @@ def test_post_search_with_all_scope_params(fixture_three):
     }
     r = client.post("/api/search", json=body)
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == [UUID_C]
 
 
@@ -538,10 +538,10 @@ def test_restoring_filter_restores_excluded_results(fixture_three):
     client = TestClient(app)
     # With active filter restricting to ConvA only.
     r = client.get("/api/search", params={"q": "needle", "conversation_uuids": UUID_A})
-    assert sorted(i["conversation_uuid"] for i in r.json()) == [UUID_A]
+    assert sorted(i["conversation_uuid"] for i in r.json()["results"]) == [UUID_A]
 
     # Filter removed (param absent) — all three back.
     r = client.get("/api/search", params={"q": "needle"})
-    assert sorted(i["conversation_uuid"] for i in r.json()) == sorted(
+    assert sorted(i["conversation_uuid"] for i in r.json()["results"]) == sorted(
         [UUID_A, UUID_B, UUID_C]
     )

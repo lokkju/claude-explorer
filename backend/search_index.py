@@ -111,7 +111,18 @@ logger = logging.getLogger(__name__)
 #     the 861 MB index. Bumping the version forces a one-time
 #     rebuild so the new columns get populated. The build remains
 #     non-blocking via the existing lifespan task.
-SCHEMA_VERSION = 6
+#   * v7 (2026-05-16, SEARCH_TOOL_AWARENESS plan §A): adds a second
+#     indexed body column ``body_text`` carrying the text-only
+#     projection (tool_use / tool_result stripped). The query path
+#     selects via FTS5 column-scoped MATCH (``{body_text}:(...)`` vs
+#     ``{body}:(...)``) so the Tools toggle behaves the same on the
+#     fast path as on the linear-scan path — a hit whose only token
+#     lives inside a hidden tool block is excluded BEFORE bm25
+#     ranks. Cost: ~30% index size growth (text-only is most of the
+#     body for typical CC sessions). Bumping the version forces a
+#     one-time rebuild; the build remains non-blocking via the
+#     existing lifespan task.
+SCHEMA_VERSION = 7
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata
@@ -150,6 +161,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     conv_updated_at UNINDEXED,
     title,
     body,
+    body_text,
     tokenize = "porter unicode61 remove_diacritics 1"
 );
 
@@ -320,7 +332,7 @@ class SearchIndex:
         "conv_uuid", "message_uuid", "sender", "created_at",
         "source", "project_path", "organization_id",
         "conv_created_at", "conv_updated_at",
-        "title", "body",
+        "title", "body", "body_text",
     })
 
     def _init_schema(self) -> None:
@@ -454,9 +466,19 @@ class SearchIndex:
         conv_created_at = conv.get("created_at", "") or ""
         conv_updated_at = conv.get("updated_at", "") or ""
 
-        rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]] = []
+        rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str, str]] = []
         for msg in conv.get("chat_messages", []) or []:
-            body = _extract_searchable_text(msg)
+            # 2026-05-16 (v7): two parallel projections from the SAME
+            # source message via the existing linear-scan helper.
+            # body_text strips tool_use / tool_result so a hit whose
+            # only token lives inside a hidden tool block is excluded
+            # at MATCH time when the user has Tools off. Both columns
+            # share the same image-marker handling (the extractor
+            # treats image content uniformly), so an [Image: ...]
+            # placeholder appears in both — image markers stay
+            # visible regardless of the Tools toggle.
+            body = _extract_searchable_text(msg, include_tool_calls=True)
+            body_text = _extract_searchable_text(msg, include_tool_calls=False)
             # We index even messages with empty body so the title-only
             # match still has a stable ``conv_uuid`` to anchor against.
             # Title-only matches are produced by the title column.
@@ -473,6 +495,7 @@ class SearchIndex:
                     conv_updated_at,
                     title,
                     body,
+                    body_text,
                 )
             )
 
@@ -484,7 +507,7 @@ class SearchIndex:
                     conv_uuid, "title", "title", "",
                     source, project_path, organization_id,
                     conv_created_at, conv_updated_at,
-                    title, "",
+                    title, "", "",
                 )
             )
 
@@ -495,8 +518,10 @@ class SearchIndex:
                 )
                 self._write_conn.executemany(
                     "INSERT INTO messages "
-                    "(conv_uuid, message_uuid, sender, created_at, source, project_path, organization_id, conv_created_at, conv_updated_at, title, body) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(conv_uuid, message_uuid, sender, created_at, source, "
+                    " project_path, organization_id, conv_created_at, "
+                    " conv_updated_at, title, body, body_text) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 self._write_conn.execute(
@@ -723,13 +748,91 @@ class SearchIndex:
     # ellipsis, max_tokens). column_index is the position in the
     # messages FTS5 schema (0-indexed). Sweep is bm25-driven so we
     # get the densest match cluster across multi-token queries.
-    # v6 schema column order: conv_uuid(0), message_uuid(1), sender(2),
+    # v7 schema column order: conv_uuid(0), message_uuid(1), sender(2),
     # created_at(3), source(4), project_path(5), organization_id(6),
-    # conv_created_at(7), conv_updated_at(8), title(9), body(10).
+    # conv_created_at(7), conv_updated_at(8), title(9), body(10),
+    # body_text(11).
     _SNIPPET_BODY_COL_IDX = 10
+    _SNIPPET_BODY_TEXT_COL_IDX = 11
     _SNIPPET_TITLE_COL_IDX = 9
     _SNIPPET_ELLIPSIS = "..."
     _SNIPPET_MAX_TOKENS = 30  # ~150 chars for English prose
+
+    def _build_match_where_clause(
+        self,
+        user_query: str,
+        *,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        conversation_uuid: str | None = None,
+        project_path: str | None = None,
+        bookmarks: set[str] | None = None,
+        organization_id: str | None = None,
+        conversation_uuids: set[str] | None = None,
+        include_tool_calls: bool = True,
+    ) -> tuple[str, list[Any], bool] | None:
+        """Shared WHERE-clause builder for FTS5 MATCH queries.
+
+        Returns ``(where_sql_without_WHERE, params, use_allowed_join)``,
+        or ``None`` if the query short-circuits to empty results (empty
+        query, empty bookmarks, empty conversation_uuids).
+
+        Risk #5 in the plan: this helper is the single source of truth
+        for the MATCH expression + scope filters so ``count_matches``
+        and ``query_with_snippets`` can NEVER drift on what they're
+        matching against. Both call this and stitch the SELECT / ORDER /
+        LIMIT around the returned WHERE.
+
+        2026-05-16 (v7): the ``include_tool_calls`` flag selects which
+        body column the MATCH expression targets. Column-scoped MATCH
+        syntax (``{body_text}:(...)``) excludes hits whose only token
+        lives inside a hidden tool block — exact parity with the
+        linear-scan path under ``Tools off``.
+        """
+        match_expr = translate_query(user_query)
+        if not match_expr:
+            return None
+
+        if conversation_uuids is not None and not conversation_uuids:
+            return None
+
+        # Column-scoped MATCH. Wrap the translated expression in
+        # parentheses so AND-of-tokens binds tighter than the column
+        # qualifier (FTS5 parses ``col:foo AND bar`` as
+        # ``col:foo AND bar`` — the AND clause loses the column
+        # qualifier on the right side). With explicit grouping
+        # ``col:(foo AND bar)`` both sides honor the column.
+        column = "body_text" if not include_tool_calls else "body"
+        scoped_match = f"{{{column}}} : ({match_expr})"
+
+        clauses: list[str] = ["messages MATCH ?"]
+        params: list[Any] = [scoped_match]
+        use_allowed_join = False
+
+        if conversation_uuid is not None:
+            clauses.append("conv_uuid = ?")
+            params.append(conversation_uuid)
+        else:
+            if project_path is not None:
+                clauses.append("project_path = ?")
+                params.append(project_path)
+            if bookmarks is not None:
+                if not bookmarks:
+                    return None
+                placeholders = ",".join("?" * len(bookmarks))
+                clauses.append(f"conv_uuid IN ({placeholders})")
+                params.extend(sorted(bookmarks))
+            if conversation_uuids is not None:
+                use_allowed_join = True
+                clauses.append("conv_uuid IN (SELECT uuid FROM allowed_conv)")
+
+        if source != "all":
+            clauses.append("source = ?")
+            params.append(source)
+        if organization_id is not None:
+            clauses.append("organization_id = ?")
+            params.append(organization_id)
+
+        return " AND ".join(clauses), params, use_allowed_join
 
     def query_with_snippets(
         self,
@@ -741,6 +844,7 @@ class SearchIndex:
         bookmarks: set[str] | None = None,
         organization_id: str | None = None,
         conversation_uuids: set[str] | None = None,
+        include_tool_calls: bool = True,
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
         """FTS5 fast path with body snippets in-band.
@@ -781,44 +885,35 @@ class SearchIndex:
           FTS5 to scan with both predicates, defeating the win.
           Single-pass with bounded LIMIT is both simpler and
           faster on this index shape.
+
+        ``include_tool_calls=False`` (2026-05-16, v7):
+          Column-scoped MATCH targets ``body_text`` instead of
+          ``body``. body_text excludes tool_use / tool_result, so a
+          hit whose only token lives inside a hidden tool block is
+          dropped at MATCH time — same semantics as the linear-scan
+          path's runtime filter, but without the post-hoc Python
+          walk. The corresponding ``snippet()`` call uses the
+          body_text column too, so the highlighted span comes from
+          the text the user can actually see.
         """
-        match_expr = translate_query(user_query)
-        if not match_expr:
+        built = self._build_match_where_clause(
+            user_query,
+            source=source, conversation_uuid=conversation_uuid,
+            project_path=project_path, bookmarks=bookmarks,
+            organization_id=organization_id,
+            conversation_uuids=conversation_uuids,
+            include_tool_calls=include_tool_calls,
+        )
+        if built is None:
             return []
+        where_sql, params, use_allowed_join = built
 
-        if conversation_uuids is not None and not conversation_uuids:
-            return []
-
-        clauses: list[str] = ["messages MATCH ?"]
-        params: list[Any] = [match_expr]
-        use_allowed_join = False
-
-        if conversation_uuid is not None:
-            clauses.append("conv_uuid = ?")
-            params.append(conversation_uuid)
-        else:
-            if project_path is not None:
-                clauses.append("project_path = ?")
-                params.append(project_path)
-            if bookmarks is not None:
-                if not bookmarks:
-                    return []
-                placeholders = ",".join("?" * len(bookmarks))
-                clauses.append(f"conv_uuid IN ({placeholders})")
-                params.extend(sorted(bookmarks))
-            if conversation_uuids is not None:
-                use_allowed_join = True
-                clauses.append("conv_uuid IN (SELECT uuid FROM allowed_conv)")
-
-        if source != "all":
-            clauses.append("source = ?")
-            params.append(source)
-        if organization_id is not None:
-            clauses.append("organization_id = ?")
-            params.append(organization_id)
-
+        body_col_idx = (
+            self._SNIPPET_BODY_COL_IDX if include_tool_calls
+            else self._SNIPPET_BODY_TEXT_COL_IDX
+        )
         body_snippet_expr = (
-            f"snippet(messages, {self._SNIPPET_BODY_COL_IDX}, "
+            f"snippet(messages, {body_col_idx}, "
             f"?, ?, ?, ?)"
         )
         snippet_params = [
@@ -834,7 +929,7 @@ class SearchIndex:
             "       conv_created_at, conv_updated_at, "
             f"      {body_snippet_expr} "
             "FROM messages "
-            f"WHERE {' AND '.join(clauses)} "
+            f"WHERE {where_sql} "
             "ORDER BY bm25(messages) "
             "LIMIT ?"
         )
@@ -862,6 +957,56 @@ class SearchIndex:
             }
             for row in cur.fetchall()
         ]
+
+    def count_matches(
+        self,
+        user_query: str,
+        *,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        conversation_uuid: str | None = None,
+        project_path: str | None = None,
+        bookmarks: set[str] | None = None,
+        organization_id: str | None = None,
+        conversation_uuids: set[str] | None = None,
+        include_tool_calls: bool = True,
+    ) -> int:
+        """COUNT(*) of FTS5 MATCH rows under the same WHERE clauses as
+        ``query_with_snippets``.
+
+        ~5-10 ms on a 13k-row index — FTS5 walks the inverted lists for
+        the matched tokens and the WHERE-clause UNINDEXED filters happen
+        on the matched rowids. No ``snippet()`` call, no ORDER BY, no
+        LIMIT. The result drives the truncation envelope on the
+        /api/search response so the UI can render "Showing first N of M"
+        without a second round-trip.
+
+        Risk #5 (plan): shares the WHERE-clause builder with
+        ``query_with_snippets`` via ``_build_match_where_clause``, so
+        the two queries can NEVER drift on what they're matching
+        against. The shared helper is the single source of truth for
+        scope filters + the column-scoped MATCH expression.
+        """
+        built = self._build_match_where_clause(
+            user_query,
+            source=source, conversation_uuid=conversation_uuid,
+            project_path=project_path, bookmarks=bookmarks,
+            organization_id=organization_id,
+            conversation_uuids=conversation_uuids,
+            include_tool_calls=include_tool_calls,
+        )
+        if built is None:
+            return 0
+        where_sql, params, use_allowed_join = built
+
+        sql = f"SELECT COUNT(*) FROM messages WHERE {where_sql}"
+
+        conn = self._get_read_conn()
+        if use_allowed_join:
+            assert conversation_uuids is not None
+            self._populate_allowed_conv(conn, conversation_uuids)
+        cur = conn.execute(sql, tuple(params))
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
 
     def title_match_snippets(
         self,

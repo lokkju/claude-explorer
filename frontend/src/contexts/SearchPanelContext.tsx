@@ -54,6 +54,16 @@ interface SearchPanelContextType {
   activeMatchIndex: number // -1 = no active match
   flatMatches: SearchMatch[]
   results: SearchResult[] // Raw grouped results (for section headers w/ timestamps)
+  // 2026-05-16 (plan §B): truncation envelope. Surfaced through the
+  // context so SearchPanel can render a footer when the FTS5 LIMIT
+  // clipped the response. `totalMatched` is the FTS5 COUNT(*) at the
+  // message level (NOT conversation rollup count); `returnedMatches`
+  // is the actual count of body-snippet rows the backend emitted.
+  // `truncated` is the convenience predicate `returnedMatches <
+  // totalMatched`.
+  totalMatched: number
+  returnedMatches: number
+  truncated: boolean
   isLoading: boolean
   /** True whenever the search is in flight OR the input is debouncing
    *  toward a new query. SearchPanel uses this to show "Searching…"
@@ -199,8 +209,13 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   }, [pinScope, organizationId, passingUuids])
   void bookmarks
 
-  // Fetch search results (updated useSearch signature accepts contextSize)
-  const { data: rawResults, isLoading, isSearching } = useSearch(
+  // Fetch search results (updated useSearch signature accepts contextSize).
+  // `rawResponse` is the wrapped SearchResponse envelope; the per-conv
+  // rollup lives at `.results`, and the truncation metadata
+  // (total_messages_matched, returned_messages, truncated) lives at the
+  // top level. We pass the envelope numbers through to consumers via the
+  // SearchPanelContext value below so SearchPanel can render the footer.
+  const { data: rawResponse, isLoading, isSearching } = useSearch(
     query,
     sourceFilter,
     contextSize,
@@ -209,6 +224,8 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     scope,
     showToolCalls,
   )
+
+  const rawResults = rawResponse?.results
 
   // Client-side filter: while the user keeps typing (debounced query hasn't
   // caught up yet), narrow the stale results locally so additional characters
@@ -260,6 +277,13 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     }
     return filtered
   }, [rawResults, query])
+
+  // Envelope passthroughs — exposed via context so SearchPanel can
+  // render the truncation footer. Defaults match the "no response yet"
+  // state (server hasn't responded; we don't know what was matched).
+  const totalMatched = rawResponse?.total_messages_matched ?? 0
+  const returnedMatches = rawResponse?.returned_messages ?? 0
+  const truncated = rawResponse?.truncated ?? false
 
   // Flatten results into navigable matches. The order is conversation-major,
   // message-minor — exactly the shape the backend returns from
@@ -436,6 +460,9 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
         activeMatchIndex,
         flatMatches,
         results,
+        totalMatched,
+        returnedMatches,
+        truncated,
         isLoading,
         isSearching,
         open,

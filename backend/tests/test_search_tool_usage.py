@@ -108,7 +108,7 @@ def test_search_finds_text_in_tool_use_input() -> None:
     token = "search-target-token-A"
     store = FakeStore([_conv_with_tool_use_input(token)])
 
-    results = search_conversations(store, token)
+    results = search_conversations(store, token).results
 
     assert len(results) == 1, f"expected 1 hit on tool_use input, got {len(results)}"
     assert results[0].conversation_uuid == "conv-tu"
@@ -119,7 +119,7 @@ def test_search_finds_text_in_tool_result_blocks() -> None:
     token = "search-target-token-B"
     store = FakeStore([_conv_with_tool_result_text(token)])
 
-    results = search_conversations(store, token)
+    results = search_conversations(store, token).results
 
     assert len(results) == 1, f"expected 1 hit on tool_result text, got {len(results)}"
     assert results[0].conversation_uuid == "conv-tr"
@@ -130,7 +130,7 @@ def test_search_finds_text_in_tool_result_string_content() -> None:
     token = "search-target-token-C"
     store = FakeStore([_conv_with_tool_result_string(token)])
 
-    results = search_conversations(store, token)
+    results = search_conversations(store, token).results
 
     assert len(results) == 1, f"expected 1 hit on tool_result string content, got {len(results)}"
     assert results[0].conversation_uuid == "conv-tr-str"
@@ -167,6 +167,6 @@ def test_search_still_finds_plain_text_blocks() -> None:
         ]
     )
 
-    results = search_conversations(store, token)
+    results = search_conversations(store, token).results
     assert len(results) == 1
     assert results[0].matching_messages[0].message_uuid == "msg-text-1"

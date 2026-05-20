@@ -46,6 +46,9 @@ export function SearchPanel() {
     sortOrder,
     activeMatchIndex,
     flatMatches,
+    totalMatched,
+    returnedMatches,
+    truncated,
     isLoading,
     isSearching,
     close,
@@ -493,6 +496,23 @@ export function SearchPanel() {
                 />
               )
             })}
+            {/* Truncation footer (SEARCH_TOOL_AWARENESS_AND_LIMIT_DISCLOSURE
+                plan §B). When the FTS5 fast path returns more matches
+                than the route's LIMIT (1000 for /api/search), the backend
+                envelope flags `truncated: true`. We surface that here
+                so the user knows the result set is partial and can
+                refine. Active voice; no em-dash; muted styling matching
+                the existing perf-stat footer below the sidebar. */}
+            {truncated && (
+              <div
+                data-testid="search-truncation-footer"
+                className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
+              >
+                Showing first {returnedMatches.toLocaleString()} of{' '}
+                {totalMatched.toLocaleString()} message matches. Refine your
+                query to see the rest.
+              </div>
+            )}
           </div>
         )}
       </div>

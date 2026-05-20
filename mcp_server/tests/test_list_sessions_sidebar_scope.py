@@ -205,7 +205,7 @@ def test_mcp_source_filter_matches_api_search_source_filter(mcp_data):
         "/api/search", params={"q": needle, "source": "CLAUDE_AI"}
     )
     assert api_result.status_code == 200
-    api_uuids = sorted(item["conversation_uuid"] for item in api_result.json())
+    api_uuids = sorted(item["conversation_uuid"] for item in api_result.json()["results"])
 
     assert mcp_uuids == api_uuids == [u_a]
 

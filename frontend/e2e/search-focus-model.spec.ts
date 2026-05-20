@@ -52,41 +52,46 @@ async function mockSearchResults(page: Page) {
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify([
-        {
-          conversation_uuid: C,
-          conversation_name: 'Focus model fixture',
-          conversation_updated_at: summary.updated_at,
-          conversation_created_at: summary.created_at,
-          project_name: 'projectX',
-          matching_messages: [
-            {
-              message_uuid: 'msg-1',
-              sender: 'human',
-              snippet: 'first needle line',
-              match_start: 6,
-              match_end: 12,
-              created_at: m1.created_at,
-            },
-            {
-              message_uuid: 'msg-2',
-              sender: 'assistant',
-              snippet: 'second needle line',
-              match_start: 7,
-              match_end: 13,
-              created_at: m2.created_at,
-            },
-            {
-              message_uuid: 'msg-3',
-              sender: 'human',
-              snippet: 'third needle line',
-              match_start: 6,
-              match_end: 12,
-              created_at: m3.created_at,
-            },
-          ],
-        },
-      ]),
+      body: JSON.stringify({
+        results: [
+          {
+            conversation_uuid: C,
+            conversation_name: 'Focus model fixture',
+            conversation_updated_at: summary.updated_at,
+            conversation_created_at: summary.created_at,
+            project_name: 'projectX',
+            matching_messages: [
+              {
+                message_uuid: 'msg-1',
+                sender: 'human',
+                snippet: 'first needle line',
+                match_start: 6,
+                match_end: 12,
+                created_at: m1.created_at,
+              },
+              {
+                message_uuid: 'msg-2',
+                sender: 'assistant',
+                snippet: 'second needle line',
+                match_start: 7,
+                match_end: 13,
+                created_at: m2.created_at,
+              },
+              {
+                message_uuid: 'msg-3',
+                sender: 'human',
+                snippet: 'third needle line',
+                match_start: 6,
+                match_end: 12,
+                created_at: m3.created_at,
+              },
+            ],
+          },
+        ],
+        total_messages_matched: 3,
+        returned_messages: 3,
+        truncated: false,
+      }),
     })
   })
 }
@@ -187,14 +192,19 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([{
-          conversation_uuid: B,
-          conversation_name: 'Conv B',
-          conversation_updated_at: summaryB.updated_at,
-          conversation_created_at: summaryB.created_at,
-          project_name: 'x',
-          matching_messages: [{ message_uuid: 'b-msg-1', sender: 'assistant', snippet: 'needle in B', match_start: 0, match_end: 6, created_at: mB.created_at }],
-        }]),
+        body: JSON.stringify({
+          results: [{
+            conversation_uuid: B,
+            conversation_name: 'Conv B',
+            conversation_updated_at: summaryB.updated_at,
+            conversation_created_at: summaryB.created_at,
+            project_name: 'x',
+            matching_messages: [{ message_uuid: 'b-msg-1', sender: 'assistant', snippet: 'needle in B', match_start: 0, match_end: 6, created_at: mB.created_at }],
+          }],
+          total_messages_matched: 1,
+          returned_messages: 1,
+          truncated: false,
+        }),
       })
     })
 

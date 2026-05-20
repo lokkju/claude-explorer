@@ -176,7 +176,7 @@ def test_sort_updated_at_desc_uses_conversation_updated_at_not_max_msg(
         context_size="snippet",
         sort="updated_at",
         sort_order="desc",
-    )
+    ).results
     uuids = [r.conversation_uuid for r in results]
     assert uuids == ["newest", "middle", "oldest"], (
         f"sort=updated_at desc must order by conversation_updated_at, "
@@ -199,7 +199,7 @@ def test_sort_updated_at_asc_inverts(store_with_inverted_timestamps):
         context_size="snippet",
         sort="updated_at",
         sort_order="asc",
-    )
+    ).results
     uuids = [r.conversation_uuid for r in results]
     assert uuids == ["oldest", "middle", "newest"], (
         f"sort=updated_at asc must order by conversation_updated_at asc, "
@@ -292,7 +292,7 @@ def test_sort_created_at_desc_uses_conversation_created_at_not_min_msg(
         context_size="snippet",
         sort="created_at",
         sort_order="desc",
-    )
+    ).results
     uuids = [r.conversation_uuid for r in results]
     assert uuids == ["A_new", "B_mid", "C_old"], (
         f"sort=created_at desc must order by conversation_created_at, "

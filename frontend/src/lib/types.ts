@@ -258,6 +258,30 @@ export interface SearchResult {
   matching_messages: MessageSnippet[]
 }
 
+/**
+ * Wrapped /api/search response. Mirrors backend `SearchResponse`
+ * (backend/models.py). The four fields tell the UI when the FTS5
+ * fast path's LIMIT clipped the result set so the sidebar can render
+ * a truncation footer instead of silently capping.
+ *
+ *   * `results` keeps the existing per-conversation rollup. The
+ *     SearchPanel renders the same MessageSnippet cards it always
+ *     did; the envelope is purely additive.
+ *   * `total_messages_matched` is the exact FTS5 COUNT(*) under the
+ *     query's WHERE clauses (message-level, not conversation-level).
+ *   * `returned_messages` is the number of body-match rows the FTS5
+ *     query returned, capped at the HTTP route's LIMIT (1000).
+ *   * `truncated` is derived as `returned_messages <
+ *     total_messages_matched`. Carried explicitly so callers don't
+ *     have to recompute.
+ */
+export interface SearchResponse {
+  results: SearchResult[]
+  total_messages_matched: number
+  returned_messages: number
+  truncated: boolean
+}
+
 // Filter types
 
 export type SourceFilter = 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE'

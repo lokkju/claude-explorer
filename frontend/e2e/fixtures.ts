@@ -137,6 +137,43 @@ export function makeDetail(
   }
 }
 
+/**
+ * Wrap an array of SearchResult in the SearchResponse envelope shape
+ * that `/api/search` now returns (plan §B). Per-spec route overrides
+ * that used to pass `body: JSON.stringify([...])` should now pass
+ * `body: searchEnvelopeJson([...])` so the response shape matches
+ * what the frontend parses.
+ *
+ * The envelope's totals default to the array length with
+ * `truncated: false`. Tests that care about the truncation footer
+ * should pass `total` / `returned` / `truncated` overrides.
+ */
+export function searchEnvelope(
+  results: unknown[],
+  opts: { total?: number; returned?: number; truncated?: boolean } = {},
+): {
+  results: unknown[]
+  total_messages_matched: number
+  returned_messages: number
+  truncated: boolean
+} {
+  const returned = opts.returned ?? results.length
+  const total = opts.total ?? returned
+  return {
+    results,
+    total_messages_matched: total,
+    returned_messages: returned,
+    truncated: opts.truncated ?? returned < total,
+  }
+}
+
+export function searchEnvelopeJson(
+  results: unknown[],
+  opts: { total?: number; returned?: number; truncated?: boolean } = {},
+): string {
+  return JSON.stringify(searchEnvelope(results, opts))
+}
+
 function synthesizeTree(detail: ConversationDetail): ConversationTree {
   // Linear chain: each message has at most one child.
   let chain: MessageNode[] = []
@@ -264,11 +301,22 @@ export const test = base.extend<Fixtures>({
       })
 
       // -----------------------------------------------------------------
-      // Search — empty results by default. Per-test specs that exercise
-      // search override via extraRoutes or page.route().
+      // Search — empty SearchResponse envelope by default. Per-test
+      // specs that exercise search override via extraRoutes or
+      // page.route(). 2026-05-16 (plan §B): the wire format changed
+      // from `list[SearchResult]` to a wrapped envelope with
+      // truncation disclosure (backend.models.SearchResponse).
       // -----------------------------------------------------------------
       await page.route('**/api/search**', (route: Route) => {
-        route.fulfill({ contentType: 'application/json', body: '[]' })
+        route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            results: [],
+            total_messages_matched: 0,
+            returned_messages: 0,
+            truncated: false,
+          }),
+        })
       })
 
       // -----------------------------------------------------------------

@@ -58,7 +58,15 @@ test.describe('Search typing latency (manual finding 2026-05-04)', () => {
     // Mocked /api/search resolves instantly with no matches — we want
     // to measure pure render latency on keystroke, not network.
     await page.route('**/api/search**', (route) => {
-      route.fulfill({ contentType: 'application/json', body: '[]' })
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          results: [],
+          total_messages_matched: 0,
+          returned_messages: 0,
+          truncated: false,
+        }),
+      })
     })
 
     await page.goto(`/conversations/${C}`)

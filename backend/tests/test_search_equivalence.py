@@ -195,7 +195,7 @@ def test_dispatcher_uses_index_when_ready(fixture_store):
     is_ready check returning the wrong value.
     """
     store, idx, _ = fixture_store
-    via_dispatcher = search_conversations(store, "budget")
+    via_dispatcher = search_conversations(store, "budget").results
     via_index_direct = _search_via_index(
         store, idx, "budget",
         source="all", context_size="snippet",
@@ -218,7 +218,7 @@ def test_dispatcher_falls_back_when_index_not_ready(fixture_store, monkeypatch):
     # Force is_ready False without dropping the index.
     monkeypatch.setattr(idx, "is_ready", lambda: False)
 
-    via_dispatcher = search_conversations(store, "budget")
+    via_dispatcher = search_conversations(store, "budget").results
     via_linear_direct = _search_via_linear_scan(store, "budget")
 
     assert sorted(r.conversation_uuid for r in via_dispatcher) == \
@@ -239,7 +239,7 @@ def test_dispatcher_falls_back_when_fts5_missing(fixture_store, monkeypatch):
     si.reset_search_index_for_tests()
     monkeypatch.setattr(si, "fts5_available", lambda: False)
 
-    via_dispatcher = search_conversations(store, "budget")
+    via_dispatcher = search_conversations(store, "budget").results
     via_linear_direct = _search_via_linear_scan(store, "budget")
 
     assert sorted(r.conversation_uuid for r in via_dispatcher) == \
@@ -262,7 +262,7 @@ def test_dispatcher_falls_back_on_sqlite_error(fixture_store, monkeypatch):
 
     monkeypatch.setattr(idx, "query", _boom)
 
-    via_dispatcher = search_conversations(store, "budget")
+    via_dispatcher = search_conversations(store, "budget").results
     via_linear_direct = _search_via_linear_scan(store, "budget")
 
     assert sorted(r.conversation_uuid for r in via_dispatcher) == \

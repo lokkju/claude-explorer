@@ -171,7 +171,15 @@ async function installMultiWordSearchMock(page: Page) {
         }),
       ]
     }
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify(results) })
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        results,
+        total_messages_matched: results.length,
+        returned_messages: results.length,
+        truncated: false,
+      }),
+    })
   })
 }
 
@@ -234,7 +242,15 @@ test.describe('Multi-word search AND semantics (V1 polish 2026-05-14)', () => {
               },
             ]
           }
-          route.fulfill({ contentType: 'application/json', body: JSON.stringify(results) })
+          route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({
+              results,
+              total_messages_matched: results.length,
+              returned_messages: results.length,
+              truncated: false,
+            }),
+          })
         })
       },
     })

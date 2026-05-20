@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, searchEnvelopeJson } from './fixtures'
 import type { Route } from '@playwright/test'
 import type { SearchResult } from '../src/lib/types'
 
@@ -70,7 +70,7 @@ test.describe('Command Palette Full-Text Search', () => {
       // 'test' surfaces no matches but does not throw.
       extraRoutes: async (p) => {
         await p.route('**/api/search**', (route: Route) => {
-          route.fulfill({ contentType: 'application/json', body: '[]' });
+          route.fulfill({ contentType: 'application/json', body: searchEnvelopeJson([]) });
         });
       },
     });
@@ -128,11 +128,11 @@ test.describe('Command Palette Full-Text Search', () => {
             ];
             route.fulfill({
               contentType: 'application/json',
-              body: JSON.stringify(results),
+              body: searchEnvelopeJson(results),
             });
             return;
           }
-          route.fulfill({ contentType: 'application/json', body: '[]' });
+          route.fulfill({ contentType: 'application/json', body: searchEnvelopeJson([]) });
         });
       },
     });

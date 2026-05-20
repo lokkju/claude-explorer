@@ -146,7 +146,15 @@ async function installOrderedSearchMock(page: Page, log: string[]) {
     const order = url.searchParams.get('sort_order') ?? 'desc'
     log.push(`q=${q} sort_order=${order}`)
     if (q !== 'needle') {
-      route.fulfill({ contentType: 'application/json', body: '[]' })
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          results: [],
+          total_messages_matched: 0,
+          returned_messages: 0,
+          truncated: false,
+        }),
+      })
       return
     }
     const descOrder: SearchResult[] = [
@@ -155,9 +163,15 @@ async function installOrderedSearchMock(page: Page, log: string[]) {
       makeResult(oldest, 'old-m1', 'oldest needle here', TS_OLDEST),
     ]
     const ascOrder = [...descOrder].reverse()
+    const chosen = order === 'asc' ? ascOrder : descOrder
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify(order === 'asc' ? ascOrder : descOrder),
+      body: JSON.stringify({
+        results: chosen,
+        total_messages_matched: chosen.length,
+        returned_messages: chosen.length,
+        truncated: false,
+      }),
     })
   })
 }
@@ -277,7 +291,15 @@ test.describe('Search panel sort-direction arrow (V1 polish 2026-05-14)', () => 
               ],
             },
           ]
-          route.fulfill({ contentType: 'application/json', body: JSON.stringify(results) })
+          route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({
+              results,
+              total_messages_matched: 4,
+              returned_messages: 4,
+              truncated: false,
+            }),
+          })
         })
       },
     })

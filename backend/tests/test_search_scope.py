@@ -75,7 +75,7 @@ def test_search_unscoped_returns_all_three(scope_data_dir):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle"})
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == ["conv-a1", "conv-a2", "conv-b1"]
 
 
@@ -83,7 +83,7 @@ def test_search_conversation_uuid_returns_one(scope_data_dir):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle", "conversation_uuid": "conv-a2"})
     assert r.status_code == 200
-    items = r.json()
+    items = r.json()["results"]
     assert [i["conversation_uuid"] for i in items] == ["conv-a2"]
 
 
@@ -91,7 +91,7 @@ def test_search_project_path_returns_two(scope_data_dir):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle", "project_path": "/work/projectA"})
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == ["conv-a1", "conv-a2"]
 
 
@@ -103,7 +103,7 @@ def test_search_bookmarks_csv_filters_to_set(scope_data_dir):
         params={"q": "needle", "bookmarks": "conv-a1,conv-b1"},
     )
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == ["conv-a1", "conv-b1"]
 
 
@@ -115,7 +115,7 @@ def test_search_conversation_uuid_overrides_project_path(scope_data_dir):
         params={"q": "needle", "conversation_uuid": "conv-b1", "project_path": "/work/projectA"},
     )
     assert r.status_code == 200
-    uuids = sorted(item["conversation_uuid"] for item in r.json())
+    uuids = sorted(item["conversation_uuid"] for item in r.json()["results"])
     assert uuids == ["conv-b1"]
 
 
@@ -123,4 +123,4 @@ def test_search_unknown_conversation_uuid_returns_empty(scope_data_dir):
     client = TestClient(app)
     r = client.get("/api/search", params={"q": "needle", "conversation_uuid": "does-not-exist"})
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json()["results"] == []

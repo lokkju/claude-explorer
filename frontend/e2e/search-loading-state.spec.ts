@@ -61,7 +61,12 @@ test.describe('Search panel loading state (Bug B)', () => {
       await releaseSearch
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify(slowResults),
+        body: JSON.stringify({
+          results: slowResults,
+          total_messages_matched: slowResults.length,
+          returned_messages: slowResults.length,
+          truncated: false,
+        }),
       })
     })
 
@@ -104,14 +109,24 @@ test.describe('Search panel loading state (Bug B)', () => {
         firstResponded = true
         await route.fulfill({
           contentType: 'application/json',
-          body: JSON.stringify(slowResults),
+          body: JSON.stringify({
+            results: slowResults,
+            total_messages_matched: slowResults.length,
+            returned_messages: slowResults.length,
+            truncated: false,
+          }),
         })
       } else {
         // Second query (different text) is held until we release it.
         await releaseSecond
         await route.fulfill({
           contentType: 'application/json',
-          body: JSON.stringify([]),
+          body: JSON.stringify({
+            results: [],
+            total_messages_matched: 0,
+            returned_messages: 0,
+            truncated: false,
+          }),
         })
       }
     })

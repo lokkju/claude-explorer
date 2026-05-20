@@ -76,7 +76,15 @@ async function mockSearchHit(page: Page, snippet: string, msgUuid: string) {
     },
   ]
   await page.route('**/api/search**', (route) => {
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify(results) })
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        results,
+        total_messages_matched: results.length,
+        returned_messages: results.length,
+        truncated: false,
+      }),
+    })
   })
 }
 

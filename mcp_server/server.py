@@ -46,6 +46,15 @@ mcp = FastMCP(
     ),
 )
 
+# MCP search LIMIT (plan §C). Higher than the HTTP route's 1000 cap
+# (backend.routers.search.HTTP_SEARCH_LIMIT) because programmatic /
+# LLM consumers can usefully reason about broader result sets than the
+# paginated sidebar UI does. The truncation envelope's
+# total_messages_matched still reports the true match count regardless
+# of how much was actually returned, so the LLM caller can decide
+# whether to refine.
+MCP_SEARCH_LIMIT = 5000
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -402,11 +411,17 @@ def list_sessions(
         # Deep search across message content. organization_id is pushed
         # into search_conversations so the FTS5 path filters in SQL —
         # mirrors how source already works.
-        search_results = search_conversations(
+        #
+        # limit=5000 (plan §C): MCP consumers (LLM agents, scripts) can
+        # usefully reason about broader result sets than the HTTP UI's
+        # paginated sidebar, so we pass a higher cap here. The HTTP
+        # route uses 1000 via backend.routers.search.HTTP_SEARCH_LIMIT.
+        search_response = search_conversations(
             store,
             query,
             source=src,
             organization_id=organization_id,
+            limit=MCP_SEARCH_LIMIT,
         )
         # Build a lookup map once (not per result). Pass organization_id
         # so the summary list and the search results agree on which
@@ -417,7 +432,7 @@ def list_sessions(
         )
         summary_map = {s.uuid: s for s in all_summaries}
         sessions = []
-        for sr in search_results:
+        for sr in search_response.results:
             s = summary_map.get(sr.conversation_uuid)
             if s:
                 entry = {

@@ -300,14 +300,14 @@ def test_search_skips_tool_only_match_when_filter_on() -> None:
 
     excluded = search_conversations(
         store, TOKEN_TOOL_USE, include_tool_calls=False,
-    )
+    ).results
     assert excluded == [], (
         "Tool-only match must be filtered out when include_tool_calls=False"
     )
 
     included = search_conversations(
         store, TOKEN_TOOL_USE, include_tool_calls=True,
-    )
+    ).results
     assert len(included) == 1
     assert included[0].conversation_uuid == "conv-tu"
 
@@ -327,8 +327,8 @@ def test_search_filters_each_tool_block_type(conv_factory, token, conv_uuid):
     contract test.
     """
     store = FakeStore([conv_factory()])
-    assert search_conversations(store, token, include_tool_calls=False) == []
-    included = search_conversations(store, token, include_tool_calls=True)
+    assert search_conversations(store, token, include_tool_calls=False).results == []
+    included = search_conversations(store, token, include_tool_calls=True).results
     assert len(included) == 1
     assert included[0].conversation_uuid == conv_uuid
 
@@ -347,9 +347,9 @@ def test_search_excludes_thinking_in_both_modes() -> None:
     """
     store = FakeStore([_conv_thinking()])
     # Toggle OFF: not returned (already true pre-Fix-4 via tool gate).
-    assert search_conversations(store, TOKEN_THINKING, include_tool_calls=False) == []
+    assert search_conversations(store, TOKEN_THINKING, include_tool_calls=False).results == []
     # Toggle ON: STILL not returned (new contract — Fix 4).
-    assert search_conversations(store, TOKEN_THINKING, include_tool_calls=True) == [], (
+    assert search_conversations(store, TOKEN_THINKING, include_tool_calls=True).results == [], (
         "thinking-only matches MUST NOT appear in search results "
         "regardless of the include_tool_calls toggle (V1 polish Fix 4)"
     )
@@ -361,7 +361,7 @@ def test_search_returns_text_match_even_when_filter_on() -> None:
     """
     store = FakeStore([_conv_both()])
     # With filter ON: text block still has the token.
-    results = search_conversations(store, TOKEN_BOTH, include_tool_calls=False)
+    results = search_conversations(store, TOKEN_BOTH, include_tool_calls=False).results
     assert len(results) == 1
     assert results[0].conversation_uuid == "conv-both"
     # Snippet must come from the text block (the tool projection isn't visible).
@@ -376,7 +376,7 @@ def test_search_returns_text_match_even_when_filter_on() -> None:
     # With filter OFF: also one result. Snippet may come from either
     # block; the regex-finditer / "first match wins" loop picks one
     # deterministically.
-    results_full = search_conversations(store, TOKEN_BOTH, include_tool_calls=True)
+    results_full = search_conversations(store, TOKEN_BOTH, include_tool_calls=True).results
     assert len(results_full) == 1
     assert results_full[0].conversation_uuid == "conv-both"
 
@@ -388,7 +388,7 @@ def test_search_emits_title_match_when_body_is_filtered_tool() -> None:
     whose message_uuid is 'title'.
     """
     store = FakeStore([_conv_title_tool_only()])
-    results = search_conversations(store, TOKEN_TITLE, include_tool_calls=False)
+    results = search_conversations(store, TOKEN_TITLE, include_tool_calls=False).results
     assert len(results) == 1
     msnips = results[0].matching_messages
     msg_uuids = [m.message_uuid for m in msnips]
@@ -400,7 +400,7 @@ def test_search_emits_title_match_when_body_is_filtered_tool() -> None:
     )
 
     # Inversion: filter OFF surfaces both the title and the body match.
-    results_full = search_conversations(store, TOKEN_TITLE, include_tool_calls=True)
+    results_full = search_conversations(store, TOKEN_TITLE, include_tool_calls=True).results
     assert len(results_full) == 1
     full_uuids = [m.message_uuid for m in results_full[0].matching_messages]
     assert "title" in full_uuids
@@ -414,8 +414,8 @@ def test_search_plain_text_token_unaffected_by_filter() -> None:
     nuked text-block matches would surface here.
     """
     store = FakeStore([_conv_plain()])
-    on = search_conversations(store, TOKEN_PLAIN_TEXT, include_tool_calls=False)
-    off = search_conversations(store, TOKEN_PLAIN_TEXT, include_tool_calls=True)
+    on = search_conversations(store, TOKEN_PLAIN_TEXT, include_tool_calls=False).results
+    off = search_conversations(store, TOKEN_PLAIN_TEXT, include_tool_calls=True).results
     assert len(on) == 1 and len(off) == 1
     assert on[0].conversation_uuid == off[0].conversation_uuid == "conv-plain"
     assert on[0].matching_messages[0].snippet == off[0].matching_messages[0].snippet
@@ -581,6 +581,6 @@ def test_default_include_tool_calls_true_preserves_legacy_behavior():
     """
     store = FakeStore([_conv_tool_use()])
     # No flag passed at all.
-    results = search_conversations(store, TOKEN_TOOL_USE)
+    results = search_conversations(store, TOKEN_TOOL_USE).results
     assert len(results) == 1
     assert results[0].conversation_uuid == "conv-tu"

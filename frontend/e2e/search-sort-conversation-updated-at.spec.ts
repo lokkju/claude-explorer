@@ -127,7 +127,15 @@ async function installSearchMock(page: Page) {
     const sort = url.searchParams.get('sort') ?? 'updated_at'
     const sortOrder = url.searchParams.get('sort_order') ?? 'desc'
     if (q !== 'needle') {
-      route.fulfill({ contentType: 'application/json', body: '[]' })
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          results: [],
+          total_messages_matched: 0,
+          returned_messages: 0,
+          truncated: false,
+        }),
+      })
       return
     }
     // Build per-conv results. Per-message created_at is DELIBERATELY
@@ -166,7 +174,12 @@ async function installSearchMock(page: Page) {
     }
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify(ordered),
+      body: JSON.stringify({
+        results: ordered,
+        total_messages_matched: ordered.length,
+        returned_messages: ordered.length,
+        truncated: false,
+      }),
     })
   })
 }

@@ -4,7 +4,7 @@ import type {
   ConversationTree,
   ConversationFilters,
   OrgsResponse,
-  SearchResult,
+  SearchResponse,
   SortField,
   SortOrder,
   AppConfig,
@@ -95,7 +95,7 @@ export const api = {
     // Making this mandatory means TypeScript catches any new call site
     // that forgets to wire useSettings().showToolCalls.
     includeToolCalls: boolean,
-  ): Promise<SearchResult[]> => {
+  ): Promise<SearchResponse> => {
     // Transport choice (spec §2, 2026-05-14): GET CSV is unsafe past
     // ~6 KB of UUIDs. When `conversationUuids` is set AND non-trivially
     // sized, use POST with a JSON body. The backend supports both with
@@ -131,7 +131,7 @@ export const api = {
       if (!res.ok) {
         throw new ApiError(res.status, await res.text())
       }
-      return res.json() as Promise<SearchResult[]>
+      return res.json() as Promise<SearchResponse>
     }
 
     const params = new URLSearchParams({ q: query })
@@ -148,7 +148,7 @@ export const api = {
     // Only append the query param when filtering — keeps URLs short
     // for the common-case (tool calls visible) request.
     if (!includeToolCalls) params.set('include_tool_calls', 'false')
-    return fetchJson<SearchResult[]>(`/search?${params.toString()}`)
+    return fetchJson<SearchResponse>(`/search?${params.toString()}`)
   },
 
   getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),

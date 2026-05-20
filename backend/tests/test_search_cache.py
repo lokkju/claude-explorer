@@ -80,7 +80,7 @@ def test_desktop_search_reuses_cache_across_calls(tmp_path):
     store = ConversationStore(data_dir=tmp_path, claude_dir=cc_dir)
 
     # First call — populates the cache.
-    results1 = search_conversations(store, "hello world")
+    results1 = search_conversations(store, "hello world").results
     assert len(results1) == 5
 
     # Second call — should be 100% cache hits. Patch the JSON loader
@@ -89,7 +89,7 @@ def test_desktop_search_reuses_cache_across_calls(tmp_path):
         raise AssertionError("loader called on warm cache call")
 
     with patch("backend.store.json.load", side_effect=_boom):
-        results2 = search_conversations(store, "hello world")
+        results2 = search_conversations(store, "hello world").results
 
     assert len(results2) == 5
     # Sanity: same conversations.
@@ -119,7 +119,7 @@ def test_desktop_search_invalidates_cache_when_file_changes(tmp_path):
     store = ConversationStore(data_dir=tmp_path, claude_dir=cc_dir)
 
     # Prime the cache.
-    r1 = search_conversations(store, "alpha")
+    r1 = search_conversations(store, "alpha").results
     assert len(r1) == 3
 
     # Mutate one file with a new mtime + new content.
@@ -143,7 +143,7 @@ def test_desktop_search_invalidates_cache_when_file_changes(tmp_path):
         return real_json_load(fp, *args, **kwargs)
 
     with patch("backend.store.json.load", side_effect=_spy):
-        r2 = search_conversations(store, "beta")
+        r2 = search_conversations(store, "beta").results
 
     assert len(r2) == 1
     assert r2[0].conversation_uuid == target.stem

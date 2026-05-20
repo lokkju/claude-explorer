@@ -66,7 +66,13 @@ const details: Record<string, ReturnType<typeof detailFor>> = {
 async function mockSearch(page: Page, returnFor: (params: URLSearchParams) => unknown[]) {
   await page.route('**/api/search**', (route: Route) => {
     const url = new URL(route.request().url())
-    const body = JSON.stringify(returnFor(url.searchParams))
+    const results = returnFor(url.searchParams)
+    const body = JSON.stringify({
+      results,
+      total_messages_matched: results.length,
+      returned_messages: results.length,
+      truncated: false,
+    })
     route.fulfill({ status: 200, contentType: 'application/json', body })
   })
 }
@@ -150,7 +156,16 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
     await page.route('**/api/search**', (route: Route) => {
       const url = new URL(route.request().url())
       observedConvUuids.push(url.searchParams.get('conversation_uuid'))
-      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          results: [],
+          total_messages_matched: 0,
+          returned_messages: 0,
+          truncated: false,
+        }),
+      })
     })
 
     await page.goto(`/conversations/${A}`)

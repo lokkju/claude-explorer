@@ -24,7 +24,7 @@ import re
 import sqlite3
 from typing import Any, Literal
 
-from .models import SearchResult, MessageSnippet, SnippetFragment
+from .models import SearchResponse, SearchResult, MessageSnippet, SnippetFragment
 from .store import ConversationStore, _parse_datetime
 
 
@@ -343,7 +343,8 @@ def search_conversations(
     include_tool_calls: bool = True,
     organization_id: str | None = None,
     conversation_uuids: set[str] | None = None,
-) -> list[SearchResult]:
+    limit: int = 1000,
+) -> SearchResponse:
     """Search across all conversations for matching messages.
 
     Dispatches to the FTS5 fast path when the index is ready (see module
@@ -397,7 +398,7 @@ def search_conversations(
     real query, pagination is the fix.
     """
     if not query or len(query.strip()) < 1:
-        return []
+        return SearchResponse()
 
     # Empty-set short-circuit: an active filter that excludes everything
     # passes ``conversation_uuids=set()``. Same semantic as ``bookmarks``
@@ -408,7 +409,7 @@ def search_conversations(
     # conversation_uuids check is hoisted up so we don't waste a query on
     # the FTS5 index either.
     if conversation_uuids is not None and not conversation_uuids:
-        return []
+        return SearchResponse()
 
     # ``conversation_uuid`` (singular pin scope) is most-specific; when
     # set, it overrides ``project_path``, ``bookmarks``, AND
@@ -448,8 +449,9 @@ def search_conversations(
                         include_tool_calls=include_tool_calls,
                         organization_id=organization_id,
                         conversation_uuids=conversation_uuids,
+                        limit=limit,
                     )
-                return _search_via_index(
+                fts_results = _search_via_index(
                     store, idx, query,
                     source=source, context_size=context_size,
                     sort=sort, sort_order=sort_order,
@@ -460,6 +462,10 @@ def search_conversations(
                     organization_id=organization_id,
                     conversation_uuids=conversation_uuids,
                 )
+                # Legacy scatter-gather path doesn't observe a LIMIT —
+                # wrap it in the envelope with returned == total so the
+                # truncated signal stays accurate for context_size="full".
+                return _wrap_envelope_no_truncation(fts_results)
             except sqlite3.Error:
                 logger.exception(
                     "search_index: query failed; falling back to linear scan"
@@ -469,7 +475,7 @@ def search_conversations(
         # search_index module isn't importable — definitely use linear scan.
         pass
 
-    return _search_via_linear_scan(
+    linear_results = _search_via_linear_scan(
         store, query,
         source=source, context_size=context_size,
         sort=sort, sort_order=sort_order,
@@ -479,6 +485,29 @@ def search_conversations(
         include_tool_calls=include_tool_calls,
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
+    )
+    # Linear scan never truncates — it walks every conversation and
+    # emits every match. envelope.truncated = False; total == returned.
+    return _wrap_envelope_no_truncation(linear_results)
+
+
+def _wrap_envelope_no_truncation(results: list[SearchResult]) -> SearchResponse:
+    """Wrap a results list as a non-truncated SearchResponse envelope.
+
+    Used by code paths that don't observe a LIMIT (linear scan,
+    context_size="full" scatter-gather). The total equals the
+    returned count, so truncated is always False.
+
+    Message count semantics: sums per-conversation matching_messages so
+    the envelope's counts agree with how the FTS5 fast path's envelope
+    is built (which counts message-level FTS5 hits, NOT conversations).
+    """
+    msg_count = sum(len(r.matching_messages) for r in results)
+    return SearchResponse(
+        results=results,
+        total_messages_matched=msg_count,
+        returned_messages=msg_count,
+        truncated=False,
     )
 
 
@@ -605,7 +634,8 @@ def _search_via_index_fast(
     include_tool_calls: bool = True,
     organization_id: str | None = None,
     conversation_uuids: set[str] | None = None,
-) -> list[SearchResult]:
+    limit: int = 1000,
+) -> SearchResponse:
     """Pure-SQL FTS5 fast path for ``context_size="snippet"`` queries.
 
     Replaces the scatter-gather walk in :func:`_search_via_index` with
@@ -629,17 +659,14 @@ def _search_via_index_fast(
     from the same fragments) so clients that don't consume
     fragments continue working.
 
-    ``include_tool_calls=False`` is a known semantic gap on this
-    path: the FTS5 index always stores the FULL projection (the
-    upsert path doesn't know about the user's runtime toggle), so
-    snippet() can highlight a token whose only occurrence is in a
-    tool_use block. The Python scatter-gather path filters those
-    out post-hoc. For V1 we accept this divergence — the
-    user-facing impact is "occasionally a search highlights a
-    word inside a tool result that the user has chosen to hide";
-    the alternative is to keep paying the corpus-walk cost just
-    so we can filter, which defeats the whole workstream.
-    Documented as a Phase-2 R-class accepted residual.
+    ``include_tool_calls=False`` (2026-05-16, SEARCH_TOOL_AWARENESS
+    plan §A): plumbed all the way down to ``query_with_snippets`` so
+    the FTS5 MATCH targets the ``body_text`` column instead of
+    ``body``. body_text excludes tool_use / tool_result, so a hit
+    whose only token lives in a hidden tool block is dropped at
+    MATCH time — exact parity with the linear-scan path's runtime
+    filter, but without the corpus walk. Replaces the prior
+    accepted-residual divergence (Phase-2 Workstream A).
     """
     # Step 1: body MATCH + snippet() — one SQL query, no JSON reads.
     rows = idx.query_with_snippets(
@@ -650,6 +677,23 @@ def _search_via_index_fast(
         bookmarks=bookmarks,
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
+        include_tool_calls=include_tool_calls,
+        limit=limit,
+    )
+
+    # Step 1b: COUNT(*) under the same WHERE — drives the truncation
+    # envelope's total_messages_matched. ~5-10 ms on the user's corpus.
+    # Same scope filters as the snippet query above (Risk #5 in the
+    # plan: enforced via shared _build_match_where_clause).
+    total_messages_matched = idx.count_matches(
+        query,
+        source=source,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
+        include_tool_calls=include_tool_calls,
     )
 
     # Step 2: title-substring sweep (catches mid-token matches FTS5
@@ -765,7 +809,21 @@ def _search_via_index_fast(
             )
         )
 
-    return _sort_results(results, sort=sort, sort_order=sort_order)
+    sorted_results = _sort_results(results, sort=sort, sort_order=sort_order)
+    # Truncation envelope (plan §B). returned_messages counts the body
+    # rows returned by query_with_snippets (capped at ``limit``), NOT
+    # the per-conv rollup. Title-only pseudo-messages from
+    # title_match_snippets are NOT counted in either number — the FTS5
+    # bm25 LIMIT only applies to body rows; the title sweep returns
+    # every match and never truncates.
+    returned_messages = len(rows)
+    truncated = returned_messages < total_messages_matched
+    return SearchResponse(
+        results=sorted_results,
+        total_messages_matched=total_messages_matched,
+        returned_messages=returned_messages,
+        truncated=truncated,
+    )
 
 
 def _search_via_linear_scan(

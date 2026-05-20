@@ -157,7 +157,15 @@ async function mountSearchRouteAware(page: import('@playwright/test').Page) {
     const includeToolCalls: 'true' | 'false' = param === 'false' ? 'false' : 'true'
     seen.push({ q, includeToolCalls })
     const body = includeToolCalls === 'false' ? filteredResults : fullResults
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        results: body,
+        total_messages_matched: body.length,
+        returned_messages: body.length,
+        truncated: false,
+      }),
+    })
   })
   return seen
 }

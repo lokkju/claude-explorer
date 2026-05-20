@@ -234,7 +234,7 @@ def test_unquoted_multi_word_is_and_not_or(store_with_phrase_corpus):
     must appear. Conversations with 2 or fewer tokens must NOT appear.
     """
     store, _ = store_with_phrase_corpus
-    results = search_conversations(store, "comprehensive medium article")
+    results = search_conversations(store, "comprehensive medium article").results
     uuids = sorted(r.conversation_uuid for r in results)
     assert uuids == ["has-all-adjacent", "has-all-scattered"], (
         f"AND-of-tokens contract violated: {uuids}. Expected only convs "
@@ -249,7 +249,7 @@ def test_quoted_phrase_is_exact(store_with_phrase_corpus):
     `has-all-scattered` has the tokens scattered — must be excluded.
     """
     store, _ = store_with_phrase_corpus
-    results = search_conversations(store, '"comprehensive medium article"')
+    results = search_conversations(store, '"comprehensive medium article"').results
     uuids = sorted(r.conversation_uuid for r in results)
     assert uuids == ["has-all-adjacent"], (
         f"Phrase contract violated: {uuids}. Quoted query must require "
@@ -262,7 +262,7 @@ def test_single_word_query_unchanged(store_with_phrase_corpus):
     body contains the token surfaces. Regression guard for the V1 fix
     not silently breaking the most common search shape."""
     store, _ = store_with_phrase_corpus
-    results = search_conversations(store, "comprehensive")
+    results = search_conversations(store, "comprehensive").results
     uuids = sorted(r.conversation_uuid for r in results)
     # has-all-adjacent, has-all-scattered, has-two, has-one all contain
     # "comprehensive" in body.
@@ -288,7 +288,7 @@ def test_multi_word_snippet_contains_at_least_one_token(store_with_phrase_corpus
     results = search_conversations(
         store, "comprehensive medium article",
         context_size="full",
-    )
+    ).results
     scattered = next(
         (r for r in results if r.conversation_uuid == "has-all-scattered"),
         None,

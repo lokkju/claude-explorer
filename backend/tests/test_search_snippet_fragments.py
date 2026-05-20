@@ -219,7 +219,7 @@ def test_fast_path_populates_fragments_for_snippet_mode(fixture_store):
     store, idx = fixture_store
     assert idx.is_ready()
 
-    results = search_conversations(store, "python", context_size="snippet")
+    results = search_conversations(store, "python", context_size="snippet").results
     assert len(results) >= 2, (
         f"expected >=2 hits for 'python' (conv-py, conv-py2); got "
         f"{[r.conversation_uuid for r in results]}"
@@ -255,7 +255,7 @@ def test_fast_path_fragment_concatenation_matches_snippet(fixture_store):
     consumer renders.
     """
     store, _ = fixture_store
-    results = search_conversations(store, "python", context_size="snippet")
+    results = search_conversations(store, "python", context_size="snippet").results
 
     for r in results:
         for ms in r.matching_messages:
@@ -277,7 +277,7 @@ def test_full_mode_does_not_populate_fragments(fixture_store):
     extra Python work and doesn't benefit from FTS5 snippet().
     """
     store, _ = fixture_store
-    results = search_conversations(store, "python", context_size="full")
+    results = search_conversations(store, "python", context_size="full").results
     assert len(results) >= 2
 
     for r in results:
@@ -300,7 +300,7 @@ def test_fast_path_matches_same_conv_uuids_as_linear(fixture_store):
     store, _ = fixture_store
     for q in ("python", "budget", "spend"):
         via_linear = _search_via_linear_scan(store, q)
-        via_fast = search_conversations(store, q, context_size="snippet")
+        via_fast = search_conversations(store, q, context_size="snippet").results
 
         linear_uuids = sorted(r.conversation_uuid for r in via_linear)
         fast_uuids = sorted(r.conversation_uuid for r in via_fast)
@@ -332,7 +332,7 @@ def test_fast_path_does_not_walk_corpus_for_snippet_mode(fixture_store, monkeypa
     monkeypatch.setattr(store, "get_all_conversations_raw", _boom)
 
     # Should succeed without triggering the corpus walk.
-    results = search_conversations(store, "python", context_size="snippet")
+    results = search_conversations(store, "python", context_size="snippet").results
     assert len(results) >= 2
 
 
@@ -346,7 +346,7 @@ def test_fast_path_still_populates_legacy_match_positions(fixture_store):
     a query token.
     """
     store, _ = fixture_store
-    results = search_conversations(store, "python", context_size="snippet")
+    results = search_conversations(store, "python", context_size="snippet").results
 
     for r in results:
         for ms in r.matching_messages:
@@ -383,7 +383,7 @@ def test_fast_path_title_only_match_still_surfaces(fixture_store):
     """
     store, _ = fixture_store
 
-    results = search_conversations(store, "budget", context_size="snippet")
+    results = search_conversations(store, "budget", context_size="snippet").results
     uuids = {r.conversation_uuid for r in results}
     assert "conv-budget" in uuids, (
         f"title-only hit dropped on fast path; got {uuids}"

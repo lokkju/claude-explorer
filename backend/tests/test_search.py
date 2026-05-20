@@ -14,7 +14,10 @@ def test_search_with_query(client):
     response = client.get("/api/search", params={"q": "test"})
 
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    # Response is now a SearchResponse envelope, not a bare list.
+    body = response.json()
+    assert isinstance(body, dict)
+    assert isinstance(body["results"], list)
 
 
 def test_search_with_source_filter(client):

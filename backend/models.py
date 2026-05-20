@@ -281,6 +281,40 @@ class SearchResult(BaseModel):
     matching_messages: list[MessageSnippet] = Field(default_factory=list)
 
 
+class SearchResponse(BaseModel):
+    """Wrapped /api/search response with total-match disclosure.
+
+    Wire-format change (PLANS/SEARCH_TOOL_AWARENESS_AND_LIMIT_DISCLOSURE.md
+    §B): /api/search now returns this envelope instead of a bare
+    ``list[SearchResult]``. The new fields tell the UI (and MCP
+    consumers) when the route-level LIMIT clipped the result set so
+    they can render "Showing first N of M" instead of silently
+    truncating.
+
+    Field semantics:
+      * ``results``: the per-conversation rollup. Same shape as the
+        legacy bare-list response — clients that want to ignore
+        truncation can read ``response.results`` and proceed.
+      * ``total_messages_matched``: the exact ``COUNT(*)`` from the
+        FTS5 MATCH under the same WHERE clauses as the snippet
+        query. Message-level, not conversation-level: FTS5's COUNT
+        is naturally at the row (message) level, and "Showing 1,000
+        of 12,400 matches" is more honest than "Showing 47 of 200
+        conversations" when the difference is what got truncated.
+      * ``returned_messages``: the actual number of MessageSnippet
+        rows in ``results``, capped at the route-level LIMIT (1000
+        for HTTP, 5000 for MCP).
+      * ``truncated``: derived as ``returned_messages <
+        total_messages_matched``. Carried explicitly so callers don't
+        have to recompute.
+    """
+
+    results: list[SearchResult] = Field(default_factory=list)
+    total_messages_matched: int = 0
+    returned_messages: int = 0
+    truncated: bool = False
+
+
 class AppConfig(BaseModel):
     """Application configuration for the frontend.
 

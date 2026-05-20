@@ -55,7 +55,15 @@ const searchResults: SearchResult[] = [{
 
 async function mockSearch(page: Page, results: SearchResult[]) {
   await page.route('**/api/search**', (route) => {
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify(results) })
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        results,
+        total_messages_matched: results.length,
+        returned_messages: results.length,
+        truncated: false,
+      }),
+    })
   })
 }
 
