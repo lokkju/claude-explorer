@@ -117,6 +117,17 @@ SCHEMA_VERSION = 5
 #
 # ``schema_version`` holds a single integer row. Comparing it to
 # :data:`SCHEMA_VERSION` at open time triggers a drop+rebuild on mismatch.
+#
+# ``conversation_summaries`` is the sidebar-metadata read-through cache
+# that powers :mod:`backend.summary_cache`. Co-located in the same
+# SQLite file as the FTS5 index so the watcher's drift pass can
+# refresh both stores in a single walk. The cache is keyed by the
+# on-disk path and stamped with both the file's mtime AND size — a
+# miss on either means a re-scan. ``summary_json`` holds the orjson-
+# serialized ``ConversationSummary`` payload (~1-2 KB per row). The
+# companion ``conversation_summaries_meta`` table holds the source-hash
+# of ``read_conversation_summary_fast`` (see ``claude_code_reader.
+# LOGIC_VERSION``); a mismatch at startup wipes the cache table.
 SCHEMA_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     conv_uuid UNINDEXED,
@@ -139,6 +150,19 @@ CREATE TABLE IF NOT EXISTS indexed_files (
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+    path TEXT PRIMARY KEY,
+    mtime REAL NOT NULL,
+    size INTEGER NOT NULL,
+    summary_json BLOB NOT NULL,
+    cached_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_summaries_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 

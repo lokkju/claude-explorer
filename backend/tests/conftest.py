@@ -490,8 +490,13 @@ def isolate_search_index_singleton(tmp_path_factory, monkeypatch) -> Iterator[No
          monkeypatch the singleton directly — the
          ``test_search_equivalence.fixture_store`` does this.)
       3. Reset again on teardown so cross-test leakage is impossible.
+
+    The summary_cache module also uses ``default_index_path`` (same
+    SQLite file by design) and singleton-resets here as well so
+    list-conversations tests don't scribble the user's real cache.
     """
     from backend import search_index as si
+    from backend import summary_cache as sc
 
     # Per-session tmp file (cheap; never grows because most tests don't
     # actually trigger an index build).
@@ -499,7 +504,9 @@ def isolate_search_index_singleton(tmp_path_factory, monkeypatch) -> Iterator[No
     monkeypatch.setattr(si, "default_index_path", lambda: safe_path)
 
     si.reset_search_index_for_tests()
+    sc.reset_summary_cache_for_tests()
     try:
         yield
     finally:
         si.reset_search_index_for_tests()
+        sc.reset_summary_cache_for_tests()

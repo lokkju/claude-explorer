@@ -265,6 +265,33 @@ async def lifespan(app: FastAPI):
 
         search_index_task = asyncio.create_task(_build_search_index())
 
+    # Initialize the sidebar metadata cache and wipe it if the source
+    # hash of read_conversation_summary_fast has changed since the last
+    # process start. Cheap (one SELECT + maybe one DELETE) so we run
+    # synchronously rather than spawning a task — finishes before the
+    # first /api/conversations request comes in. Failures are non-fatal:
+    # the metadata path falls back to the legacy sequential reader if
+    # the cache module returns None.
+    try:
+        from backend.summary_cache import get_summary_cache
+        from backend.claude_code_reader import LOGIC_VERSION
+
+        summary_cache = get_summary_cache()
+        if summary_cache is not None:
+            wiped = await asyncio.to_thread(
+                summary_cache.clear_on_logic_mismatch, LOGIC_VERSION
+            )
+            if wiped:
+                print(
+                    "summary cache: logic version changed; cache wiped",
+                    flush=True,
+                )
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"summary cache: startup init failed: {exc!r}",
+            flush=True,
+        )
+
     try:
         yield
     finally:

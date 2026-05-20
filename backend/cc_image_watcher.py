@@ -180,6 +180,70 @@ def scan_once() -> int:
     except Exception:  # noqa: BLE001
         logger.exception("watcher: search-index drift pass failed")
 
+    # Summary-cache drift pass. Walks every CC session JSONL on
+    # disk and refreshes any rows whose mtime or size has changed
+    # since the cache was last stamped. Co-located with the FTS5
+    # drift pass on purpose — both stores live in the same SQLite
+    # file, both want the same answer to "what has changed since
+    # last scan." Lazy read-through from /api/conversations still
+    # catches files modified between backstop poll intervals.
+    #
+    # Cleanup pass also drops cache rows whose paths no longer exist
+    # — analogous to the FTS5 cleanup in update_drifted_files.
+    #
+    # Isolated try/except so any failure here doesn't break the
+    # image-cache or search-index passes.
+    try:
+        import os
+        from backend.summary_cache import get_summary_cache
+        from backend.claude_code_reader import (
+            _read_summaries_parallel,
+            discover_jsonl_files,
+        )
+
+        cache = get_summary_cache()
+        if cache is not None:
+            # Honor CLAUDE_DIR via get_settings() rather than walking
+            # the import-time DEFAULT_CLAUDE_DIR — important for tests
+            # and for users with a non-standard claude_dir env var
+            # (the FTS5 drift pass goes through ConversationStore for
+            # the same reason).
+            claude_dir = get_settings().claude_dir
+            live_paths = list(discover_jsonl_files(claude_dir))
+            stat_index: dict = {}
+            for p in live_paths:
+                try:
+                    stat_index[p] = os.stat(p)
+                except OSError:
+                    continue
+
+            # Drop rows whose underlying files have disappeared.
+            cleaned = cache.delete_missing(
+                {str(p) for p in stat_index.keys()}
+            )
+
+            # Re-read only the drifted files (mtime or size mismatch).
+            # get_many returns ONLY fresh rows, so the difference is
+            # exactly the drifted-or-uncached set.
+            cached = cache.get_many(live_paths, stat_index)
+            drifted = [p for p in live_paths if p not in cached]
+            if drifted:
+                fresh = _read_summaries_parallel(drifted)
+                refreshed = cache.upsert_many(fresh, stat_index)
+                logger.info(
+                    "summary cache drift pass: refreshed %d row(s)"
+                    "%s",
+                    refreshed,
+                    f"; dropped {cleaned} stale row(s)" if cleaned else "",
+                )
+            elif cleaned:
+                logger.info(
+                    "summary cache drift pass: dropped %d stale row(s)",
+                    cleaned,
+                )
+    except Exception:  # noqa: BLE001
+        logger.exception("watcher: summary-cache drift pass failed")
+
     return handled
 
 

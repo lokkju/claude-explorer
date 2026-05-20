@@ -211,6 +211,129 @@ def test_scan_once_drift_failure_does_not_break_image_pass(watcher_env, monkeypa
     assert len(cached) == 1
 
 
+def test_scan_once_refreshes_summary_cache_for_drifted_files(
+    watcher_env, monkeypatch, tmp_path,
+):
+    """scan_once() also refreshes the sidebar summary cache for any
+    JSONL whose mtime has changed since the last cache stamp.
+
+    Setup: write a CC session JSONL, prime the cache with a stale
+    mtime, run scan_once, and verify the cache row now reflects the
+    new mtime AND the row count is unchanged (no duplicates).
+    """
+    import os
+    from backend import cc_image_watcher, summary_cache as sc
+
+    # Force a per-test SQLite file so we don't touch ~/.claude-explorer.
+    cache_path = tmp_path / "search-index.sqlite"
+    monkeypatch.setattr(sc, "default_index_path", lambda: cache_path)
+    sc.reset_summary_cache_for_tests()
+
+    # Point discover_jsonl_files at our isolated tree.
+    projects = watcher_env["claude_dir"] / "projects" / "test-proj"
+    projects.mkdir(parents=True)
+    jsonl = projects / "session-1.jsonl"
+    jsonl.write_text(
+        '{"type":"user","sessionId":"session-1","cwd":"/x","timestamp":"2026-05-16T12:00:00Z",'
+        '"message":{"role":"user","content":[{"type":"text","text":"hello"}]}}\n'
+        '{"type":"assistant","timestamp":"2026-05-16T12:00:01Z",'
+        '"message":{"id":"m1","role":"assistant","model":"x","content":[{"type":"text","text":"world"}]}}\n'
+    )
+
+    cache = sc.get_summary_cache()
+    assert cache is not None
+
+    # Prime with a STALE row (mtime=0, size=0) so the drift pass
+    # treats it as a miss and re-reads.
+    cache._write_conn.execute(
+        "INSERT OR REPLACE INTO conversation_summaries "
+        "(path, mtime, size, summary_json, cached_at) VALUES (?, ?, ?, ?, ?)",
+        (str(jsonl), 0.0, 0, b'{"uuid":"stale"}', 0.0),
+    )
+    cache._write_conn.commit()
+
+    # Run scan_once.
+    cc_image_watcher.scan_once()
+
+    # The row should now be stamped with the real mtime+size and the
+    # blob should reflect a re-read (not the "stale" placeholder).
+    cur = cache._write_conn.execute(
+        "SELECT mtime, size, summary_json FROM conversation_summaries WHERE path = ?",
+        (str(jsonl),),
+    )
+    row = cur.fetchone()
+    assert row is not None
+    mtime, size, blob = row
+    actual_stat = os.stat(jsonl)
+    assert float(mtime) == float(actual_stat.st_mtime)
+    assert int(size) == int(actual_stat.st_size)
+    # Blob is a real summary, not the "stale" placeholder.
+    assert b"session-1" in blob
+
+    sc.reset_summary_cache_for_tests()
+
+
+def test_scan_once_drops_summary_cache_rows_for_missing_files(
+    watcher_env, monkeypatch, tmp_path,
+):
+    """scan_once() removes summary-cache rows for paths that no longer
+    exist on disk. Mirrors the FTS5 cleanup pass.
+    """
+    from backend import cc_image_watcher, summary_cache as sc
+
+    cache_path = tmp_path / "search-index.sqlite"
+    monkeypatch.setattr(sc, "default_index_path", lambda: cache_path)
+    sc.reset_summary_cache_for_tests()
+
+    cache = sc.get_summary_cache()
+    assert cache is not None
+
+    # Row for a file that doesn't exist anywhere on disk.
+    ghost = tmp_path / "nonexistent-session.jsonl"
+    cache._write_conn.execute(
+        "INSERT OR REPLACE INTO conversation_summaries "
+        "(path, mtime, size, summary_json, cached_at) VALUES (?, ?, ?, ?, ?)",
+        (str(ghost), 12345.0, 100, b'{"uuid":"ghost"}', 0.0),
+    )
+    cache._write_conn.commit()
+    assert cache.stats()["rows"] == 1
+
+    cc_image_watcher.scan_once()
+
+    assert cache.stats()["rows"] == 0, (
+        "scan_once() must drop summary-cache rows whose underlying "
+        "JSONL no longer exists, mirroring the FTS5 cleanup pass."
+    )
+    sc.reset_summary_cache_for_tests()
+
+
+def test_scan_once_summary_cache_failure_does_not_break_image_pass(
+    watcher_env, monkeypatch,
+):
+    """A summary-cache drift-pass failure must not break the image
+    watcher (load-bearing data-loss prevention path).
+
+    Same failure-domain isolation pattern as the search-index drift
+    pass test above.
+    """
+    from backend import cc_image_watcher
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated summary-cache failure")
+
+    # Force the summary-cache path to throw by making get_summary_cache
+    # blow up. The image-cache pass must still complete.
+    monkeypatch.setattr(
+        "backend.summary_cache.get_summary_cache", _boom,
+    )
+
+    _drop_image(watcher_env["image_cache"], "sess-iso2", "1", TINY_PNG_BYTES)
+    handled = cc_image_watcher.scan_once()
+    assert handled == 1
+    cached = _cached_files(watcher_env["perm_cache_root"], "sess-iso2", "1")
+    assert len(cached) == 1
+
+
 def test_source_rotated_between_scans_does_not_break_watcher(watcher_env):
     """If a source file disappears between the rglob enumeration and
     the read, copy_marker_image_to_cache returns None and the watcher
