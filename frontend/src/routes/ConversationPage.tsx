@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useTransition } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors, Download } from 'lucide-react'
 import { toast } from 'sonner'
@@ -23,6 +23,10 @@ import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkd
 import { api } from '@/lib/api'
 import { ApiError } from '@/lib/types'
 import { useUnmountSafeTimer } from '@/hooks/useUnmountSafeTimer'
+import {
+  expandAllToolsButtonLabel,
+  computeScrollAnchorAdjustment,
+} from '@/components/conversation/expandAllToolsLabel'
 
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
@@ -88,6 +92,71 @@ export function ConversationPage() {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+
+  // Issue 2 + 3 (2026-05-20) — "Expand/Collapse all tools" UX.
+  //
+  // Issue 2: setExpandAllTools cascades a synchronous re-render through
+  // every ToolUseBlock / ToolResultBlock. On a long conversation that
+  // takes hundreds of ms with no feedback — the click feels broken.
+  // useTransition marks the update as non-blocking; isExpandPending
+  // drives a button-label swap to "Expanding…" / "Collapsing…" so the
+  // user sees instant acknowledgement.
+  //
+  // Issue 3: when a message has focus from a search hit (URL
+  // `?highlight=<uuid>` scrolled it to viewport center), expanding the
+  // tool bubbles ABOVE it pushes the focused message down off-screen —
+  // and collapse pulls it up. Capture the focused element's viewport
+  // top in handleToggleExpandAll BEFORE the transition fires; restore
+  // scrollTop by the delta in a useLayoutEffect after the new layout
+  // commits.
+  const [isExpandPending, startExpandTransition] = useTransition()
+  const expandAnchorBeforeRef = useRef<{ uuid: string; top: number } | null>(null)
+  const handleToggleExpandAll = useCallback(() => {
+    // Capture anchor position synchronously BEFORE the transition queues
+    // the state change. Prefer the keyboard-selected message (the one
+    // the user actually has focus on); fall back to first message whose
+    // top is >= scroll container's top (i.e., first fully visible row).
+    const selectedId = getSelectedMessageId()
+    let anchorUuid: string | null = selectedId ?? null
+    if (!anchorUuid && scrollAreaRef.current) {
+      const containerTop = scrollAreaRef.current.getBoundingClientRect().top
+      for (const [uuid, el] of messageRefs.current.entries()) {
+        if (el.getBoundingClientRect().top >= containerTop) {
+          anchorUuid = uuid
+          break
+        }
+      }
+    }
+    if (anchorUuid) {
+      const el = messageRefs.current.get(anchorUuid)
+      if (el) {
+        expandAnchorBeforeRef.current = { uuid: anchorUuid, top: el.getBoundingClientRect().top }
+      }
+    }
+    startExpandTransition(() => {
+      setExpandAllTools(!expandAllTools)
+    })
+  }, [expandAllTools, setExpandAllTools, getSelectedMessageId])
+
+  // Restore the captured anchor's viewport top after the transition
+  // commits the new layout. useLayoutEffect runs synchronously after
+  // DOM mutations and BEFORE the browser paints, so the user never
+  // sees the intermediate (drifted) scroll position.
+  useLayoutEffect(() => {
+    const before = expandAnchorBeforeRef.current
+    if (!before || !scrollAreaRef.current) return
+    const el = messageRefs.current.get(before.uuid)
+    if (!el) {
+      expandAnchorBeforeRef.current = null
+      return
+    }
+    const newTop = el.getBoundingClientRect().top
+    const delta = computeScrollAnchorAdjustment(before.top, newTop)
+    if (delta !== 0) {
+      scrollAreaRef.current.scrollTop += delta
+    }
+    expandAnchorBeforeRef.current = null
+  }, [expandAllTools])
 
   // Task A5 — PDF export spinner toast state.
   // `isExportingPdf` drives the `disabled` attribute on the button (needs
@@ -624,11 +693,12 @@ export function ConversationPage() {
             <Button
               variant={expandAllTools ? 'default' : 'outline'}
               size="sm"
-              onClick={() => setExpandAllTools(!expandAllTools)}
+              onClick={handleToggleExpandAll}
               title={expandAllTools ? 'Collapse all tools' : 'Expand all tools'}
+              disabled={isExpandPending}
             >
-              <ChevronsUpDown className="h-4 w-4" />
-              <span className="ml-2">{expandAllTools ? 'Collapse' : 'Expand'}</span>
+              <ChevronsUpDown className={cn('h-4 w-4', isExpandPending && 'animate-pulse')} />
+              <span className="ml-2">{expandAllToolsButtonLabel(expandAllTools, isExpandPending)}</span>
             </Button>
           )}
           {conversation.source === 'CLAUDE_AI' && (
