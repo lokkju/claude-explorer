@@ -20,12 +20,17 @@ const BASE_URL = '/api'
 // Set to true to use mock data (for development without backend)
 const USE_MOCK_DATA = false
 
-// 2026-05-18 (Hunt #5): optional AbortSignal forwarded into fetch().
-// Threaded from TanStack Query v5's queryFn `({ signal }) => api.X(args, signal)`
-// for the two heaviest read paths (`useConversations` list + `useConversation`
-// detail). Smaller/static endpoints (config, orgs, preferences) intentionally
-// skip the plumbing per Hunt #5 council decision — the warm-path latency is
-// shorter than a React lifecycle tick, so the abort would be dead code there.
+// 2026-05-18 (Hunt #5) + 2026-05-20 (S5 T2b): optional AbortSignal
+// forwarded into fetch(). Originally plumbed through the two heaviest
+// reads (`useConversations` list + `useConversation` detail). S5 T2b
+// extended the plumbing to every queryFn — including the static
+// endpoints (`getOrgs`, `getConfig`, `getConfigStats`,
+// `getConversationTree`, and the standalone `fetchPrefs`) — for
+// uniform abort behavior on cold-cache, slow-network, and explicit
+// queryClient.cancelQueries() paths. The original Hunt #5 rationale
+// ("warm-path latency is shorter than a React lifecycle tick") still
+// holds, but the cost of threading is ~25 LOC and the upside is one
+// invariant ("every queryFn forwards signal") instead of two.
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${BASE_URL}${url}`, { signal })
   if (!response.ok) {
@@ -64,7 +69,8 @@ export const api = {
     )
   },
 
-  getOrgs: (): Promise<OrgsResponse> => fetchJson<OrgsResponse>('/orgs'),
+  getOrgs: (signal?: AbortSignal): Promise<OrgsResponse> =>
+    fetchJson<OrgsResponse>('/orgs', signal),
 
   getConversation: async (
     uuid: string,
@@ -83,8 +89,11 @@ export const api = {
     return fetchJson<ConversationDetail>(`/conversations/${uuid}${qs}`, signal)
   },
 
-  getConversationTree: (uuid: string): Promise<ConversationTree> =>
-    fetchJson<ConversationTree>(`/conversations/${uuid}/tree`),
+  getConversationTree: (
+    uuid: string,
+    signal?: AbortSignal,
+  ): Promise<ConversationTree> =>
+    fetchJson<ConversationTree>(`/conversations/${uuid}/tree`, signal),
 
   search: async (
     query: string,
@@ -156,11 +165,11 @@ export const api = {
       if (!res.ok) {
         throw new ApiError(res.status, await res.text())
       }
-      const body: unknown = await res.json()
-      if (!isSearchResponse(body)) {
+      const responseBody: unknown = await res.json()
+      if (!isSearchResponse(responseBody)) {
         throw new ApiError(500, 'malformed /api/search response envelope')
       }
-      return body
+      return responseBody
     }
 
     const params = new URLSearchParams({ q: query })
@@ -193,9 +202,11 @@ export const api = {
     return body
   },
 
-  getConfig: (): Promise<AppConfig> => fetchJson<AppConfig>('/config'),
+  getConfig: (signal?: AbortSignal): Promise<AppConfig> =>
+    fetchJson<AppConfig>('/config', signal),
 
-  getConfigStats: (): Promise<AppConfigStats> => fetchJson<AppConfigStats>('/config/stats'),
+  getConfigStats: (signal?: AbortSignal): Promise<AppConfigStats> =>
+    fetchJson<AppConfigStats>('/config/stats', signal),
 
   exportMarkdown: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
     fetch(`${BASE_URL}/conversations/${uuid}/export/markdown?include_tools=${showToolCalls}`),

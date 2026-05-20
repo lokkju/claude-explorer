@@ -68,8 +68,8 @@ function isPrefsEnvelope(v: unknown): v is PreferencesEnvelope {
   );
 }
 
-async function fetchPrefs(): Promise<PreferencesEnvelope> {
-  const r = await fetch('/api/preferences');
+async function fetchPrefs(signal?: AbortSignal): Promise<PreferencesEnvelope> {
+  const r = await fetch('/api/preferences', { signal });
   if (!r.ok) throw new Error(`prefs GET ${r.status}`);
   const body: unknown = await r.json();
   if (!isPrefsEnvelope(body)) {
@@ -135,7 +135,7 @@ export function usePreferences<T>(
 
   const { data: envelope } = useQuery<PreferencesEnvelope>({
     queryKey: PREFS_QUERY_KEY,
-    queryFn: fetchPrefs,
+    queryFn: ({ signal }) => fetchPrefs(signal),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });

@@ -90,7 +90,7 @@ export function useConversationTree(uuid: string) {
   // hard refresh. 5min mirrors useConversation's setQueryDefaults TTL.
   return useQuery({
     queryKey: queryKeys.conversations.tree(uuid),
-    queryFn: () => api.getConversationTree(uuid),
+    queryFn: ({ signal }) => api.getConversationTree(uuid, signal),
     enabled: !!uuid,
     staleTime: 5 * 60 * 1000,
   })
@@ -174,7 +174,7 @@ export function useConfigStats() {
   // given the endpoint's cost; window-focus refetch fills the gap.
   return useQuery({
     queryKey: ['config-stats'],
-    queryFn: () => api.getConfigStats(),
+    queryFn: ({ signal }) => api.getConfigStats(signal),
     staleTime: 60 * 1000,
   })
 }
@@ -196,7 +196,7 @@ export function useConfig() {
   // banner.
   return useQuery({
     queryKey: queryKeys.config,
-    queryFn: () => api.getConfig(),
+    queryFn: ({ signal }) => api.getConfig(signal),
     staleTime: 60 * 1000,
   })
 }

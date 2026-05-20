@@ -20,7 +20,7 @@ import type { Org } from '@/lib/types'
 export function useOrgs() {
   const query = useQuery({
     queryKey: ['orgs'],
-    queryFn: () => api.getOrgs(),
+    queryFn: ({ signal }) => api.getOrgs(signal),
     staleTime: 5 * 60 * 1000, // 5 minutes — orgs change rarely
   })
 
