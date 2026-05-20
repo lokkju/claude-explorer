@@ -22,6 +22,7 @@ import { SessionPreludeAffordance } from '@/components/conversation/SessionPrelu
 import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { ApiError } from '@/lib/types'
+import { useUnmountSafeTimer } from '@/hooks/useUnmountSafeTimer'
 
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
@@ -57,6 +58,18 @@ export function ConversationPage() {
   const [copiedAll, setCopiedAll] = useState(false)
   const [copiedUuid, setCopiedUuid] = useState(false)
   const [copiedPath, setCopiedPath] = useState(false)
+  // S5 T2d (2026-05-20): unmount-safe scheduling for the 2s copy-feedback
+  // flag clears. Bare setTimeout left orphan timers when the user clicked
+  // Copy then navigated away before the 2s elapsed; React 18 silently
+  // no-op'd the setState, but the warning surfaced in dev and React 19's
+  // stricter semantics would surface it harder.
+  const scheduleCopiedAllClear = useUnmountSafeTimer()
+  const scheduleCopiedUuidClear = useUnmountSafeTimer()
+  const scheduleCopiedPathClear = useUnmountSafeTimer()
+  // The highlight-clear timer (sets the URL parameter after the
+  // ring-flash animation completes) is scheduled from inside the
+  // highlight useEffect — see below.
+  const scheduleHighlightClear = useUnmountSafeTimer()
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [showTopButton, setShowTopButton] = useState(false)
   const [activeCompactIdx, setActiveCompactIdx] = useState<number | null>(null)
@@ -294,7 +307,7 @@ export function ConversationPage() {
           if (element instanceof HTMLElement) {
             element.focus()
           }
-          setTimeout(() => {
+          scheduleHighlightClear(() => {
             element.classList.remove('ring-2', 'ring-yellow-400', 'ring-offset-2')
             // Clear highlight/m params from URL but preserve everything else.
             setSearchParams((prev) => {
@@ -473,7 +486,7 @@ export function ConversationPage() {
     )
     await navigator.clipboard.writeText(markdown)
     setCopiedAll(true)
-    setTimeout(() => setCopiedAll(false), 2000)
+    scheduleCopiedAllClear(() => setCopiedAll(false), 2000)
   }
 
   return (
@@ -556,7 +569,7 @@ export function ConversationPage() {
                 onClick={async () => {
                   await navigator.clipboard.writeText(conversation.uuid)
                   setCopiedUuid(true)
-                  setTimeout(() => setCopiedUuid(false), 2000)
+                  scheduleCopiedUuidClear(() => setCopiedUuid(false), 2000)
                 }}
                 className="flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
                 title="Click to copy UUID"
@@ -581,7 +594,7 @@ export function ConversationPage() {
                     if (!filePath) return
                     await navigator.clipboard.writeText(filePath)
                     setCopiedPath(true)
-                    setTimeout(() => setCopiedPath(false), 2000)
+                    scheduleCopiedPathClear(() => setCopiedPath(false), 2000)
                   }}
                   className="flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
                   title="Click to copy file path"
