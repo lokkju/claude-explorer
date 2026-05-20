@@ -270,6 +270,22 @@ Set `CLAUDE_EXPLORER_DATA_DIR` to override, or create `~/.claude-explorer/config
 {"data_dir": "/path/to/conversations"}
 ```
 
+## Corrupt-config safe mode
+
+When `~/.claude-explorer/config.json` fails to parse (editor crash mid-save, truncated JSON, non-dict root, permission flip, non-UTF-8 contents), the app does NOT crash and does NOT silently fall back to defaults. Instead it boots in **read-only safe mode**:
+
+1. `backend/config.py:Settings` catches `(JSONDecodeError, OSError, TypeError, ValueError)` and populates `config_corrupt_reason: str | None` with a one-line `<path>: <ExceptionType>: <message>` summary. The reader continues to the next candidate (canonical → legacy) instead of `break`ing — a valid legacy config next to a corrupt canonical still wins.
+2. Every writer route checks the flag via `_refuse_if_config_corrupt(settings)` (defined in `backend/deps.py`) and returns **HTTP 503** with a recovery message instead of writing. Currently gated: `POST/PATCH/DELETE /api/bookmarks/*`, `PUT/PATCH /api/preferences`, `GET /api/fetch/{start,refresh,conversation/{uuid}}`, and the `claude-explorer fetch` CLI.
+3. `GET /api/config` exposes `config_corrupt_reason` to the frontend. The lru_cache on `get_settings()` is cleared on every `/api/config` call so the user fixing the file mid-session is detected without a server restart.
+4. The frontend renders a persistent (non-dismissible) `ConfigCorruptionBanner` at the top of the app shell. Dismissing it would re-enable the data-orphaning failure mode it exists to prevent, so the only way to remove the banner is to fix the underlying file.
+5. Reads remain unconditional — `/api/conversations`, `/api/search`, `/api/conversations/{uuid}` all stay at 200 even when corrupt. The user can still browse what's already on disk while they recover.
+
+**When adding a new writer route**, wire it through `_refuse_if_config_corrupt(settings)` (or `Depends(refuse_if_config_corrupt)` if you prefer the FastAPI-dep form). Otherwise a corrupt-config user can silently write to the wrong data_dir and orphan their archive.
+
+**`install-watcher` is intentionally EXEMPT** from the writer gate. The launcher template lives under `~/Library/LaunchAgents/` (or systemd/Task Scheduler equivalents), NOT under `data_dir`, AND the supervised watcher IS the recovery path the user needs to reach when config is corrupt. Gating it would lock the user out of recovery. The CLI test `test_install_watcher_runs_when_config_corrupt` pins this exemption as a HARD invariant — do not remove.
+
+**`cc_watcher.scan_once` is also NOT gated.** Blocking the background CC image-cache watcher during corrupt-config would cause the data loss it exists to prevent (Claude Code rotates images off disk while the watcher is blocked). Future enhancement: log a WARNING when scan_once runs against a corrupt config so the failure is visible in supervised-job logs.
+
 ## PDF Export Dependencies
 
 WeasyPrint requires system libraries for PDF generation:
