@@ -1,68 +1,68 @@
-import type { ConversationSummary, ConversationDetail, Message } from './types'
+import type {
+  ConversationListItem,
+  ConversationDetail,
+  ConversationSummary,
+  Message,
+} from './types'
 
-export const mockConversations: ConversationSummary[] = [
+// Sidebar list fixtures use the SKINNY `ConversationListItem` shape
+// served by /api/conversations (PLANS/SPLIT_CONVERSATION_SCHEMA.md).
+// No `summary`, `human_message_count`, or `git_branch` — those stay on
+// `ConversationSummary` for the detail-page / MCP consumers and on
+// `mockConversationDetails` below.
+export const mockConversations: ConversationListItem[] = [
   {
     uuid: '1',
     name: 'Help me build a REST API',
-    summary: 'Building a FastAPI backend with authentication',
     model: 'claude-sonnet-4',
     created_at: '2026-03-01T10:00:00Z',
     updated_at: '2026-03-02T15:30:00Z',
     is_starred: true,
     message_count: 24,
-    human_message_count: 12,
     has_branches: false,
     source: 'CLAUDE_AI',
   },
   {
     uuid: '2',
     name: 'React TypeScript best practices',
-    summary: 'Discussion about React patterns and TypeScript',
     model: 'claude-opus-4',
     created_at: '2026-02-28T09:00:00Z',
     updated_at: '2026-03-02T14:00:00Z',
     is_starred: true,
     message_count: 42,
-    human_message_count: 20,
     has_branches: true,
     source: 'CLAUDE_AI',
   },
   {
     uuid: '3',
     name: 'Debug this Python script',
-    summary: 'Fixing a bug in data processing script',
     model: 'claude-sonnet-4',
     created_at: '2026-03-02T08:00:00Z',
     updated_at: '2026-03-02T12:00:00Z',
     is_starred: false,
     message_count: 8,
-    human_message_count: 4,
     has_branches: false,
     source: 'CLAUDE_AI',
   },
   {
     uuid: '4',
     name: 'Explain machine learning concepts',
-    summary: 'Introduction to neural networks and deep learning',
     model: 'claude-opus-4',
     created_at: '2026-02-25T14:00:00Z',
     updated_at: '2026-02-25T16:00:00Z',
     is_starred: false,
     message_count: 16,
-    human_message_count: 8,
     has_branches: false,
     source: 'CLAUDE_AI',
   },
   {
     uuid: '5',
     name: 'Code review for my project',
-    summary: 'Review of authentication module',
     model: 'claude-sonnet-4',
     created_at: '2026-02-20T10:00:00Z',
     updated_at: '2026-02-20T11:30:00Z',
     is_starred: false,
     message_count: 6,
-    human_message_count: 3,
     has_branches: false,
     source: 'CLAUDE_AI',
   },
@@ -229,14 +229,37 @@ Would you like me to add database integration or explain any part further?`,
   },
 ]
 
+// Detail-page fixtures use the FULL `ConversationDetail` shape, which
+// extends `ConversationSummary`. Re-add the three fields stripped from
+// the list-item shape (summary, human_message_count, git_branch) since
+// `ConversationDetail` requires them — the per-conversation endpoint
+// (which these fixtures simulate) still serializes the full shape.
+function listItemToFullSummary(
+  item: ConversationListItem,
+  overrides: Partial<ConversationSummary> = {},
+): ConversationSummary {
+  return {
+    ...item,
+    summary: '',
+    human_message_count: 0,
+    ...overrides,
+  }
+}
+
 export const mockConversationDetails: Record<string, ConversationDetail> = {
   '1': {
-    ...mockConversations[0],
+    ...listItemToFullSummary(mockConversations[0], {
+      summary: 'Building a FastAPI backend with authentication',
+      human_message_count: 12,
+    }),
     messages: mockMessages,
     current_leaf_message_uuid: 'm4',
   },
   '2': {
-    ...mockConversations[1],
+    ...listItemToFullSummary(mockConversations[1], {
+      summary: 'Discussion about React patterns and TypeScript',
+      human_message_count: 20,
+    }),
     messages: [
       {
         uuid: 'm5',
@@ -324,17 +347,25 @@ Would you like me to cover more advanced patterns?`,
   },
 }
 
-// Helper to filter conversations by search query
+// Helper to filter conversations by search query. Operates on the
+// SKINNY `ConversationListItem` shape served by `/api/conversations`
+// (PLANS/SPLIT_CONVERSATION_SCHEMA.md). The real backend's `?search=`
+// filter also matches against `summary` against the full
+// `ConversationSummary` BEFORE projecting to the list-item shape, but
+// the mock fixtures here don't carry summary — only name + project
+// matching is simulated. The dev-only `USE_MOCK_DATA=true` path is
+// not on the shipping code path; if you need to simulate
+// summary-matching, build the augmented fixture inline.
 export function filterConversations(
-  conversations: ConversationSummary[],
+  conversations: ConversationListItem[],
   search?: string
-): ConversationSummary[] {
+): ConversationListItem[] {
   if (!search) return conversations
 
   const query = search.toLowerCase()
   return conversations.filter(
     (c) =>
       c.name.toLowerCase().includes(query) ||
-      c.summary.toLowerCase().includes(query)
+      (c.project_path ?? '').toLowerCase().includes(query)
   )
 }

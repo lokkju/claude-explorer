@@ -12,30 +12,72 @@ export interface SubagentSummary {
   message_count: number
 }
 
+// Skinny per-row payload served by `/api/conversations`. Mirrors the
+// backend's `ConversationListItem` (backend/models.py). Three fields
+// from `ConversationSummary` (summary, human_message_count, git_branch)
+// are intentionally absent here because:
+//
+//   - `summary` is only consumed by the backend's server-side
+//     `?search=` filter (runs BEFORE the projection) and by MCP
+//     `export_session`. The sidebar never renders it.
+//   - `human_message_count` is only consumed by MCP `list_sessions`.
+//     The sidebar never renders it.
+//   - `git_branch` is only rendered by the conversation detail page,
+//     which goes through `ConversationDetail` (which still extends
+//     `ConversationSummary`, where the field stays).
+//
+// See PLANS/SPLIT_CONVERSATION_SCHEMA.md.
+export interface ConversationListItem {
+  uuid: string
+  name: string
+  model: string
+  created_at: string
+  updated_at: string
+  is_starred: boolean
+  message_count: number
+  has_branches: boolean
+  source: ConversationSource
+  project_path?: string | null
+  project_name?: string | null
+  // cowork-multi-org C6: workspace metadata. Null for legacy untagged
+  // JSONs that haven't been re-fetched yet.
+  organization_id?: string | null
+  organization_name?: string | null
+  subagents?: SubagentSummary[]
+}
+
+// Full per-conversation payload. Returned by `GET /api/conversations/{uuid}`
+// and extended by `ConversationDetail`. The three fields below
+// (`summary`, `human_message_count`, `git_branch`) are STRIPPED from
+// the `/api/conversations` LIST wire format (see `ConversationListItem`
+// above) but stay on this interface because the per-conversation
+// endpoint, MCP tools, and the detail-page render path all read them.
 export interface ConversationSummary {
   uuid: string
   name: string
-  // `summary` is Desktop-only auto-text. Carried on the wire because
-  // the backend's /api/conversations?search= matcher and the MCP
-  // server's list_sessions tool both consume it. Frontend never
-  // renders it.
+  // Stays on ConversationSummary because the backend's
+  // /api/conversations?search= filter matches against it (server-side,
+  // BEFORE the ConversationListItem projection runs) and MCP
+  // `export_session` threads it through the sliced ConversationDetail.
+  // Stripped from `ConversationListItem` — the sidebar never renders it.
   summary: string
   model: string
   created_at: string
   updated_at: string
   is_starred: boolean
   message_count: number
-  // Carried for the MCP server's public list_sessions output
-  // (mcp_server/SPEC.md). Not consumed by the frontend.
+  // Stays on ConversationSummary for the MCP server's public
+  // `list_sessions` output (mcp_server/SPEC.md). Stripped from
+  // `ConversationListItem` — not consumed by the frontend.
   human_message_count: number
   has_branches: boolean
   source: ConversationSource
   project_path?: string | null
   project_name?: string | null
-  // Read by ConversationPage's Details disclosure. Because
-  // ConversationDetail extends this interface, the field must live
-  // on the base shape (the detail page would lose its TS type
-  // narrowing otherwise).
+  // Stays on ConversationSummary for ConversationPage's Details
+  // disclosure (ConversationDetail extends this interface, so the
+  // field must live here). Stripped from `ConversationListItem` —
+  // the sidebar never renders it.
   git_branch?: string | null
   // cowork-multi-org C6: workspace metadata. Null for legacy untagged
   // JSONs that haven't been re-fetched yet.

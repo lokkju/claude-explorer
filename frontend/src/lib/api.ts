@@ -1,5 +1,5 @@
 import type {
-  ConversationSummary,
+  ConversationListItem,
   ConversationDetail,
   ConversationTree,
   ConversationFilters,
@@ -29,7 +29,11 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 export const api = {
-  getConversations: async (filters?: ConversationFilters): Promise<ConversationSummary[]> => {
+  // `/api/conversations` returns the SKINNY ConversationListItem shape
+  // (backend split, see PLANS/SPLIT_CONVERSATION_SCHEMA.md).
+  // ConversationListItem strips summary, human_message_count, and
+  // git_branch from the wire payload — none are read by the sidebar.
+  getConversations: async (filters?: ConversationFilters): Promise<ConversationListItem[]> => {
     if (USE_MOCK_DATA) {
       // Simulate network delay
       await new Promise((resolve) => setTimeout(resolve, 300))
@@ -45,7 +49,7 @@ export const api = {
     if (filters?.includePhantom) params.set('include_phantom', 'true')
     if (filters?.organization_id) params.set('organization_id', filters.organization_id)
     const query = params.toString()
-    return fetchJson<ConversationSummary[]>(`/conversations${query ? `?${query}` : ''}`)
+    return fetchJson<ConversationListItem[]>(`/conversations${query ? `?${query}` : ''}`)
   },
 
   getOrgs: (): Promise<OrgsResponse> => fetchJson<OrgsResponse>('/orgs'),

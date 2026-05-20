@@ -75,18 +75,75 @@ class SubagentSummary(BaseModel):
     message_count: int = 0
 
 
+class ConversationListItem(BaseModel):
+    """Slim per-row payload for the sidebar list.
+
+    Returned by ``/api/conversations``. Strips ``summary``,
+    ``human_message_count``, and ``git_branch`` from the full
+    ``ConversationSummary`` shape — those three fields stay on
+    ``ConversationSummary`` (and therefore ``ConversationDetail``) for
+    the MCP server, the per-conversation detail endpoint, and the
+    server-side ``?search=`` matcher that runs on the full shape
+    BEFORE this projection.
+
+    Invariant: this model MUST be a strict subset of
+    ``ConversationSummary``. The router builds instances via
+    ``model_validate(..., from_attributes=True)`` against an existing
+    ``ConversationSummary``, so a field added here that does not exist
+    on the source model would silently fall back to its default value
+    on every row. Enforced by
+    ``test_conversation_list_item_split.test_list_item_is_strict_subset_of_summary``.
+    """
+
+    uuid: str
+    name: str
+    model: str = ""
+    created_at: datetime
+    updated_at: datetime
+    is_starred: bool = False
+    message_count: int = 0
+    has_branches: bool = False
+    source: Literal["CLAUDE_AI", "CLAUDE_CODE"] = "CLAUDE_AI"
+    project_path: str | None = None  # For Claude Code sessions
+    project_name: str | None = None  # Short name extracted from project_path
+    # Multi-org metadata (cowork-multi-org C3). Null for legacy untagged
+    # JSONs that haven't been re-fetched yet.
+    organization_id: str | None = None
+    organization_name: str | None = None
+    subagents: list[SubagentSummary] = Field(default_factory=list)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Compute project_name from project_path after initialization.
+
+        Kept in sync with ``ConversationSummary.model_post_init`` — the
+        router projects from a fully-initialized ``ConversationSummary``,
+        which has already populated ``project_name`` if applicable, so
+        in the normal flow this is a no-op. The fallback is here so the
+        invariant holds when callers construct ``ConversationListItem``
+        directly (tests, future code paths).
+        """
+        if self.project_path and not self.project_name:
+            path = self.project_path.rstrip("/")
+            self.project_name = path.split("/")[-1] if "/" in path else path
+
+
 class ConversationSummary(BaseModel):
     """Summary of a conversation for list views."""
 
     uuid: str
     name: str
     # `summary` is Desktop-only auto-generated text and intentionally NOT
-    # surfaced in the sidebar UI, but it IS part of two public contracts
-    # we can't drop without coordinated breakage:
-    #   * MCP `get_session` returns `conversation.summary` (mcp_server/SPEC.md);
+    # surfaced in the sidebar UI. It is STRIPPED from the
+    # `/api/conversations` wire format by the `ConversationListItem`
+    # projection in the router (see backend/routers/conversations.py),
+    # but stays on this base model because two public contracts read it:
+    #   * MCP `export_session` threads it through to the sliced
+    #     ConversationDetail copy (mcp_server/server.py line ~633), and
+    #     past iterations of mcp_server/SPEC.md called this out as
+    #     schema-stable;
     #   * `/api/conversations?search=` matches against it server-side
-    #     (backend/store.py:_apply_search_filter).
-    # See PLANS/OPTIMIZE_FIRST_PAINT.md 2.1 audit notes.
+    #     (backend/store.py:list_conversations, see "summary_match").
+    # See PLANS/SPLIT_CONVERSATION_SCHEMA.md for the audit + split.
     summary: str = ""
     model: str = ""
     created_at: datetime
@@ -95,8 +152,9 @@ class ConversationSummary(BaseModel):
     message_count: int = 0
     # `human_message_count` is consumed by the MCP server's
     # `list_sessions` tool output (mcp_server/SPEC.md, schema-stable
-    # public contract) and remains on `ConversationSummary` for that
-    # reason — the sidebar payload still pays for it.
+    # public contract). Stripped from the sidebar wire format by the
+    # `ConversationListItem` projection but kept on this model so the
+    # MCP path keeps working.
     human_message_count: int = 0
     has_branches: bool = False
     source: Literal["CLAUDE_AI", "CLAUDE_CODE"] = "CLAUDE_AI"
@@ -106,8 +164,8 @@ class ConversationSummary(BaseModel):
     # `frontend/src/routes/ConversationPage.tsx` "Details" disclosure).
     # `ConversationDetail extends ConversationSummary`, so this field
     # MUST stay on the base model — splitting it out would require
-    # rewriting the detail-page render path. Carry the small per-row
-    # cost in the sidebar payload as the trade-off.
+    # rewriting the detail-page render path. Stripped from the sidebar
+    # list wire format by the `ConversationListItem` projection.
     git_branch: str | None = None  # For Claude Code sessions
     # Multi-org metadata (cowork-multi-org C3). Null for legacy untagged
     # JSONs that haven't been re-fetched yet — UI surfaces these under the

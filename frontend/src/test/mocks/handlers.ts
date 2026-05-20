@@ -17,13 +17,21 @@ export const handlers = [
 
     let result = [...mockConversations];
 
-    // Apply filters
+    // Apply filters. The real backend's `?search=` matcher also
+    // includes `summary` matches (PLANS/SPLIT_CONVERSATION_SCHEMA.md
+    // preserves that behavior server-side BEFORE the projection), but
+    // the mock fixtures here use the SKINNY ConversationListItem
+    // shape and don't carry summary — only name + project matching
+    // is simulated. The MSW handler doesn't need to be perfectly
+    // faithful to the search path since useConversations also filters
+    // client-side and the e2e/vitest specs don't cover summary-only
+    // matches today.
     if (search) {
       const searchLower = search.toLowerCase();
       result = result.filter(
         (c) =>
           c.name.toLowerCase().includes(searchLower) ||
-          c.summary.toLowerCase().includes(searchLower)
+          (c.project_path ?? '').toLowerCase().includes(searchLower)
       );
     }
 
@@ -50,11 +58,17 @@ export const handlers = [
       return new HttpResponse(null, { status: 404 });
     }
 
-    // Return a minimal detail for other UUIDs
+    // Return a minimal detail for other UUIDs. The detail-endpoint
+    // shape still includes summary/human_message_count/git_branch
+    // (PLANS/SPLIT_CONVERSATION_SCHEMA.md keeps them on
+    // ConversationDetail), so re-add them here with empty defaults
+    // since the list-item fixture omits them.
     const conversation = mockConversations.find((c) => c.uuid === uuid);
     if (conversation) {
       return HttpResponse.json({
         ...conversation,
+        summary: '',
+        human_message_count: 0,
         messages: [],
         current_leaf_message_uuid: '',
       });

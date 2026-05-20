@@ -5,7 +5,11 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import ORJSONResponse
 
-from ..models import ConversationSummary, ConversationDetail, ConversationTree
+from ..models import (
+    ConversationDetail,
+    ConversationListItem,
+    ConversationTree,
+)
 from ..store import ConversationStore
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -18,9 +22,22 @@ def get_store() -> ConversationStore:
 
 # ORJSONResponse on the list endpoint cuts serialization of the ~1 MB
 # sidebar payload from ~500 ms (Pydantic-via-stdlib-json) to ~30 ms.
-# orjson handles datetimes natively, so ConversationSummary
-# (backend/models.py:78) needs no shape change.
-@router.get("", response_model=list[ConversationSummary], response_class=ORJSONResponse)
+# orjson handles datetimes natively, so the response models need no
+# special shape handling.
+#
+# The list endpoint serializes the SKINNY `ConversationListItem` shape
+# (backend/models.py) — `summary`, `human_message_count`, and `git_branch`
+# are intentionally dropped from each row to shrink the wire payload.
+# The router still asks the store for the FULL `ConversationSummary[]`
+# because the server-side `?search=` filter inside
+# `store.list_conversations` matches against `summary`. The skinny
+# projection happens AFTER the filter / sort / subagent expansion, so
+# search behavior is unchanged. See PLANS/SPLIT_CONVERSATION_SCHEMA.md.
+@router.get(
+    "",
+    response_model=list[ConversationListItem],
+    response_class=ORJSONResponse,
+)
 async def list_conversations(
     search: str | None = Query(None, description="Search in name/summary"),
     starred: bool | None = Query(None, description="Filter by starred status"),
@@ -43,10 +60,10 @@ async def list_conversations(
     organization_id: str | None = Query(
         None, description="Filter by organization (workspace) UUID"
     ),
-) -> list[ConversationSummary]:
+) -> list[ConversationListItem]:
     """List all conversations with optional filtering."""
     store = get_store()
-    return store.list_conversations(
+    full = store.list_conversations(
         search=search,
         starred=starred,
         model=model,
@@ -57,6 +74,15 @@ async def list_conversations(
         include_subagents=include_subagents,
         organization_id=organization_id,
     )
+    # Pydantic v2 from_attributes=True projects the fuller
+    # ConversationSummary into the skinny ConversationListItem without
+    # copying the dropped fields (summary, human_message_count,
+    # git_branch). The cost is microseconds per row at ~1k rows —
+    # well inside the post-Phase-1 ~80 ms warm budget.
+    return [
+        ConversationListItem.model_validate(s, from_attributes=True)
+        for s in full
+    ]
 
 
 @router.get("/{uuid}", response_model=ConversationDetail)

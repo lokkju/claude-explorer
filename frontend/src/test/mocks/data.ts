@@ -1,4 +1,5 @@
 import type {
+  ConversationListItem,
   ConversationSummary,
   ConversationDetail,
   ConversationTree,
@@ -8,57 +9,53 @@ import type {
   AppConfig,
 } from '../../lib/types';
 
-// Mock conversation summaries
-export const mockConversations: ConversationSummary[] = [
+// Sidebar list fixtures use the SKINNY `ConversationListItem` shape
+// served by /api/conversations (PLANS/SPLIT_CONVERSATION_SCHEMA.md).
+// No `summary`, `human_message_count`, or `git_branch` — those stay
+// on `ConversationSummary` for the detail-page fixture
+// (`mockConversationDetail`) and on the MCP server's contracts.
+export const mockConversations: ConversationListItem[] = [
   {
     uuid: 'conv-1',
     name: 'Building a React App',
-    summary: 'Discussion about React best practices',
     model: 'claude-sonnet-4-6',
     created_at: '2026-03-01T10:00:00Z',
     updated_at: '2026-03-01T12:00:00Z',
     is_starred: true,
     message_count: 10,
-    human_message_count: 5,
     has_branches: false,
     source: 'CLAUDE_AI',
   },
   {
     uuid: 'conv-2',
     name: 'Python Data Analysis',
-    summary: 'Analyzing CSV data with pandas',
     model: 'claude-3-opus-20240229',
     created_at: '2026-02-28T14:00:00Z',
     updated_at: '2026-02-28T16:30:00Z',
     is_starred: false,
     message_count: 8,
-    human_message_count: 4,
     has_branches: true,
     source: 'CLAUDE_AI',
   },
   {
     uuid: 'conv-3',
     name: 'Debugging API Errors',
-    summary: 'Fixing 500 errors in production',
     model: 'claude-sonnet-4-6',
     created_at: '2026-02-27T09:00:00Z',
     updated_at: '2026-02-27T11:00:00Z',
     is_starred: true,
     message_count: 15,
-    human_message_count: 7,
     has_branches: false,
     source: 'CLAUDE_AI',
   },
   {
     uuid: 'conv-4',
     name: 'Learning TypeScript',
-    summary: 'TypeScript generics and type inference',
     model: 'claude-3-5-sonnet-20241022',
     created_at: '2026-02-26T08:00:00Z',
     updated_at: '2026-02-26T10:00:00Z',
     is_starred: false,
     message_count: 6,
-    human_message_count: 3,
     has_branches: false,
     source: 'CLAUDE_CODE',
   },
@@ -142,9 +139,18 @@ export const mockMessageWithToolUse: Message = {
   files: [],
 };
 
-// Mock conversation detail
-export const mockConversationDetail: ConversationDetail = {
+// Mock conversation detail. ConversationDetail extends ConversationSummary,
+// so the three fields stripped from `ConversationListItem` (summary,
+// human_message_count, git_branch) must be re-added here — the
+// per-conversation endpoint still serializes them.
+const conv1Detail: ConversationSummary = {
   ...mockConversations[0],
+  summary: 'Discussion about React best practices',
+  human_message_count: 5,
+};
+
+export const mockConversationDetail: ConversationDetail = {
+  ...conv1Detail,
   messages: mockMessages,
   current_leaf_message_uuid: 'msg-4',
 };

@@ -9,7 +9,18 @@ import { cn, formatDate } from '@/lib/utils'
 import { applyActiveFilter, patternMatches, type FilterMode } from '@/lib/filterEngine'
 import { useFilters } from '@/contexts/FilterContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
-import type { ConversationSummary, SubagentSummary, SourceFilter, SortField, SortOrder } from '@/lib/types'
+// Import the skinny list-payload type under an alias to avoid colliding
+// with the `ConversationListItem` component defined below in this file.
+// The post-split `/api/conversations` returns ConversationListItem[]
+// (no summary, no human_message_count, no git_branch) — none of which
+// this component reads. See PLANS/SPLIT_CONVERSATION_SCHEMA.md.
+import type {
+  ConversationListItem as ConvListItem,
+  SubagentSummary,
+  SourceFilter,
+  SortField,
+  SortOrder,
+} from '@/lib/types'
 
 interface ConversationListProps {
   searchQuery?: string
@@ -51,11 +62,11 @@ const OVERSCAN = 8
 type FlatItem =
   | { kind: 'header'; key: string; label: string }
   | { kind: 'divider'; key: string }
-  | { kind: 'conv'; key: string; conv: ConversationSummary }
+  | { kind: 'conv'; key: string; conv: ConvListItem }
 
 function buildFlatItems(
-  starred: ConversationSummary[],
-  unstarred: ConversationSummary[],
+  starred: ConvListItem[],
+  unstarred: ConvListItem[],
 ): FlatItem[] {
   const items: FlatItem[] = []
   if (starred.length > 0) {
@@ -94,7 +105,7 @@ export function ConversationList({
   const activeNode = filtersState.activeId ? filtersState.nodes[filtersState.activeId] : null
   const hasActiveFilter = Boolean(activeNode && activeNode.enabled)
 
-  const isInScope = (conv: ConversationSummary): boolean => {
+  const isInScope = (conv: ConvListItem): boolean => {
     if (pinScope.kind === 'none') return true
     if (pinScope.kind === 'conversation') return conv.uuid === pinScope.uuid
     return (conv.project_path ?? '') === pinScope.path
@@ -241,7 +252,7 @@ export function ConversationList({
     // view most users don't keep open. If grouped corpora start
     // hitting their own first-paint cliff we'll come back. (Phase 2.2
     // virtualization scope, OPTIMIZE_FIRST_PAINT.md.)
-    const groups = new Map<string, ConversationSummary[]>()
+    const groups = new Map<string, ConvListItem[]>()
 
     for (const conv of conversations) {
       let groupKey: string
@@ -346,10 +357,10 @@ interface VirtualizedFlatListProps {
    *  partitioning and ordered-IDs derivation happen inside this
    *  component, memoized on `conversations` so the virtualizer's
    *  inputs don't shift identity on every parent render. */
-  conversations: ConversationSummary[]
+  conversations: ConvListItem[]
   selectedUuid: string | undefined
-  onClickConv: (conv: ConversationSummary) => void
-  isInScope: (conv: ConversationSummary) => boolean
+  onClickConv: (conv: ConvListItem) => void
+  isInScope: (conv: ConvListItem) => boolean
   isKeyboardSelected: (uuid: string) => boolean
 }
 
@@ -673,7 +684,7 @@ function VirtualizedFlatList({
 }
 
 interface ConversationListItemProps {
-  conversation: ConversationSummary
+  conversation: ConvListItem
   isSelected: boolean
   isKeyboardSelected: boolean
   onClick: () => void
