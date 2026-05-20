@@ -145,6 +145,26 @@ class Settings(BaseModel):
     # runner) so contributors without ~/.claude/projects on disk can run
     # the e2e suite against committed synthetic fixtures.
     claude_dir: Path
+    # Layer 1 of PLANS/2026.05.18-config-corruption-safe-mode.md.
+    #
+    # Set to a one-line, human-readable description of WHY the config
+    # parse failed when any present ``config.json`` candidate didn't load
+    # cleanly. ``None`` when every present config parsed (or when no
+    # config file exists — absence is not corruption).
+    #
+    # Wire-format note: surfaced verbatim in ``AppConfig`` so the
+    # frontend banner can render the path + exception name directly. If
+    # multiple candidates fail (canonical AND legacy both corrupt), they
+    # are joined with `` | `` in load-order. Format per failure:
+    # ``f"{path}: {type(exc).__name__}: {exc}"``.
+    #
+    # Invariant pinned by the L1 test slab
+    # (``test_settings_corrupt_reason.py``): set even when a later
+    # candidate parses cleanly. The "premature break" Critic-pin test
+    # ensures ``data_dir`` still resolves from the working candidate;
+    # this field surfaces the broken one to the user so the silent
+    # data-dir orphaning failure mode can't recur.
+    config_corrupt_reason: str | None = None
 
     @classmethod
     def load(cls) -> "Settings":
@@ -167,6 +187,12 @@ class Settings(BaseModel):
         # for users whose lifespan migration has not yet renamed the dir.
         config_data_dir: Path | None = None
         config_claude_dir: Path | None = None
+        # Layer 1 (2026-05-18): accumulate per-candidate parse failures.
+        # Joined with `` | `` into ``config_corrupt_reason`` at the bottom
+        # of ``load``. The list is empty in the happy path (no parse
+        # failures), which collapses to ``None`` for the field — keeping
+        # the wire-format optionality cleanly representable.
+        corruption_reasons: list[str] = []
         for config_path in (
             canonical_home_dir() / "config.json",
             legacy_home_dir() / "config.json",
@@ -178,18 +204,34 @@ class Settings(BaseModel):
             # root) MUST NOT crash boot — otherwise the user has no UI to
             # recover and is stuck deciphering a stack trace. Catch
             # JSONDecodeError + OSError (TOCTOU between exists() and open(),
-            # permission denied) + TypeError (subscript on non-dict root).
-            # On parse failure, log a warning and ``continue`` to the next
-            # candidate — Council Critic 2026-05-18 §2: ``break`` on error
-            # would silently default when a valid legacy config sits right
-            # next door. We do NOT catch bare ``Exception`` (catalog #4).
+            # permission denied) + TypeError (subscript on non-dict root)
+            # + ValueError (catches UnicodeDecodeError on non-UTF-8 files,
+            # flagged by Python Expert Council 2026-05-19 as a Windows-
+            # path-default-encoding gap). We do NOT catch bare ``Exception``
+            # (catalog #4).
+            #
+            # Council Critic 2026-05-18 §2: ``break`` on error would
+            # silently default when a valid legacy config sits right next
+            # door. On parse failure we ``continue`` to the next candidate
+            # so the legacy fallback still works — AND (Layer 1) we
+            # record the failure in ``corruption_reasons`` so the
+            # corruption surfaces to the UI banner even when fallback
+            # succeeds.
             try:
-                with open(config_path) as f:
+                # ``encoding="utf-8"`` is explicit so cross-platform
+                # behavior is identical: on Windows the default would be
+                # CP1252 and a valid UTF-8 config with non-ASCII bytes
+                # in (e.g.) a directory path would raise
+                # UnicodeDecodeError before reaching the JSON parser.
+                with open(config_path, encoding="utf-8") as f:
                     parsed = json.load(f)
                 if not isinstance(parsed, dict):
                     log.warning(
                         "Config file %s root is not a JSON object; ignoring.",
                         config_path,
+                    )
+                    corruption_reasons.append(
+                        f"{config_path}: root is not a JSON object"
                     )
                     continue
                 if "data_dir" in parsed:
@@ -197,12 +239,19 @@ class Settings(BaseModel):
                 if "claude_dir" in parsed:
                     config_claude_dir = Path(parsed["claude_dir"])
                 break
-            except (json.JSONDecodeError, OSError, TypeError) as exc:
+            except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
                 log.warning(
                     "Failed to parse config %s: %s. "
                     "Using defaults; fix the file and restart to apply.",
                     config_path,
                     exc,
+                )
+                # Reason format: path-first so the banner can render the
+                # actionable "fix this exact file" line; exception class
+                # name preserves the JSONDecodeError "line N column N"
+                # detail that's the most actionable signal for the user.
+                corruption_reasons.append(
+                    f"{config_path}: {type(exc).__name__}: {exc}"
                 )
                 continue
 
@@ -234,7 +283,13 @@ class Settings(BaseModel):
             if config_claude_dir
             else Path.home() / ".claude"
         )
-        return cls(data_dir=data_dir, claude_dir=claude_dir)
+        return cls(
+            data_dir=data_dir,
+            claude_dir=claude_dir,
+            config_corrupt_reason=(
+                " | ".join(corruption_reasons) if corruption_reasons else None
+            ),
+        )
 
 
 @lru_cache
