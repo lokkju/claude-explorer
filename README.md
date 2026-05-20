@@ -46,6 +46,45 @@ If you'd rather hack on the project than install it, see [From source (for contr
 
 ---
 
+## Performance
+
+Claude Explorer keeps interaction latency under the human-perception threshold across the corpus sizes most users actually have (hundreds to low thousands of conversations, single-digit GB on disk). Numbers below come from a ~1,000-conversation / ~2.5 GB corpus measured with [`hyperfine`](https://github.com/sharkdp/hyperfine) on macOS / M3 Pro / local SSD. The "Before" column is the pre-optimization baseline shipped in early V1 betas; "After" is what V1 ships.
+
+| Metric | Before | After | Improvement |
+|---|---|---|---|
+| Sidebar list (`/api/conversations`), warm cache | 4,518 ms | **72 ms** | ~63× |
+| Sidebar list, cold SQLite cache, warm filesystem | 11,168 ms | **134 ms** | ~83× |
+| Sidebar list, first install, cold everything | ~6,000 ms | **135 ms** | ~44× |
+| Search query, narrow term (`q=foobar`) | ≈1,400 ms (linear) | **≈317 ms** (FTS5) | ~4.4× |
+| Search query, broad term (`q=python`, ~770 KB results) | ≈1,400 ms (linear) | **≈750 ms** (FTS5) | ~1.9× |
+| Search query cold (first call after restart) | ≈20,850 ms | **≈780 ms** | ~27× |
+| Conversation detail, 288 MB CC JSONL (warm) | 1,474 ms | **≈230 ms** | ~6.4× |
+| Markdown export of same conversation (warm) | 1,460 ms | **≈230 ms** | ~6.4× |
+| Search-ready time after server restart | ~15 s | **<1 s** | ~15× |
+| Startup time-to-image-protection | ~15 s | **~1 s** | ~15× |
+| In-flight search freshness (CC session updated while running) | up to 600 s | **~2–3 s** | ~200× |
+| Sidebar wire payload | 650,640 B | **459,555 B** | −29% |
+| Sidebar DOM rows rendered (334-conv corpus) | 334 | **13** | −96% |
+
+What's behind those numbers:
+
+- **A persistent SQLite metadata cache** at `~/.claude-explorer/search-index.sqlite` (`conversation_summaries` table) means the sidebar payload comes from cached rows, not from re-parsing every JSONL on every request.
+- **A drift-first FTS5 build** at startup queries the `indexed_files` table for current mtimes before loading any conversation content; only files that actually changed get re-indexed. Search becomes queryable in under a second after restart instead of ~15 s.
+- **FTS5 `snippet()` for the search-result fragments** replaces the post-MATCH corpus walk that had to read every matched conversation from disk. The schema carries a two-column projection (`body` for the full text, `body_text` for the text-only view) so the **Tools** toggle behaves the same on the fast path as on the linear-scan path: column-scoped MATCH excludes tool-only hits at MATCH time, not after BM25 ranks. `snippet()` runs entirely in SQLite, and the cold-search path drops from ~16 s to under 1 s on a 1,000-conversation corpus.
+- **A truncation envelope on every search response** discloses the FTS5 row cap. `/api/search` returns `{results, total_messages_matched, returned_messages, truncated}` instead of a bare list; the total comes from a sub-10 ms `COUNT(*)` under the same WHERE clauses as the snippet query. The SearchPanel renders a small footer ("Showing first 1,000 of 12,400 message matches. Refine your query to see the rest.") when the cap clipped the response. The MCP `list_sessions` tool uses a higher cap (5,000) so LLM and script consumers can reason about broader queries.
+- **An LRU FileCache + cache-routed conversation-detail lookups** mean opening a 288 MB Claude Code session is a dict lookup, not a JSONL re-parse. Markdown / PDF / JSON exports get the same payoff for free.
+- **The CC image-warm walk piggybacks on the FTS5 build** instead of running as a separate startup pass: every JSONL the FTS5 build reads also warms its image markers via `cache_all_markers`. Image protection now becomes available within ~1 s of restart instead of ~15 s, and a duplicate disk walk goes away entirely.
+- **Event-driven `watchdog` observers** on `~/.claude/image-cache/` and `~/.claude/projects/` catch new images and CC session edits within sub-second latency; a debounced drift pass keeps the search index fresh while the explorer is running.
+- **`ORJSONResponse`** plus a skinny `ConversationListItem` Pydantic model (a strict subset of `ConversationSummary`) cuts the wire payload ~29% without breaking MCP, the detail page, or the server-side `?search=` filter.
+- **Frontend virtualization** (`@tanstack/react-virtual`) on the flat sidebar list mounts ~13 rows instead of all ~1,000, taking the linear-in-N React reconciliation cost with it.
+- **A linear-scan fallback** kept in the codebase covers every "fast path unavailable" case (FTS5 missing on a stock Linux Python, index still warming on first install, summary cache disabled). Search and sidebar never go "down" — slow-but-correct beats fast-but-broken.
+
+If you want to reproduce these numbers or run your own benchmarks, the repo ships a `make bench` target that drives the canonical suite (sidebar, search warm + cold, conversation-detail at multiple size percentiles, Markdown export) against a running backend on `:8765`. `make bench-json` emits the same numbers as structured JSON suitable for paste into a PR body. The harness auto-picks fixture UUIDs from the live corpus and prints them so runs are reproducible. Two focused scripts also live in `benchmarks/`: `bench_perf.py` covers two endpoints with custom stats; `bench_search_paths.py` compares FTS5 and linear-scan in-process. For ad-hoc one-off measurements, [`hyperfine`](https://github.com/sharkdp/hyperfine) is still the right tool (`brew install hyperfine` on macOS, `apt install hyperfine` on Debian / Ubuntu, `cargo install hyperfine` anywhere with a Rust toolchain).
+
+For the full narrative of how these pieces fit together and what was tried-but-rejected along the way, see ["Building Claude Explorer: Part 2 — The Web App"](./articles/part_2_web_app.md) "Performance (FTS5 index)" section.
+
+---
+
 ## Background
 
 ### Where Claude Desktop Stores Your Data
