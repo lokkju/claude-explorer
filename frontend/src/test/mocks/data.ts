@@ -196,6 +196,10 @@ export const mockSearchResults: SearchResult[] = [
 // Mock app config
 export const mockConfig: AppConfig = {
   data_dir: '/Users/test/.claude-explorer/conversations',
+  // Layer 3: default mock is the clean state. Per-test handlers
+  // override this with a populated reason to exercise the corruption
+  // banner path.
+  config_corrupt_reason: null,
 };
 
 // Mock conversation tree with branches

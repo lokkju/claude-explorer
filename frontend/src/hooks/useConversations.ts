@@ -180,9 +180,23 @@ export function useConfigStats() {
 }
 
 export function useConfig() {
+  // Layer 3 of PLANS/2026.05.18-config-corruption-safe-mode.md.
+  //
+  // staleTime was Infinity, which suppressed refetches and would have
+  // pinned the corruption banner to its first-fetched value for the
+  // life of the tab — defeating the user's "fix config, refresh UI"
+  // recovery path. 60s mirrors useConfigStats so the banner clears
+  // within a minute of the file being repaired, and the default
+  // ``refetchOnWindowFocus: true`` makes the banner clear within
+  // ~1 RTT when the user tabs back from the editor.
+  //
+  // The backend route clears its lru_cache on every /api/config call
+  // (backend/routers/config.py:get_config), so a refetch always sees
+  // the current on-disk state — no caching layer can stale the
+  // banner.
   return useQuery({
     queryKey: queryKeys.config,
     queryFn: () => api.getConfig(),
-    staleTime: Infinity,
+    staleTime: 60 * 1000,
   })
 }

@@ -3,6 +3,7 @@ import { Outlet } from 'react-router'
 import { Menu, X } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { SearchPanel } from '@/components/search/SearchPanel'
+import { ConfigCorruptionBanner } from '@/components/ConfigCorruptionBanner'
 import { Button } from '@/components/ui/button'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
@@ -18,7 +19,14 @@ export function RootLayout() {
   }, [isMobile])
 
   return (
-    <div className="flex h-screen bg-white dark:bg-zinc-950">
+    <div className="flex h-screen flex-col bg-white dark:bg-zinc-950">
+      {/* Layer 3 of PLANS/2026.05.18-config-corruption-safe-mode.md:
+          renders at the very top of the app shell so the corruption
+          warning is the first thing the user sees. Renders nothing
+          when config.json parses cleanly — flex container shrinks
+          accordingly with no layout jump. */}
+      <ConfigCorruptionBanner />
+      <div className="flex flex-1 min-h-0">
       {!isMobile && <Sidebar />}
 
       {isMobile && (
@@ -67,6 +75,7 @@ export function RootLayout() {
         <Outlet />
       </main>
       <SearchPanel />
+      </div>
     </div>
   )
 }

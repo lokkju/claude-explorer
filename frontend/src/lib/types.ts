@@ -360,6 +360,16 @@ export interface Bookmark {
 
 export interface AppConfig {
   data_dir: string
+  // Layer 3 of PLANS/2026.05.18-config-corruption-safe-mode.md.
+  //
+  // Mirrors `Settings.config_corrupt_reason` on the backend. ``null``
+  // when ``config.json`` parsed cleanly; a one-line human-readable
+  // string (path + exception name + message) when it didn't. The
+  // ``ConfigCorruptionBanner`` component renders this verbatim at the
+  // top of the app shell — Layer 2's writer gates refuse mutations
+  // while this is non-null, so users need to know the path of the
+  // file to fix.
+  config_corrupt_reason: string | null
 }
 
 export interface AppConfigStats extends AppConfig {
