@@ -8,21 +8,34 @@ A tool to extract, browse, search, and export your Claude conversation history �
 
 ```bash
 # install uv if needed: https://docs.astral.sh/uv/getting-started/installation/
+
+# One-time: install the Chromium build Playwright drives during credential capture.
+# The sidebar Refresh button uses this to log you into Claude; without it the
+# in-app login flow fails on first run.
+uvx --from claude-explorer playwright install chromium
+
+# Start the web app:
 uvx claude-explorer serve
 
 # In another terminal, install the always-on image-cache watcher
 # (strongly recommended — see "Continuous Image-Cache Watcher" below):
 uvx claude-explorer install-watcher
+```
 
+```bash
 # Optional: install the system libraries WeasyPrint needs for PDF export
-# (skip if you only care about Markdown export).
-#   macOS:   run the brew command below
-#   Linux:   use your distro's pango / cairo / libffi packages
+# (skip if you only care about Markdown export). Pick ONE block:
+#
+#   macOS:
+brew install pango cairo libffi
+#
+#   Linux (Ubuntu/Debian):
+# apt-get install libpango-1.0-0 libpangocairo-1.0-0 libcairo2
+#
 #   Windows: install MSYS2 (https://www.msys2.org), then in its shell run
 #            `pacman -S mingw-w64-x86_64-pango`. Or grab the standalone
 #            WeasyPrint .exe from the GitHub releases to skip the
 #            system-library dance entirely.
-brew install pango cairo libffi
 ```
 
 That's it. Open `http://localhost:8765` in your browser and your Claude Code sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
@@ -218,7 +231,11 @@ The `content` array contains typed blocks:
 
 ---
 
-## Project Structure
+## From source (for contributors)
+
+*If you want to hack on the project, run from a git checkout, or you're a contributor: install from source instead.*
+
+### Project Structure
 
 ```
 claude-explorer/
@@ -243,19 +260,13 @@ claude-explorer/
 │   ├── export.py             # Markdown + PDF export
 │   └── routers/              # conversations, search, export endpoints
 ├── frontend/
-│   └── src/                  # React 18 + TypeScript + Tailwind + shadcn/ui
+│   └── src/                  # React 19 + TypeScript + Tailwind + shadcn/ui
 ├── scripts/
 │   ├── check-cleanup-period.py        # Inspect/fix Claude Code's cleanupPeriodDays
 │   └── macos-restore-claude-projects.py  # Recover deleted projects from Time Machine
 └── utils/
     └── restore-deleted-sessions-and-images.sh  # Recover both sessions AND image-cache PNGs
 ```
-
----
-
-## From source (for contributors)
-
-*If you want to hack on the project, run from a git checkout, or you're a contributor: install from source instead.*
 
 ### Prerequisites
 
@@ -717,11 +728,11 @@ Pass the **parent of the dated directory** (the `<machine-uuid>` level) as `--tm
 
 ## Known Limitations
 
-- **Session key expiry:** `sessionKey` will eventually expire. Re-run the mitmproxy step to get a fresh one.
+- **Session key expiry:** `sessionKey` eventually expires. Click **Refresh** in the sidebar to re-capture it — the UI launches the same Playwright login flow automatically. The CLI `claude-explorer capture` is the equivalent fallback.
 - **Cloudflare cookie:** The `cf_clearance` cookie may be required on some networks. The fetcher attempts to capture it alongside `sessionKey`.
 - **Truncated messages:** The API returns `truncated: true` for very long messages. A per-message full-content endpoint has not yet been identified.
 - **Import:** There is no known write API for creating conversations. Migration to a new account is not currently possible programmatically.
-- **macOS only (for now):** The `open -a "Claude"` proxy launch command is macOS-specific. Linux and Windows launch commands are documented in `fetcher/README.md`.
+- **Proxy capture commands:** The proxy-method launch command varies per OS. See [Method B](#method-b-proxy-interception---proxy) above for the macOS, Windows, and Linux equivalents.
 
 ---
 
@@ -732,7 +743,7 @@ Pass the **parent of the dated directory** (the `<machine-uuid>` level) as `--tm
 | Credential Capture | Playwright (browser login), mitmproxy (proxy interception) |
 | Fetcher | httpx, curl_cffi |
 | Backend | FastAPI, uvicorn, uv, weasyprint |
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS v4, shadcn/ui, TanStack Query |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui, TanStack Query |
 | Search | SQLite FTS5 (primary), orjson + FileCache + ThreadPoolExecutor linear-scan fallback |
 | MCP server | FastMCP (5 tools: list_sessions, list_projects, get_session_outline, get_messages, export_session) |
 | Export | Markdown (built-in), PDF (weasyprint) |

@@ -92,7 +92,7 @@ ls .vscode/tasks.json .claude/ 2>&1
 python3 -c "import json; print(json.load(open('frontend/package.json'))['scripts'])"
 
 # (E) Maintainer-machine persistence
-python3 -c "import json; d=json.load(open('/Users/rpeck/.claude/settings.json')); print(json.dumps(d.get('hooks', {}), indent=2))"
+python3 -c "import json,os; d=json.load(open(os.path.expanduser('~/.claude/settings.json'))); print(json.dumps(d.get('hooks', {}), indent=2))"
 grep -iE "shai|hulud|gh-token-monitor|webhook\.site|trufflehog|voicproducoes|git-tanstack" \
   ~/.claude/settings.json
 ls ~/.vscode/tasks.json 2>&1

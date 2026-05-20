@@ -34,7 +34,7 @@ uv run playwright install chromium
 
 ## Code style
 
-- Python: PEP 8 with type hints; `ruff` + `pyflakes` (CI enforces zero warnings on changed files).
+- Python: PEP 8 with type hints; run `ruff check` and `pyflakes` locally before pushing (CI runs the test suites but does not yet enforce lint; please don't regress).
 - TypeScript: strict mode, `tsc --noEmit` clean, eslint via vite-plugin; prefer functional components.
 - Testing discipline: see [CLAUDE-TESTING.md](./CLAUDE-TESTING.md) for the black-box / spec-driven rules, Playwright "deterministic settle barrier" pattern, and the pre-flight checklist.
 - General coding practices and project structure are documented in [CLAUDE.md](./CLAUDE.md).
