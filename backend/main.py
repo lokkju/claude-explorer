@@ -211,28 +211,46 @@ async def lifespan(app: FastAPI):
     # ensure referenced [Image: source: ...] files are copied to the
     # permanent cache. Catches the case where a user has CC sessions
     # they haven't yet opened in the explorer (the lazy per-render
-    # copy at /api/cc-image only triggers on view). Runs in the
-    # background — non-blocking, so the server is up immediately.
-    # User can never lose images to "I forgot to run warm-cc-cache".
+    # copy at /api/cc-image only triggers on view). User can never
+    # lose images to "I forgot to run warm-cc-cache".
     #
-    # 5-second head-start so the first /api/conversations request
-    # lands before this scan starts walking every JSONL byte for
-    # `[Image: source: ...]` markers. The scan is ~10s of contended
-    # disk reads on a ~1k-session corpus and competes directly with
-    # the request's metadata read. Same trade as the FTS5 build:
-    # image protection latency shifts from t≈0 to t≈5s, invisible
-    # against typical user behavior. See PLANS/OPTIMIZE_COLD_START.md.
+    # Phase-2 Workstream B (PLANS/PERFORMANCE_PHASE_2.md):
+    # The FTS5 build's per-file CC load path
+    # (backend/search_index.py:_load_conversation_at →
+    # read_claude_code_conversation → cache_all_markers) already
+    # warms image markers for every drifted CC JSONL it reads.
+    # On the FTS5-enabled path (the default) we PIGGYBACK on that
+    # work instead of running a parallel corpus walk + 5 s delay.
+    # The standalone walk is kept as a fallback ONLY when FTS5 is
+    # disabled (CLAUDE_EXPLORER_DISABLE_SEARCH_INDEX=1) so users
+    # who opt out of search don't silently lose image protection.
     warm_task: asyncio.Task | None = None
-    if read_env(
-        "CLAUDE_EXPLORER_DISABLE_CC_WARM", "CLAUDE_EXPORTER_DISABLE_CC_WARM"
-    ) != "1":
-        async def _delayed_warm_all_sessions() -> None:
-            await asyncio.sleep(5.0)
+    fts5_disabled = (
+        read_env(
+            "CLAUDE_EXPLORER_DISABLE_SEARCH_INDEX",
+            "CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX",
+        )
+        == "1"
+    )
+    cc_warm_disabled = (
+        read_env(
+            "CLAUDE_EXPLORER_DISABLE_CC_WARM", "CLAUDE_EXPORTER_DISABLE_CC_WARM"
+        )
+        == "1"
+    )
+    if not cc_warm_disabled and fts5_disabled:
+        # Fallback path: FTS5 is off, so the build won't piggyback
+        # image-warm. Run the standalone walk WITHOUT the legacy
+        # 5 s head-start — the contention argument the delay
+        # mitigated only applied when FTS5 was also walking the
+        # same corpus. With FTS5 off, the first /api/conversations
+        # request hits the metadata reader (cheap, no contention).
+        async def _warm_all_sessions_fallback() -> None:
             from backend.cc_image_cache import warm_all_sessions_async
 
             await warm_all_sessions_async()
 
-        warm_task = asyncio.create_task(_delayed_warm_all_sessions())
+        warm_task = asyncio.create_task(_warm_all_sessions_fallback())
 
     # Build the FTS5 search index in the background. Search falls back
     # to the linear-scan path until this completes, so the server is
@@ -246,10 +264,7 @@ async def lifespan(app: FastAPI):
     # pattern). The user wants to see "search index build complete"
     # on stdout without configuring a logging.dictConfig.
     search_index_task: asyncio.Task | None = None
-    if read_env(
-        "CLAUDE_EXPLORER_DISABLE_SEARCH_INDEX",
-        "CLAUDE_EXPORTER_DISABLE_SEARCH_INDEX",
-    ) != "1":
+    if not fts5_disabled:
         async def _build_search_index() -> None:
             # 500ms head-start so the first /api/conversations request
             # lands BEFORE the FTS5 build runs. Search falls back to

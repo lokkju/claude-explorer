@@ -376,18 +376,34 @@ async def test_fts5_build_honors_500ms_delay(
     )
 
 
-async def test_warm_image_scan_honors_500ms_delay(
+async def test_warm_image_scan_fires_only_when_fts5_disabled(
     cold_start_claude_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test 6: warm_all_sessions_async is called no sooner than 500 ms
-    after lifespan startup. Same 500ms-floor / 5s-production semantics
-    as test 5. See backend/main.py for the contention rationale.
+    """Test 6 (Phase-2 B): warm_all_sessions_async fires from the
+    lifespan ONLY when FTS5 is disabled.
+
+    Default path (FTS5 enabled): the FTS5 build's per-file CC load
+    invokes cache_all_markers via read_claude_code_conversation, so
+    a parallel warm walk would be duplicate I/O. The standalone
+    task is therefore NOT spawned.
+
+    Fallback path (FTS5 disabled): the standalone warm task IS
+    spawned WITHOUT the legacy 5 s head-start. The contention
+    rationale for the delay only applied when FTS5 was also
+    walking the corpus.
+
+    The fixture disables FTS5 by default — so deleting the
+    CC_WARM disable env var here exercises the fallback path and
+    we expect ONE warm call with NO meaningful delay (< 200 ms,
+    i.e. event-loop yield only).
     """
     from backend.main import app
 
     # Enable the warm scan (default-disabled in the fixture).
     monkeypatch.delenv("CLAUDE_EXPLORER_DISABLE_CC_WARM", raising=False)
+    # FTS5 disabled stays — that's the fixture default — so we're
+    # exercising the fallback path.
 
     call_times: list[float] = []
 
@@ -401,17 +417,62 @@ async def test_warm_image_scan_honors_500ms_delay(
     ):
         t0 = time.monotonic()
         async with app.router.lifespan_context(app):
-            # Same 10s headroom rationale as test 5.
             for _ in range(200):
                 if call_times:
                     break
                 await asyncio.sleep(0.05)
 
-    assert call_times, "warm_all_sessions_async was never called"
+    assert call_times, (
+        "warm_all_sessions_async was never called even though FTS5 is "
+        "disabled (the fallback path should fire it)"
+    )
     delay = call_times[0] - t0
-    assert delay >= 0.5, (
+    # The 5 s legacy delay is gone — task should fire within ~200 ms
+    # (event-loop scheduling slack only). Anything > 500 ms means
+    # the legacy sleep is still in place.
+    assert delay < 0.5, (
         f"warm_all_sessions_async fired {delay*1000:.0f}ms after "
-        f"lifespan start; expected at least 500ms"
+        f"lifespan start; expected <500ms (legacy 5 s delay removed)"
+    )
+
+
+async def test_warm_image_scan_skipped_when_fts5_enabled(
+    cold_start_claude_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test 6b (Phase-2 B): when FTS5 is enabled, the standalone
+    warm task does NOT fire. The FTS5 build path
+    (search_index._load_conversation_at → read_claude_code_conversation
+    → cache_all_markers) covers image-warm implicitly.
+    """
+    from backend.main import app
+
+    monkeypatch.delenv("CLAUDE_EXPLORER_DISABLE_CC_WARM", raising=False)
+    monkeypatch.delenv("CLAUDE_EXPLORER_DISABLE_SEARCH_INDEX", raising=False)
+
+    call_times: list[float] = []
+
+    async def _spy(*args: Any, **kwargs: Any) -> dict:
+        call_times.append(time.monotonic())
+        return {}
+
+    with patch(
+        "backend.cc_image_cache.warm_all_sessions_async",
+        side_effect=_spy,
+    ):
+        async with app.router.lifespan_context(app):
+            # Give the lifespan ~2 s to spawn (and potentially
+            # invoke) the warm task. If the standalone task is
+            # gone (the contract), nothing fires.
+            for _ in range(40):
+                if call_times:
+                    break
+                await asyncio.sleep(0.05)
+
+    assert call_times == [], (
+        f"warm_all_sessions_async fired {len(call_times)} times with FTS5 "
+        "enabled; the standalone task should be skipped — FTS5 build "
+        "covers image-warm via cache_all_markers in _load_conversation_at"
     )
 
 
