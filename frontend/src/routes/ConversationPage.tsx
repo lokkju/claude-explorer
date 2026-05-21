@@ -22,6 +22,7 @@ import { SessionPreludeAffordance } from '@/components/conversation/SessionPrelu
 import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { ApiError } from '@/lib/types'
+import { scrollBubbleIntoView } from '@/lib/scrollBubbleIntoView'
 import { useUnmountSafeTimer } from '@/hooks/useUnmountSafeTimer'
 import {
   expandAllToolsButtonLabel,
@@ -372,11 +373,16 @@ export function ConversationPage() {
 
       // Small delay to ensure DOM is rendered
       const timer = setTimeout(() => {
-        const element = document.querySelector(
+        const element = document.querySelector<HTMLElement>(
           `[data-message-uuid="${highlightMessageId}"]`
         )
         if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          // Distance-gated scroll + post-settle correction. See
+          // `scrollBubbleIntoView` docstring for the 15K-msg
+          // layout-shift bug this fixes (long-distance smooth scrolls
+          // drifted by 4,000–5,300px due to mid-animation lazy-image
+          // growth).
+          scrollBubbleIntoView(element)
           // Flash highlight effect
           element.classList.add('ring-2', 'ring-yellow-400', 'ring-offset-2')
           // Cross-conversation Enter: SearchPanel.openActiveMatch can't reliably

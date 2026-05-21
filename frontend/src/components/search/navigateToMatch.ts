@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/queryClient'
 import { api } from '@/lib/api'
+import { scrollBubbleIntoView } from '@/lib/scrollBubbleIntoView'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import type { SearchMatch } from '@/contexts/SearchPanelContext'
 
@@ -79,11 +80,14 @@ export function useNavigateToMatch() {
         if (msgIdx !== -1) {
           setSelectedMessageIndex(msgIdx)
           setFocusArea('detail')
-          const element = document.querySelector(
+          const element = document.querySelector<HTMLElement>(
             `[data-message-uuid="${match.messageUuid}"]`
           )
           if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            // Distance-gated scroll + post-settle correction. See
+            // `scrollBubbleIntoView` docstring for the 15K-msg
+            // layout-shift bug this fixes.
+            scrollBubbleIntoView(element)
             element.classList.add('ring-2', 'ring-yellow-400', 'ring-offset-2')
             setTimeout(() => {
               element.classList.remove(
