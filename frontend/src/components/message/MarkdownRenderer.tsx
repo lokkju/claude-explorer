@@ -91,11 +91,11 @@ interface MarkdownRendererProps {
   showToolCalls?: boolean
   /** Active full-text search query. When non-empty (and ≥2 chars per
    *  token), text inside inline-prose elements (p, li, strong, em, td,
-   *  th, blockquote, headings) is wrapped in <mark> for each match.
-   *  Code blocks (block AND inline) are intentionally excluded — the
-   *  rehype-highlight syntax spans don't compose with overlapping
-   *  marks without breaking token boundaries, and users typically
-   *  search prose, not syntax. */
+   *  th, blockquote, headings, inline `code` backticks) is wrapped in
+   *  <mark> for each match. FENCED block code is intentionally excluded
+   *  — rehype-highlight wraps tokens in <span> children there and
+   *  overlapping <mark> would break syntax token boundaries. Inline
+   *  code's children are plain string leaves and compose safely. */
   query?: string
 }
 
@@ -147,12 +147,22 @@ export function MarkdownRenderer({ content, className, query }: MarkdownRenderer
           }
 
           if (isInline) {
+            // Issue 2 follow-up (2026-05-20, screenshot 20.png regression):
+            // inline code DOES get search-hit highlighting. The original
+            // Issue 1 ship excluded ALL code on rehype-highlight
+            // compositional grounds, but rehype-highlight only tokenizes
+            // FENCED block code — inline backticks are plain text leaves
+            // that compose safely with <mark>. Real-world case: the
+            // matched phrase lives inside an inline `/api/path?q=...`
+            // URL fragment and was invisible inside the bubble even
+            // though the SearchPanel snippet (right column) had it
+            // highlighted. Block branch below stays unwrapped.
             return (
               <code
                 className="rounded bg-zinc-200 px-1 py-0.5 text-sm dark:bg-zinc-700"
                 {...props}
               >
-                {children}
+                {wrap(children)}
               </code>
             )
           }

@@ -89,4 +89,48 @@ describe('MarkdownRenderer — search-hit highlighting (Issue 1)', () => {
     expect(marks).toHaveLength(1)
     expect(marks[0].textContent).toBe('this image')
   })
+
+  // V1 polish 2026-05-20 (regression fix): a real-world bubble contained
+  // "this image" inside markdown inline backticks (e.g.
+  // `/api/search?q=this image`). The original Issue 1 ship excluded ALL
+  // code (block AND inline) from highlighting on rehype-highlight
+  // compositional grounds, but rehype-highlight only tokenizes FENCED
+  // blocks — inline code is plain text and composes safely with <mark>.
+  // The user's bug report (screenshot 20.png) showed the snippet on the
+  // right HAD a yellow mark inside inline-code, but the bubble on the
+  // left didn't. Pin: inline code DOES get highlighted; block code does NOT.
+  it('wraps query matches inside inline code (`backticks`)', () => {
+    const { container } = render(
+      <MarkdownRenderer
+        content="See `/api/search?q=this image` against the index."
+        query='"this image"'
+      />,
+    )
+    const inlineCode = container.querySelector('code')
+    expect(inlineCode).not.toBeNull()
+    // The inline <code> element must contain a <mark> wrapping the
+    // matching substring.
+    const codeMark = inlineCode!.querySelector('mark')
+    expect(codeMark).not.toBeNull()
+    expect(codeMark!.textContent).toBe('this image')
+  })
+
+  it('does NOT highlight inside fenced code blocks even when query matches', () => {
+    const { container } = render(
+      <MarkdownRenderer
+        content={'Prose with this image word.\n```js\nconst x = "this image"\n```'}
+        query='"this image"'
+      />,
+    )
+    // Prose <mark> present.
+    expect(
+      Array.from(container.querySelectorAll('mark')).some(
+        (m) => m.textContent === 'this image' && !m.closest('pre'),
+      ),
+    ).toBe(true)
+    // No <mark> inside the fenced block.
+    const fenced = container.querySelector('pre')
+    expect(fenced).not.toBeNull()
+    expect(fenced!.querySelectorAll('mark')).toHaveLength(0)
+  })
 })
