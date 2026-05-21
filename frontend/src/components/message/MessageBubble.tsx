@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button'
 import { useConversationLightbox } from '@/contexts/ConversationLightboxContext'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useBookmarks } from '@/contexts/BookmarkContext'
-import { useSearchPanelOptional } from '@/contexts/SearchPanelContext'
 import { cn, formatMessageTimestamp, messageToMarkdown, messageHasVisibleContent, isExcludableMarker } from '@/lib/utils'
 import { dedupeImageFiles } from '@/lib/imageFiles'
 import {
@@ -35,19 +34,34 @@ interface MessageBubbleProps {
   isKeyboardSelected?: boolean
   conversationId?: string
   conversationSource?: 'CLAUDE_AI' | 'CLAUDE_CODE'
+  /** Active full-text search query (Issue 3 follow-up, 2026-05-20).
+   *
+   *  PROP, not context: an earlier iteration (c6c31b7) read this via
+   *  `useSearchPanelOptional()` so each bubble could highlight matches
+   *  inline. On a 15K-message conversation, every keystroke in the
+   *  SearchPanel input then cascaded through ALL 15K bubbles
+   *  (useContext consumers always re-render on provider value identity
+   *  change), locking the main thread and starving the smooth-scroll
+   *  animation that the search-hit navigation depends on. ConversationPage
+   *  now reads `query` once from SearchPanelContext, runs it through
+   *  React.useDeferredValue, and threads the deferred value down here.
+   *  Bubbles re-render only when the deferred value flips, and React
+   *  schedules the storm at low priority so scrollIntoView frames win.
+   *
+   *  Default `""` (no highlighting) when omitted — tests + future
+   *  Storybook fixtures don't need to mount a SearchPanelProvider. */
+  searchQuery?: string
 }
 
-function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId, conversationSource }: MessageBubbleProps) {
+function MessageBubbleImpl({
+  message,
+  isKeyboardSelected = false,
+  conversationId,
+  conversationSource,
+  searchQuery = '',
+}: MessageBubbleProps) {
   const isHuman = message.sender === 'human'
   const { showToolCalls, expandAllTools } = useSettings()
-  // Active full-text search query — when non-empty, MarkdownRenderer
-  // wraps matching substrings in <mark> so the user can spot the hit
-  // inside the bubble, not just in the SearchPanel snippet. (Issue 1,
-  // 2026-05-20.) Optional hook: outside the conversation page (tests,
-  // future Storybook), the SearchPanelProvider isn't mounted; degrade
-  // to "no active query" instead of throwing.
-  const searchPanel = useSearchPanelOptional()
-  const searchQuery = searchPanel?.query ?? ''
   const { isBookmarked, toggleBookmark } = useBookmarks()
   const [copied, setCopied] = useState(false)
   const bookmarked = conversationId ? isBookmarked(conversationId, message.uuid) : false
@@ -289,12 +303,20 @@ function MessageBubbleImpl({ message, isKeyboardSelected = false, conversationId
 // ConversationPage doesn't re-render every bubble unless the bubble's
 // own props actually changed (message reference, selection flag,
 // conversation id/source).
+//
+// Issue 3 follow-up (2026-05-20): `searchQuery` joins the comparator.
+// Without it, ConversationPage threading useDeferredValue(query) would
+// be pointless — every deferred-value flip would bypass memo because
+// the prop wasn't in the comparator. Including it means bubbles re-
+// render ONLY when the deferred query actually changes, and React
+// scheduling defers that work behind navigation/scroll.
 export const MessageBubble = memo(MessageBubbleImpl, (prev, next) => {
   return (
     prev.message === next.message &&
     prev.isKeyboardSelected === next.isKeyboardSelected &&
     prev.conversationId === next.conversationId &&
-    prev.conversationSource === next.conversationSource
+    prev.conversationSource === next.conversationSource &&
+    prev.searchQuery === next.searchQuery
   )
 })
 

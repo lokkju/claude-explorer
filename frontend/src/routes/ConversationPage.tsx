@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useTransition } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useTransition, useDeferredValue } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors, Download } from 'lucide-react'
 import { toast } from 'sonner'
@@ -45,7 +45,20 @@ export function ConversationPage() {
   const { toggleBookmark } = useBookmarks()
   const queryClient = useQueryClient()
   const [isRefetching, setIsRefetching] = useState(false)
-  const { isOpen: isSearchPanelOpen } = useSearchPanel()
+  const { isOpen: isSearchPanelOpen, query: searchPanelQuery } = useSearchPanel()
+  // Issue 3 fix (2026-05-20): an earlier iteration (c6c31b7) had every
+  // MessageBubble subscribe to SearchPanelContext directly via
+  // `useSearchPanelOptional()` so it could highlight the live query
+  // inline. On a 15K-message conversation, the resulting
+  // ALL-bubbles-re-render-per-keystroke storm locked the main thread
+  // for multiple seconds and starved the smooth-scroll animation that
+  // search-hit navigation depends on. Read `query` once HERE (one
+  // context subscription), defer it (lets React deprioritize the bulk
+  // re-render), and thread it down as a prop. MessageBubble's memo
+  // comparator now includes `searchQuery` so the deferred-value flip
+  // actually short-circuits unchanged subtrees, and scrollIntoView
+  // wins its animation frame.
+  const deferredSearchQuery = useDeferredValue(searchPanelQuery)
   const {
     setMessages,
     setMessagesAndPinSelection,
@@ -820,6 +833,7 @@ export function ConversationPage() {
                     isKeyboardSelected={isSelected}
                     conversationId={conversation.uuid}
                     conversationSource={conversation.source}
+                    searchQuery={deferredSearchQuery}
                   />
                 </div>
               )
