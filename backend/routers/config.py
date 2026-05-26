@@ -10,7 +10,11 @@ from ..store import ConversationStore
 router = APIRouter(tags=["config"])
 
 
-@router.get("/config", response_model=AppConfig)
+@router.get(
+    "/config",
+    response_model=AppConfig,
+    summary="Get fast application configuration (no disk-walk; safe to poll)",
+)
 def get_config() -> AppConfig:
     """Get application configuration.
 
@@ -57,7 +61,11 @@ def get_config() -> AppConfig:
     )
 
 
-@router.get("/config/stats", response_model=AppConfigStats)
+@router.get(
+    "/config/stats",
+    response_model=AppConfigStats,
+    summary="Get application configuration plus on-disk conversation count (slow)",
+)
 async def get_config_stats(
     store: ConversationStore = Depends(get_store),
 ) -> AppConfigStats:

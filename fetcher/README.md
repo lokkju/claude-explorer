@@ -135,7 +135,14 @@ Use Terminal.app, iTerm2, or another full-featured terminal.
 | `playwright_capture.py` | Browser-based credential capture |
 | `mitmproxy_addon.py` | Proxy-based credential capture |
 | `bulk_fetch.py` | Downloads conversations from API |
-| `local_claude_code.py` | Reads local Claude Code JSONL files |
+| `credentials.py` | On-disk credentials read/write (v1/v2 schema) |
+| `migrate_to_v2.py` | One-shot legacy → v2 layout migration |
+| `http_retry.py` | Domain exception vocab + retry helpers |
+| `watcher_install.py` | Cross-platform supervised CC watcher install |
+| `paths.py` | Shared default paths (config dir, creds, data) |
+
+(Note: Claude Code JSONL session files are read directly by
+`backend/claude_code_reader.py` at runtime — no separate import step.)
 
 ## Credentials Storage
 

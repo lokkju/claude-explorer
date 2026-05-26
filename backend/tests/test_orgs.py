@@ -1,11 +1,18 @@
 """Tests for the /api/orgs endpoint and conversation/search org filtering.
 
 C6 of cowork-multi-org. The endpoint returns a discriminated three-state
-response (NEW-P0-C):
+response (NEW-P0-C). Council code-review B+D batch (2026-05-21) unified
+the error shape with the rest of the backend (string detail, 503 status
+to match files.py for the same credentials-corrupt condition):
 
   * (a) creds present + parseable -> 200 {authenticated: true, orgs: [...]}
   * (b) creds file absent         -> 200 {authenticated: false, orgs: []}
-  * (c) creds file corrupt        -> 500 {error: "credentials_corrupt", ...}
+  * (c) creds file corrupt        -> 503 {detail: "<string message>"}
+
+Pre-council the corrupt branch returned 500 with a dict detail
+``{"error": "credentials_corrupt", "message": ...}`` — see council
+Decision Record for B1+B3 unification. The new contract matches
+``files.py``'s response for the SAME credentials-corrupt condition.
 
 The synthetic "_claude_code" org must never appear in the response (it's a
 source, not a tenant).
@@ -85,25 +92,43 @@ def test_endpoint_three_state_authenticated_false(
 def test_endpoint_three_state_corrupt(
     client: TestClient, isolated_creds: Path
 ) -> None:
-    """NEW-P0-C. Creds file exists but is invalid JSON → 500."""
+    """NEW-P0-C, council B1+B3 unification (2026-05-21).
+
+    Creds file exists but is invalid JSON → 503 with a STRING detail.
+    Matches ``files.py``'s response for the same condition. The frontend
+    surfaces the string detail in its global ApiError toast; no parse
+    of dict-shaped detail is required.
+    """
     isolated_creds.parent.mkdir(parents=True, exist_ok=True)
     isolated_creds.write_text("{not valid json")
     r = client.get("/api/orgs")
-    assert r.status_code == 500
+    assert r.status_code == 503
     data = r.json()
-    assert data.get("detail", {}).get("error") == "credentials_corrupt" or "credentials_corrupt" in str(data)
+    # B3 council fix: detail is a string, not a dict. Bidirectional —
+    # if the council ever regresses to a dict, this fails.
+    assert isinstance(data.get("detail"), str), (
+        f"detail must be a string (council B3 unification); got {data!r}"
+    )
+    # The string should still be diagnostic — must mention "corrupt"
+    # so a user reading the toast knows what's wrong.
+    assert "corrupt" in data["detail"].lower(), (
+        f"detail string should mention 'corrupt'; got {data['detail']!r}"
+    )
 
 
-def test__get_orgs__credentials_v2_invalid__returns_500_corrupt(
+def test__get_orgs__credentials_v2_invalid__returns_503_corrupt(
     client: TestClient, isolated_creds: Path
 ) -> None:
-    """ORG-CORRUPT-SCHEMA (P4.2). schema_version=2 but invalid → 500 credentials_corrupt.
+    """ORG-CORRUPT-SCHEMA (P4.2), council B1+B3 unification.
 
-    Frontend distinguishes ``authenticated: false`` (clean re-capture) from a
-    500 (user must wipe + recapture). A creds file that claims v2 but fails
-    field validation is a distinct UI state — must surface as 500, not 200/false.
-    Exercises ``_validate`` at fetcher/credentials.py:138-191 via the v2 path
-    at credentials.py:240-244.
+    schema_version=2 but invalid → 503 + string detail (matches files.py).
+
+    Frontend distinguishes ``authenticated: false`` (clean re-capture)
+    from a 503 (user must wipe + recapture). A creds file that claims
+    v2 but fails field validation is a distinct UI state — must
+    surface as 503, not 200/false. Exercises ``_validate`` at
+    fetcher/credentials.py:138-191 via the v2 path at
+    credentials.py:240-244.
     """
     isolated_creds.parent.mkdir(parents=True, exist_ok=True)
     isolated_creds.write_text(json.dumps({
@@ -113,32 +138,53 @@ def test__get_orgs__credentials_v2_invalid__returns_500_corrupt(
         "captured_at": "2026-05-01T00:00:00+00:00",
     }))
     r = client.get("/api/orgs")
-    assert r.status_code == 500, r.text
-    detail = r.json().get("detail", {})
-    assert detail.get("error") == "credentials_corrupt", (
-        f"expected error=credentials_corrupt, got {detail!r}"
+    assert r.status_code == 503, r.text
+    detail = r.json().get("detail")
+    assert isinstance(detail, str), (
+        f"detail must be a string (council B3 unification); got {detail!r}"
     )
-    assert "session_key" in detail.get("message", ""), (
-        f"detail.message should reference the missing field; got {detail!r}"
+    # Should still surface the missing field so user can diagnose.
+    assert "session_key" in detail, (
+        f"detail should reference the missing field; got {detail!r}"
     )
 
 
-def test__get_orgs__credentials_truncated_json__returns_500_corrupt(
+def test__get_orgs__credentials_truncated_json__returns_503_corrupt(
     client: TestClient, isolated_creds: Path
 ) -> None:
-    """ORG-CORRUPT-PARSE (P4.2). Truncated JSON → 500 credentials_corrupt with detail.
+    """ORG-CORRUPT-PARSE (P4.2), council B1+B3 unification.
 
-    Stronger assertion than the existing three-state test: pin the exact
-    detail.error code that the frontend dispatches on.
+    Truncated JSON → 503 + string detail. Stronger assertion than the
+    three-state test: pin the wire shape (string detail, not dict).
     """
     isolated_creds.parent.mkdir(parents=True, exist_ok=True)
     isolated_creds.write_text('{"schema_version": 2, "session_key"')  # truncated
     r = client.get("/api/orgs")
-    assert r.status_code == 500
-    detail = r.json().get("detail", {})
-    assert detail.get("error") == "credentials_corrupt"
-    assert "message" in detail and detail["message"], (
-        f"detail.message must be non-empty; got {detail!r}"
+    assert r.status_code == 503
+    detail = r.json().get("detail")
+    assert isinstance(detail, str) and detail, (
+        f"detail must be a non-empty string (council B3 unification); got {detail!r}"
+    )
+
+
+def test__get_orgs__credentials_corrupt_detail_must_not_be_dict(
+    client: TestClient, isolated_creds: Path
+) -> None:
+    """Council B3 unification, bidirectional negative-case test.
+
+    The pre-council shape was a dict ``{"error": "...", "message": ...}``.
+    This test fails if a future change accidentally regresses to that
+    shape — catching the wire drift even if the status code is correct.
+
+    Pairs with ``test_endpoint_three_state_corrupt`` (positive case).
+    """
+    isolated_creds.parent.mkdir(parents=True, exist_ok=True)
+    isolated_creds.write_text("{not valid json")
+    r = client.get("/api/orgs")
+    body = r.json()
+    assert not isinstance(body.get("detail"), dict), (
+        "council B3: detail must NOT be a dict; the unification standardized "
+        f"on string detail across all routes; got {body!r}"
     )
 
 

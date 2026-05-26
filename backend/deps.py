@@ -42,7 +42,7 @@ def get_store() -> ConversationStore:
 
 
 #: Shared message text for the corrupt-config refusal. Surfaced by the
-#: HTTP gate (this module) AND by the CLI gate (``fetcher.cli.fetch``)
+#: HTTP gate (this module) AND by the CLI gate (``cli.main.fetch``)
 #: so users see the same actionable hint regardless of where the
 #: failure surfaces. External script callers parse this for
 #: error-handling; keep the "Fix or remove" verb stable.

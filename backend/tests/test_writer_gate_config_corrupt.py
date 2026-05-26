@@ -60,11 +60,14 @@ def corrupt_settings(tmp_path: Path) -> config.Settings:
     """
     data_dir = tmp_path / "data"
     claude_dir = tmp_path / "claude"
+    cowork_dir = tmp_path / "claude_desktop_app"
     data_dir.mkdir()
     claude_dir.mkdir()
+    cowork_dir.mkdir()
     return config.Settings(
         data_dir=data_dir,
         claude_dir=claude_dir,
+        claude_desktop_app_dir=cowork_dir,
         config_corrupt_reason=CORRUPT_REASON,
     )
 
@@ -80,10 +83,15 @@ def clean_settings(tmp_path: Path) -> config.Settings:
     """
     data_dir = tmp_path / "data"
     claude_dir = tmp_path / "claude"
+    cowork_dir = tmp_path / "claude_desktop_app"
     data_dir.mkdir()
     claude_dir.mkdir()
+    cowork_dir.mkdir()
     return config.Settings(
-        data_dir=data_dir, claude_dir=claude_dir, config_corrupt_reason=None
+        data_dir=data_dir,
+        claude_dir=claude_dir,
+        claude_desktop_app_dir=cowork_dir,
+        config_corrupt_reason=None,
     )
 
 
@@ -332,7 +340,7 @@ def test_fetch_cli_fails_clean_when_corrupt(
     try:
         from click.testing import CliRunner
 
-        from fetcher.cli import main as cli_main
+        from cli.main import main as cli_main
 
         runner = CliRunner()
         result = runner.invoke(cli_main, ["fetch"])
@@ -380,7 +388,7 @@ def test_install_watcher_runs_when_config_corrupt(
     try:
         from click.testing import CliRunner
 
-        from fetcher.cli import main as cli_main
+        from cli.main import main as cli_main
 
         runner = CliRunner()
         # ``--uninstall`` is the cheapest install-watcher path that

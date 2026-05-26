@@ -4,16 +4,16 @@ import json
 import asyncio
 import logging
 import time
-from pathlib import Path
 from typing import AsyncGenerator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-# Import the fetcher
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# ``fetcher`` is installed as a top-level package via the project's
+# ``pyproject.toml`` (``[tool.hatch.build.targets.wheel] packages = ["backend",
+# "fetcher", ...]``), so it imports cleanly under any supported run mode
+# (``uv run``, editable install, or repo-root invocation). The previous
+# ``sys.path.insert`` hack was removed in Council A2 (2026-05-21).
 from fetcher.bulk_fetch import (
     ClaudeFetcher,
     DEFAULT_CREDENTIALS_PATH,
@@ -22,12 +22,40 @@ from fetcher.bulk_fetch import (
     FetchAuthError,
     FetchTerminalError,
     FetchTransientError,
+    PersistedErrorKind,
+    extract_http_status_from_message,
+    kind_from_http_status,
     load_credentials,
+    migrate_legacy_error_code,
 )
 from fetcher.playwright_capture import capture_credentials
 from fetcher.credentials import save_credentials
 
 from ..deps import refuse_if_config_corrupt
+# Patch-safe SSE helpers extracted in Council A2 (2026-05-21). The heavier
+# pipeline functions stay in this module because their bodies reference
+# names (``ClaudeFetcher``, ``load_credentials``, ``capture_credentials``,
+# ``DEFAULT_*``) that 60+ tests patch at the router's dotted path.
+from ..fetch_pipeline import (
+    _drain_retry_events,
+    _is_session_expired_error,
+    _send_event,
+)
+
+# Council code-review D1 (2026-05-21): wire-contract models live in
+# backend/models.py as the single source of truth for shapes mirrored
+# by frontend/src/lib/types.ts. Re-export the names this router used
+# to own so existing test imports (``from backend.routers.fetch import
+# FetchProgress``) keep working — see CLAUDE-TESTING.md §5.12 on the
+# attribute-patch idiom.
+from ..models import FetchProgress, FetchStatus, ForceRefetchResponse  # noqa: F401  re-export
+
+__all__ = [
+    "FetchProgress",  # re-export for backward-compat test imports
+    "FetchStatus",
+    "ForceRefetchResponse",
+    "router",
+]
 
 
 logger = logging.getLogger(__name__)
@@ -38,9 +66,12 @@ router = APIRouter(tags=["fetch"])
 
 # Build-9: Concurrency guard for the combined capture+fetch pipeline.
 # A single in-flight refresh is allowed per worker; a second concurrent
-# request gets 409 Conflict. The lock pairs with the boolean so the route
-# can fail-fast before establishing the SSE stream.
-_refresh_lock: asyncio.Lock = asyncio.Lock()
+# request gets 409 Conflict. We use a plain module-level boolean rather
+# than an ``asyncio.Lock`` because the request handler does a
+# check-then-set under the single-threaded asyncio event loop (no real
+# race between coroutines at the check; the streamer's ``finally`` block
+# clears the flag) and a Lock without explicit acquire/release was
+# misleading dead code (Council A1, 2026-05-21).
 _refresh_in_progress: bool = False
 
 
@@ -121,6 +152,53 @@ def _build_error_event(kind: ErrorKind, raw: str) -> dict:
     }
 
 
+# A1-hunt: stream-level SSE bucket vocabulary.
+# Yielded by `_fetch_phase_stream` upstream of `_send_event` to pick the
+# right toast shape (auth = sticky session-expired, transient = retry
+# button, fatal = sticky details).
+RollupBucket = Literal["auth", "transient", "fatal"]
+
+
+# Map persisted `error_kind` -> stream-level rollup bucket. Centralized so
+# new persisted kinds added in `fetcher.bulk_fetch.PersistedErrorKind` get
+# one and only one bucket mapping. Unknown kinds default to "fatal" at
+# the call site (forward-compat: a new kind from a newer writer should
+# fall through to a safe sticky toast rather than silently bucketed wrong).
+_KIND_TO_BUCKET: dict[str, RollupBucket] = {
+    "AUTH_EXPIRED": "auth",
+    "ORG_FORBIDDEN": "auth",     # 403 from Anthropic/CF is an auth-class signal.
+    "ORG_NOT_FOUND": "fatal",    # 404 means org gone — no recovery via retry.
+    "TRANSIENT": "transient",
+    "TERMINAL": "fatal",
+}
+
+
+def _rollup_bucket_for(record: dict) -> tuple[RollupBucket, str]:
+    """Pick the SSE bucket + message for a failing per-org record.
+
+    Prefers the new `error_kind` field; falls back to the legacy
+    `error_code` string (via `migrate_legacy_error_code`) for in-flight
+    records that pre-date the A1 vocab fix. The frontend keys off the
+    bucket via `kind` on SSE error events.
+
+    The returned message is the best human-readable thing on the record:
+    `error_message` if present, else a stringified summary.
+    """
+    kind = record.get("error_kind")
+    if kind is None:
+        # Legacy in-memory record (or read-time legacy on-disk record).
+        legacy = record.get("error_code")
+        kind, _legacy_status = migrate_legacy_error_code(legacy)
+
+    bucket: RollupBucket = _KIND_TO_BUCKET.get(kind or "", "fatal")
+    msg = (
+        record.get("error_message")
+        or record.get("error_code")
+        or "fetch failed"
+    )
+    return bucket, msg
+
+
 def classify_fetch_error(error_msg: str) -> str:
     """Map a raw fetch error into a user-actionable message.
 
@@ -137,50 +215,17 @@ def classify_fetch_error(error_msg: str) -> str:
     return f"Fetch failed: {error_msg}"
 
 
-class FetchStatus(BaseModel):
-    """Status response for fetch operations."""
-    has_credentials: bool
-    credentials_path: str
-    output_dir: str
-    existing_count: int
-    credentials_age_days: int | None = None
+# NOTE: FetchStatus and FetchProgress were defined here pre-council;
+# they now live in backend/models.py (D1 — single source of truth
+# for wire shapes mirrored by frontend/src/lib/types.ts). Re-exported
+# at the top of this module so existing imports keep working.
 
 
-class FetchProgress(BaseModel):
-    """Progress update during fetch.
-
-    The ``type`` field is a closed ``Literal`` union mirroring the
-    frontend ``FetchProgress.type`` in
-    ``frontend/src/components/fetch/FetchToast.tsx``. Pre-Task-B
-    (2026-05-18) the field was bare ``str``; the frontend had a
-    narrow union but the backend would have happily emitted an
-    undocumented variant. Tightening locks the contract on both ends.
-
-    Note: SSE events are constructed as raw dicts in
-    ``_build_error_event`` and similar helpers, not via this model
-    (the dicts carry ``kind`` and ``retryable`` fields that aren't
-    part of this base contract). Do NOT pipe SSE dicts through
-    ``FetchProgress.model_dump()`` — that would strip the extra
-    fields and break the frontend. The model is the contract spec;
-    the SSE dict is the wire payload.
-    """
-    type: Literal[
-        "start",
-        "progress",
-        "complete",
-        "error",
-        # Build-9: combined capture+fetch pipeline events.
-        "capture_start",
-        "capture_waiting_login",
-        "capture_done",
-    ]
-    message: str
-    current: int = 0
-    total: int = 0
-    conversation_name: str | None = None
-
-
-@router.get("/fetch/status", response_model=FetchStatus)
+@router.get(
+    "/fetch/status",
+    response_model=FetchStatus,
+    summary="Get fetch status — credentials presence and current state",
+)
 async def get_fetch_status() -> FetchStatus:
     """Check if credentials are available and get current state."""
     credentials_path = DEFAULT_CREDENTIALS_PATH
@@ -285,8 +330,11 @@ async def fetch_conversations_stream(
             "total": 0,
         })
 
-        # Fetch conversation list (run in thread to not block)
-        loop = asyncio.get_event_loop()
+        # Fetch conversation list (run in thread to not block).
+        # ``get_running_loop()`` (not ``get_event_loop()``) is the modern
+        # asyncio idiom inside ``async def`` — the legacy form is
+        # deprecated since Python 3.10 (Council A1, 2026-05-21).
+        loop = asyncio.get_running_loop()
         conversations = await loop.run_in_executor(
             None, fetcher.fetch_conversation_list
         )
@@ -389,13 +437,15 @@ async def fetch_conversations_stream(
 
 @router.post(
     "/fetch/conversation/{uuid}",
+    response_model=ForceRefetchResponse,
+    summary="Force re-fetch a single conversation, bypassing incremental skip",
     # Layer 2 of PLANS/2026.05.18-config-corruption-safe-mode.md:
     # writes a fresh copy of the conversation to data_dir; refuse when
     # the config that resolved data_dir is corrupt. /fetch/status (read)
     # is NOT gated.
     dependencies=[Depends(refuse_if_config_corrupt)],
 )
-async def force_refetch_conversation(uuid: str) -> dict:
+async def force_refetch_conversation(uuid: str) -> ForceRefetchResponse:
     """Force re-fetch of a single conversation, bypassing the incremental skip.
 
     Useful when a Desktop-side rename or content change needs to propagate
@@ -443,7 +493,22 @@ async def force_refetch_conversation(uuid: str) -> dict:
             raise HTTPException(status_code=401, detail=SESSION_EXPIRED_MESSAGE)
         if kind == "TRANSIENT":
             raise HTTPException(status_code=503, detail=TRANSIENT_USER_MESSAGE)
-        raise HTTPException(status_code=500, detail=f"Fetch failed: {e}")
+        # Council code-review B1 (2026-05-21): do NOT leak raw
+        # exception text. Exception strings from the bulk fetcher can
+        # embed local paths (``/Users/<name>/.claude-explorer/...``),
+        # sessionKey / cf cookies when an HTTP error response is
+        # formatted into the exception, and upstream URLs with org
+        # UUIDs — CWE-200 in a portfolio-piece app. Log the real
+        # exception with ``exc_info=True`` server-side; return a
+        # static message so the frontend toast is clean.
+        logger.exception("force_refetch_conversation failed for uuid=%s", uuid)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Fetch failed due to an internal error. "
+                "Check the server logs for details, or retry."
+            ),
+        )
 
     if not full_conv:
         # Build-9 Bug 3: 404 from Anthropic for a conversation we asked about
@@ -470,11 +535,20 @@ async def force_refetch_conversation(uuid: str) -> dict:
         raise HTTPException(status_code=404, detail=detail)
 
     fetcher.save_conversation(full_conv)
-    return {"uuid": uuid, "status": "refetched", "name": full_conv.get("name", "")}
+    return ForceRefetchResponse(
+        uuid=uuid,
+        status="refetched",
+        name=full_conv.get("name", ""),
+    )
 
 
 @router.get(
     "/fetch/start",
+    summary="Start a bulk fetch from Claude (Server-Sent Events stream)",
+    responses={
+        200: {"content": {"text/event-stream": {}}},
+        503: {"description": "Config file is corrupt; refuse to write to data_dir"},
+    },
     # Layer 2: refuse when config corrupt. The gate fires before the
     # StreamingResponse is constructed so the client sees a real
     # HTTP 503, not a stream emitting SSE `error` frames after 200 OK.
@@ -509,18 +583,6 @@ async def fetch_conversations(
 # ---------------------------------------------------------------------------
 # Build-9: combined capture + fetch SSE pipeline.
 # ---------------------------------------------------------------------------
-
-
-def _is_session_expired_error(error_msg: str) -> bool:
-    """True if the upstream error indicates expired creds or Cloudflare block."""
-    if not error_msg:
-        return False
-    lowered = error_msg.lower()
-    return "401" in error_msg or "403" in error_msg or "cf-mitigated" in lowered
-
-
-def _send_event(data: dict) -> str:
-    return f"data: {json.dumps(data)}\n\n"
 
 
 async def _run_capture_with_keepalive(
@@ -566,36 +628,6 @@ async def _run_capture_with_keepalive(
     except Exception as exc:
         capture_task.cancel()
         yield {"_error": str(exc)}
-
-
-def _drain_retry_events(fetcher: ClaudeFetcher) -> list[str]:
-    """Drain `fetcher.retry_events`, returning SSE-encoded `progress` events.
-
-    The list is emptied in place. The caller forwards each frame to the
-    client. We use this post-call rather than real-time streaming via
-    asyncio.Queue + call_soon_threadsafe because the maximum delay between
-    a retry happening and the user seeing the message is bounded by the
-    eventual call's completion (sub-2s for the configured backoff).
-
-    See WWCMM in ClaudeFetcher: if user UX feedback indicates the silence
-    during retry is jarring, upgrade to a real-time queue.
-    """
-    frames: list[str] = []
-    if not fetcher.retry_events:
-        return frames
-    for event in fetcher.retry_events:
-        frames.append(
-            _send_event(
-                {
-                    "type": "progress",
-                    "message": event.get("message", "Network hiccup; retrying..."),
-                    "current": 0,
-                    "total": 0,
-                }
-            )
-        )
-    fetcher.retry_events.clear()
-    return frames
 
 
 async def _fetch_phase_stream(
@@ -663,7 +695,10 @@ async def _fetch_phase_stream(
         ),
     )
 
-    loop = asyncio.get_event_loop()
+    # ``get_running_loop()`` (not the deprecated ``get_event_loop()``) —
+    # this generator is always invoked from inside an async route handler
+    # (Council A1, 2026-05-21).
+    loop = asyncio.get_running_loop()
 
     # cowork-multi-org C5: outer loop over orgs. The SSE event types
     # (start/progress/complete/error) stay; new event types (org_start,
@@ -700,29 +735,39 @@ async def _fetch_phase_stream(
                     # the closure-over-deleted-name risk even though `await`
                     # runs the lambda inside the except body in practice.
                     exc_message = str(exc)
-                    exc_type_name = type(exc).__name__
                     for frame in _drain_retry_events(fetcher):
                         yield ("event", frame)
                     kind = _classify_error(exc)
+                    # A1-hunt: derive persisted (error_kind, http_status)
+                    # ONCE from the exception, then use those for both the
+                    # disk write and the in-memory org_results entry that
+                    # flows through `_rollup_bucket_for`.
+                    http_status = extract_http_status_from_message(exc_message)
                     if kind == "AUTH":
-                        if is_primary and "401" in str(exc):
+                        if is_primary and http_status == 401:
                             # Primary 401 = session expired. Hard abort.
                             yield ("auth", str(exc))
                             return
                         # Secondary AUTH or primary 403/404: skip this org.
-                        error_code = "HTTP_401" if "401" in str(exc) else (
-                            "HTTP_403" if "403" in str(exc) else "HTTP_404"
+                        error_kind: PersistedErrorKind = (
+                            kind_from_http_status(http_status) or "AUTH_EXPIRED"
                         )
                         # Persist skipped status.
                         await loop.run_in_executor(
                             None,
-                            lambda: fetcher.save_index([], status="skipped",
-                                                       error_code=error_code,
-                                                       error_message=exc_message),
+                            lambda ek=error_kind, hs=http_status: fetcher.save_index(
+                                [], status="skipped",
+                                error_kind=ek,
+                                http_status=hs,
+                                error_message=exc_message,
+                            ),
                         )
                         org_results.append({
                             "org_id": org_uuid, "name": org_name,
-                            "status": "skipped", "error_code": error_code,
+                            "status": "skipped",
+                            "error_kind": error_kind,
+                            "http_status": http_status,
+                            "error_message": exc_message,
                         })
                         yield (
                             "event",
@@ -730,11 +775,12 @@ async def _fetch_phase_stream(
                                 "type": "org_done",
                                 "org_id": org_uuid,
                                 "status": "skipped",
-                                "error_code": error_code,
+                                "error_kind": error_kind,
+                                "http_status": http_status,
                             }),
                         )
                         # Auto-demote primary if this was the primary 403/404.
-                        if is_primary and ("403" in str(exc) or "404" in str(exc)):
+                        if is_primary and http_status in (403, 404):
                             new_primary = fetcher._pick_new_primary(exclude=[org_uuid])
                             if new_primary:
                                 primary_demoted_from = fetcher.primary_org_id
@@ -762,7 +808,7 @@ async def _fetch_phase_stream(
                                         "type": "primary_demoted",
                                         "from_org_id": primary_demoted_from,
                                         "to_org_id": new_primary,
-                                        "reason": error_code,
+                                        "reason": error_kind,
                                     }),
                                 )
                         continue
@@ -771,13 +817,19 @@ async def _fetch_phase_stream(
                         # Per-org transient: skip this org, continue.
                         await loop.run_in_executor(
                             None,
-                            lambda: fetcher.save_index([], status="failed",
-                                                       error_code="TRANSIENT",
-                                                       error_message=exc_message),
+                            lambda hs=http_status: fetcher.save_index(
+                                [], status="failed",
+                                error_kind="TRANSIENT",
+                                http_status=hs,
+                                error_message=exc_message,
+                            ),
                         )
                         org_results.append({
                             "org_id": org_uuid, "name": org_name,
-                            "status": "failed", "error_code": "TRANSIENT",
+                            "status": "failed",
+                            "error_kind": "TRANSIENT",
+                            "http_status": http_status,
+                            "error_message": exc_message,
                         })
                         yield (
                             "event",
@@ -785,20 +837,27 @@ async def _fetch_phase_stream(
                                 "type": "org_done",
                                 "org_id": org_uuid,
                                 "status": "failed",
-                                "error_code": "TRANSIENT",
+                                "error_kind": "TRANSIENT",
+                                "http_status": http_status,
                             }),
                         )
                         continue
                     logger.error("Fetch terminal error for %s: %s", org_uuid, exc, exc_info=True)
                     await loop.run_in_executor(
                         None,
-                        lambda: fetcher.save_index([], status="failed",
-                                                   error_code=exc_type_name,
-                                                   error_message=exc_message),
+                        lambda hs=http_status: fetcher.save_index(
+                            [], status="failed",
+                            error_kind="TERMINAL",
+                            http_status=hs,
+                            error_message=exc_message,
+                        ),
                     )
                     org_results.append({
                         "org_id": org_uuid, "name": org_name,
-                        "status": "failed", "error_code": type(exc).__name__,
+                        "status": "failed",
+                        "error_kind": "TERMINAL",
+                        "http_status": http_status,
+                        "error_message": exc_message,
                     })
                     yield (
                         "event",
@@ -806,7 +865,8 @@ async def _fetch_phase_stream(
                             "type": "org_done",
                             "org_id": org_uuid,
                             "status": "failed",
-                            "error_code": exc_type_name,
+                            "error_kind": "TERMINAL",
+                            "http_status": http_status,
                         }),
                     )
                     continue
@@ -935,11 +995,17 @@ async def _fetch_phase_stream(
             logger.error("Unhandled per-org error for %s: %s", org_uuid, exc, exc_info=True)
             org_results.append({
                 "org_id": org_uuid, "name": org_name,
-                "status": "failed", "error_code": type(exc).__name__,
+                "status": "failed",
+                "error_kind": "TERMINAL",
+                "http_status": None,
+                "error_message": str(exc),
             })
 
     # If every org failed, escalate to a stream-level error so existing
     # error-toast UI still surfaces (rather than a misleading "complete").
+    # A1-hunt: bucket selection moved into `_rollup_bucket_for`, which
+    # switches on `error_kind` (new path) and falls back to
+    # `migrate_legacy_error_code(error_code)` for any in-flight legacy record.
     successful = [r for r in org_results if r.get("status") == "ok"]
     if org_results and not successful:
         # Find the most informative failure to emit.
@@ -947,14 +1013,7 @@ async def _fetch_phase_stream(
             (r for r in org_results if r.get("status") in ("failed", "skipped")),
             org_results[0],
         )
-        kind_map = {
-            "TRANSIENT": "transient",
-            "HTTP_401": "auth",
-            "HTTP_403": "fatal",
-            "HTTP_404": "fatal",
-        }
-        bucket = kind_map.get(first_fail.get("error_code", ""), "fatal")
-        msg = first_fail.get("error_message", first_fail.get("error_code", "fetch failed"))
+        bucket, msg = _rollup_bucket_for(first_fail)
         yield (bucket, msg)
         return
 
@@ -1148,6 +1207,12 @@ async def refresh_pipeline_stream(
 
 @router.get(
     "/fetch/refresh",
+    summary="One-button Refresh: capture credentials if needed, then fetch (SSE)",
+    responses={
+        200: {"content": {"text/event-stream": {}}},
+        409: {"description": "A refresh is already in progress on this worker"},
+        503: {"description": "Config file is corrupt; refuse to write to data_dir"},
+    },
     # Layer 2: see /fetch/start for SSE-timing rationale. /fetch/refresh
     # is the primary user-visible writer path (sidebar Refresh button),
     # so this is the single most important gate.

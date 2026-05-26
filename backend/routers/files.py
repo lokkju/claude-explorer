@@ -170,12 +170,22 @@ def _proxy(org_id: str, file_uuid: str, variant: str) -> Response:
 # Register both legacy ``files`` and (any future) ``files_v2`` paths in
 # case the upstream URL shape evolves; for now both variants are
 # rendered in the UI as the same path shape.
-@router.get("/{org_id}/files/{file_uuid}/thumbnail", response_class=StreamingResponse)
+@router.get(
+    "/{org_id}/files/{file_uuid}/thumbnail",
+    response_class=StreamingResponse,
+    summary="Proxy a Claude Desktop file thumbnail via the captured session",
+    responses={200: {"content": {"image/*": {}}}},
+)
 def get_thumbnail(org_id: str, file_uuid: str) -> Response:
     return _proxy(org_id, file_uuid, "thumbnail")
 
 
-@router.get("/{org_id}/files/{file_uuid}/preview", response_class=StreamingResponse)
+@router.get(
+    "/{org_id}/files/{file_uuid}/preview",
+    response_class=StreamingResponse,
+    summary="Proxy a Claude Desktop file preview via the captured session",
+    responses={200: {"content": {"image/*": {}}}},
+)
 def get_preview(org_id: str, file_uuid: str) -> Response:
     return _proxy(org_id, file_uuid, "preview")
 
@@ -203,7 +213,11 @@ def _image_cache_root() -> Path:
 _ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 
-@router.get("/cc-image")
+@router.get(
+    "/cc-image",
+    summary="Serve a Claude Code cached image from disk (with permanent-cache fallback)",
+    responses={200: {"content": {"image/*": {}}}},
+)
 def get_cc_image(path: str = Query(..., description="Absolute path under ~/.claude/image-cache/")) -> FileResponse:
     """Serve a Claude Code cached image from disk.
 
@@ -343,7 +357,11 @@ def _attachments_root() -> Path:
     return data_dir / "files"
 
 
-@router.get("/attachments/{conv_uuid}/{file_uuid}/{variant}")
+@router.get(
+    "/attachments/{conv_uuid}/{file_uuid}/{variant}",
+    summary="Serve a cached attachment (thumbnail/preview/original/document) from disk",
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
 def get_attachment(conv_uuid: str, file_uuid: str, variant: str) -> FileResponse:
     """Serve a cached attachment from the local files directory.
 

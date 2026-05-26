@@ -102,7 +102,11 @@ class PreferencesWrite(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-@router.get("", response_model=PreferencesEnvelope)
+@router.get(
+    "",
+    response_model=PreferencesEnvelope,
+    summary="Get the full preferences blob (versioned envelope)",
+)
 async def get_preferences() -> PreferencesEnvelope:
     blob = _read_blob()
     return PreferencesEnvelope(version=blob["version"], data=blob["data"])
@@ -111,6 +115,7 @@ async def get_preferences() -> PreferencesEnvelope:
 @router.put(
     "",
     response_model=PreferencesEnvelope,
+    summary="Replace the whole preferences blob",
     # Layer 2 of PLANS/2026.05.18-config-corruption-safe-mode.md:
     # refuse writes when config.json is corrupt. GET is unchanged.
     dependencies=[Depends(refuse_if_config_corrupt)],
@@ -127,6 +132,7 @@ async def put_preferences(payload: PreferencesWrite) -> PreferencesEnvelope:
 @router.patch(
     "",
     response_model=PreferencesEnvelope,
+    summary="Top-level merge into existing preferences blob (per-key overwrite)",
     # See put_preferences for Layer-2 gate rationale.
     dependencies=[Depends(refuse_if_config_corrupt)],
 )

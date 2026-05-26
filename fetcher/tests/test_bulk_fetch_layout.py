@@ -112,7 +112,9 @@ def test_save_index_writes_v2_schema(tmp_path: Path) -> None:
     assert org_entry["fetched_count"] == 2
     assert org_entry["last_successful_fetched_count"] == 2
     assert org_entry["last_successful_fetched_at"] is not None
-    assert org_entry["error_code"] is None
+    # A1-hunt: legacy `error_code` replaced by `(error_kind, http_status)`.
+    assert org_entry["error_kind"] is None
+    assert org_entry["http_status"] is None
     assert len(org_entry["conversations"]) == 2
 
 

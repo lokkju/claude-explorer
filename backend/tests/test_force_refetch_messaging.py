@@ -220,3 +220,81 @@ def test_force_refetch_401_uses_session_expired_message(client, monkeypatch):
     assert r.status_code == 401
     detail = r.json().get("detail", "").lower()
     assert "session" in detail or "re-run" in detail or "re-capture" in detail, detail
+
+
+# ---------------------------------------------------------------------------
+# Council code-review B1 (2026-05-21): non-AUTH non-TRANSIENT exceptions
+# must NOT leak raw exception text to the client. CWE-200 hardening.
+# ---------------------------------------------------------------------------
+
+
+def test_force_refetch_internal_error_does_not_leak_exception_text(client, monkeypatch):
+    """Pre-council the route did ``raise HTTPException(status_code=500,
+    detail=f"Fetch failed: {e}")`` — leaking the raw exception
+    message into the client response.
+
+    Exception messages from the bulk fetcher can embed:
+      * local file paths (``/Users/<name>/.claude-explorer/...``)
+      * sessionKey / cf cookies (when an HTTP error response is
+        formatted into the exception string)
+      * upstream URLs with org UUIDs
+
+    Post-council the route returns a static user-actionable message
+    and logs the real exception with `exc_info=True`. The frontend
+    toast shows the generic message; operators diagnose from logs.
+
+    Bidirectional:
+      * Positive: detail is non-empty and mentions "fetch failed".
+      * Negative: detail does NOT contain the canary path/token text.
+    """
+    from backend.routers import fetch as fetch_router
+
+    _stub_creds(monkeypatch)
+
+    canary_path = "/Users/SECRET_NAME/.claude-explorer/files"
+    canary_token = "sessionKey=sk-ant-LEAKED_TOKEN_abc123"
+
+    class FakeFetcher:
+        def __init__(self, **_kwargs):
+            pass
+
+        def fetch_conversation(self, _uuid):
+            # Not AUTH (no 401/403/cf-mitigated) and not TRANSIENT
+            # (no 5xx/timeout). Lands in the generic 500 branch.
+            raise RuntimeError(
+                f"Disk corruption at {canary_path}; cookie header: {canary_token}"
+            )
+
+        def save_conversation(self, _conv):
+            pass
+
+    monkeypatch.setattr(fetch_router, "ClaudeFetcher", FakeFetcher)
+
+    r = client.post("/api/fetch/conversation/internal-error-uuid")
+    assert r.status_code == 500, r.text
+    detail = r.json().get("detail", "")
+    assert isinstance(detail, str), (
+        f"detail must be a string (council B3); got {detail!r}"
+    )
+    # Negative: raw exception text leaked.
+    assert canary_path not in detail, (
+        f"CWE-200 leak: raw exception path appeared in 500 detail. "
+        f"detail={detail!r}"
+    )
+    assert "SECRET_NAME" not in detail, (
+        f"CWE-200 leak: raw exception path appeared in 500 detail. "
+        f"detail={detail!r}"
+    )
+    assert canary_token not in detail, (
+        f"CWE-200 leak: cookie/token leaked into 500 detail. "
+        f"detail={detail!r}"
+    )
+    assert "sk-ant" not in detail, (
+        f"CWE-200 leak: session key prefix leaked into 500 detail. "
+        f"detail={detail!r}"
+    )
+    # Positive: detail is non-empty and user-actionable.
+    assert detail, "detail must be non-empty"
+    assert "fetch" in detail.lower() or "failed" in detail.lower(), (
+        f"detail should indicate what failed; got {detail!r}"
+    )

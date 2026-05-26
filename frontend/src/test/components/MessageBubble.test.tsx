@@ -1,27 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '../utils';
 import { MessageBubble } from '../../components/message/MessageBubble';
-import { useSettings } from '../../contexts/SettingsContext';
-import { useEffect } from 'react';
 import { mockMessages, mockMessageWithToolUse } from '../mocks/data';
 import type { Message } from '../../lib/types';
 
 /**
  * MessageBubble's tool_use / tool_result blocks are gated on
- * `showToolCalls` from SettingsContext. The default is false (a V1
- * UX choice — most users don't want tool noise). For the tool-block
- * tests below, we mount a tiny helper that flips the setting on
- * first render so the assertions can find the rendered tool labels.
+ * `showToolCalls`. After the 2026-05-23 perf-regression fix, the
+ * setting is a PROP threaded from ConversationPage rather than a
+ * `useSettings()` context read (the prior shape made every bubble a
+ * direct context consumer, causing a 3 s Cmd+F lag on the 16K-msg
+ * corpus). Tool-block tests below pass `showToolCalls={true}` directly
+ * on the bubble under test.
  */
-function EnableToolCalls() {
-  const { showToolCalls, setShowToolCalls } = useSettings();
-  useEffect(() => {
-    if (!showToolCalls) {
-      setShowToolCalls(true);
-    }
-  }, [showToolCalls, setShowToolCalls]);
-  return null;
-}
 
 describe('MessageBubble', () => {
   it('renders human message with correct alignment', () => {
@@ -83,13 +74,10 @@ describe('MessageBubble', () => {
 
   it('renders tool_use block as collapsible', async () => {
     render(
-      <>
-        <EnableToolCalls />
-        <MessageBubble message={mockMessageWithToolUse} />
-      </>,
+      <MessageBubble message={mockMessageWithToolUse} showToolCalls={true} />,
     );
 
-    // Should show tool name (after EnableToolCalls flips the setting).
+    // Should show tool name (showToolCalls prop is true).
     expect(await screen.findByText('Tool: read_file')).toBeInTheDocument();
 
     // Tool block should be collapsed by default
@@ -98,10 +86,7 @@ describe('MessageBubble', () => {
 
   it('expands tool_use block on click', async () => {
     render(
-      <>
-        <EnableToolCalls />
-        <MessageBubble message={mockMessageWithToolUse} />
-      </>,
+      <MessageBubble message={mockMessageWithToolUse} showToolCalls={true} />,
     );
 
     // Click to expand
@@ -115,10 +100,7 @@ describe('MessageBubble', () => {
 
   it('renders tool_result block as collapsible', async () => {
     render(
-      <>
-        <EnableToolCalls />
-        <MessageBubble message={mockMessageWithToolUse} />
-      </>,
+      <MessageBubble message={mockMessageWithToolUse} showToolCalls={true} />,
     );
 
     // Should show tool result label
@@ -127,10 +109,7 @@ describe('MessageBubble', () => {
 
   it('expands tool_result block on click', async () => {
     render(
-      <>
-        <EnableToolCalls />
-        <MessageBubble message={mockMessageWithToolUse} />
-      </>,
+      <MessageBubble message={mockMessageWithToolUse} showToolCalls={true} />,
     );
 
     // Click to expand
@@ -143,10 +122,7 @@ describe('MessageBubble', () => {
 
   it('has copy button in expanded tool_use block', async () => {
     render(
-      <>
-        <EnableToolCalls />
-        <MessageBubble message={mockMessageWithToolUse} />
-      </>,
+      <MessageBubble message={mockMessageWithToolUse} showToolCalls={true} />,
     );
 
     // Expand the tool block

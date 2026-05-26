@@ -199,3 +199,103 @@ def test_request_hook_does_not_early_exit_after_first_org(tmp_path: Path) -> Non
     creds = load_credentials(creds_path)
     uuids = {o["uuid"] for o in creds["orgs"]}
     assert uuids == {"aaaaaaaa-1111-2222-3333-444444444444", "bbbbbbbb-1111-2222-3333-444444444444"}
+
+
+# ---------------------------------------------------------------------------
+# F5 council finding (mitmproxy parity): _print_success previously echoed
+# session_key[:20] to log handlers. Anthropic session keys begin with the
+# fixed prefix ``sk-ant-sid01-`` (13 chars), so slicing 20 chars leaked 7
+# chars of bearer-token entropy to terminal scrollback / CI logs / shell
+# screenshots. ``fetcher/cli.py`` and ``fetcher/playwright_capture.py``
+# already redact (see tests/test_capture_redaction.py); this mirrors the
+# fix to the mitmproxy capture path.
+# ---------------------------------------------------------------------------
+
+
+_F5_FAKE_SESSION_KEY = "sk-ant-sid01-AAAAAAAAAAAAAAAAAAAA-BBBBBBBBBB-CCCC"
+
+
+def _assert_no_session_key_entropy_in(records: list[str], key: str = _F5_FAKE_SESSION_KEY) -> None:
+    """Bidirectional: ensure no non-prefix slice of the key leaks into log records."""
+    prefix = "sk-ant-sid01-"
+    entropy = key[len(prefix):]
+    joined = "\n".join(records)
+    for slice_len in (7, 10, 15, 20):
+        sub = entropy[:slice_len]
+        assert sub not in joined, (
+            f"Session-key entropy substring {sub!r} (len={slice_len}) "
+            f"leaked into mitmproxy log output:\n{joined}"
+        )
+
+
+def test_print_success_does_not_leak_session_key(tmp_path: Path, caplog) -> None:
+    """mitmproxy _print_success success banner must redact the session key."""
+    addon = ClaudeCredentialCapture()
+    addon.credentials_path = tmp_path / "credentials.json"
+    addon.session_key = _F5_FAKE_SESSION_KEY
+    addon.orgs = {
+        "uuid-A": {
+            "uuid": "uuid-A",
+            "name": "TestOrg",
+            "capabilities": ["chat"],
+            "seen_in_response": True,
+        }
+    }
+
+    with caplog.at_level("INFO", logger="fetcher.mitmproxy_addon"):
+        addon._print_success()
+
+    _assert_no_session_key_entropy_in([rec.getMessage() for rec in caplog.records])
+
+
+def test_print_success_still_emits_success_banner(tmp_path: Path, caplog) -> None:
+    """Bidirectional positive: dropping the key prefix must NOT regress
+    the success-confirmation banner. Operators must still see SOMETHING
+    positive when capture completes (otherwise they don't know to quit
+    mitmproxy)."""
+    addon = ClaudeCredentialCapture()
+    creds_path = tmp_path / "credentials.json"
+    addon.credentials_path = creds_path
+    addon.session_key = _F5_FAKE_SESSION_KEY
+    addon.orgs = {
+        "uuid-A": {
+            "uuid": "uuid-A",
+            "name": "TestOrg",
+            "capabilities": ["chat"],
+            "seen_in_response": True,
+        }
+    }
+
+    with caplog.at_level("INFO", logger="fetcher.mitmproxy_addon"):
+        addon._print_success()
+
+    joined = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "CREDENTIALS CAPTURED SUCCESSFULLY" in joined, (
+        f"Success banner missing from mitmproxy log output:\n{joined}"
+    )
+    assert str(creds_path) in joined, (
+        f"Saved-path confirmation missing from mitmproxy log output:\n{joined}"
+    )
+    # Org count is non-secret operator info.
+    assert "Orgs seen so far: 1" in joined, (
+        f"Org-count confirmation missing from mitmproxy log output:\n{joined}"
+    )
+
+
+def test_print_success_handles_none_session_key(tmp_path: Path, caplog) -> None:
+    """Boundary: session_key=None must not crash (defensive — _maybe_persist
+    only calls _print_success when session_key is set, but be defensive)."""
+    addon = ClaudeCredentialCapture()
+    addon.credentials_path = tmp_path / "credentials.json"
+    addon.session_key = None
+    addon.orgs = {
+        "uuid-A": {
+            "uuid": "uuid-A",
+            "name": None,
+            "capabilities": [],
+            "seen_in_response": False,
+        }
+    }
+
+    with caplog.at_level("INFO", logger="fetcher.mitmproxy_addon"):
+        addon._print_success()  # must not raise

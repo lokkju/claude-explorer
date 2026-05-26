@@ -133,7 +133,9 @@ def test_secondary_403_records_status_and_continues(tmp_path: Path) -> None:
     by_id = {o["org_id"]: o for o in idx["orgs"]}
     assert by_id[PERSONAL]["status"] == "ok"
     assert by_id[COWORK]["status"] == "skipped"
-    assert by_id[COWORK]["error_code"] is not None
+    # A1-hunt: legacy `error_code` replaced by `(error_kind, http_status)`.
+    assert by_id[COWORK]["error_kind"] == "ORG_FORBIDDEN"
+    assert by_id[COWORK]["http_status"] == 403
 
 
 def test_run_all_orgs_preserves_last_successful_on_failure(tmp_path: Path) -> None:

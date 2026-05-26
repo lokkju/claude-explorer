@@ -1,11 +1,14 @@
 """Export router."""
 
 import asyncio
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 import io
+
+logger = logging.getLogger(__name__)
 
 from ..deps import get_store
 from ..store import ConversationStore
@@ -33,10 +36,23 @@ router = APIRouter(tags=["export"])
 PDF_RENDER_TIMEOUT_SECONDS = 30.0
 
 
-@router.get("/conversations/{uuid}/export/markdown")
+@router.get(
+    "/conversations/{uuid}/export/markdown",
+    summary="Export a conversation as a Markdown document",
+    responses={200: {"content": {"text/markdown": {}}}},
+)
 async def export_markdown(
     uuid: str,
     include_tools: bool = True,
+    include_compact: bool = Query(
+        False,
+        description=(
+            "When false (default), /compact summaries collapse to a "
+            "single-line indicator and the trigger row is dropped. "
+            "When true, both render verbatim. Mirrors the user "
+            "preference 'export.includeCompactContent'."
+        ),
+    ),
     store: ConversationStore = Depends(get_store),
 ) -> Response:
     """Export a conversation as Markdown."""
@@ -44,7 +60,9 @@ async def export_markdown(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    content = conversation_to_markdown(conversation, include_tools)
+    content = conversation_to_markdown(
+        conversation, include_tools, include_compact=include_compact
+    )
     filename = f"{sanitize_filename(conversation.name)}.md"
 
     return Response(
@@ -54,10 +72,23 @@ async def export_markdown(
     )
 
 
-@router.get("/conversations/{uuid}/export/markdown-bundle")
+@router.get(
+    "/conversations/{uuid}/export/markdown-bundle",
+    summary="Export a conversation as a self-contained Markdown+images zip",
+    responses={200: {"content": {"application/zip": {}}}},
+)
 async def export_markdown_bundle(
     uuid: str,
     include_tools: bool = True,
+    include_compact: bool = Query(
+        False,
+        description=(
+            "When false (default), /compact summaries collapse to a "
+            "single-line indicator and the trigger row is dropped. "
+            "When true, both render verbatim. Mirrors the user "
+            "preference 'export.includeCompactContent'."
+        ),
+    ),
     dialect: Literal["commonmark", "obsidian"] = Query(
         "commonmark",
         description="Markdown dialect: 'commonmark' for ![alt](path), 'obsidian' for ![[path]] wikilinks",
@@ -84,6 +115,7 @@ async def export_markdown_bundle(
     bundle = create_markdown_bundle(
         conversation,
         include_tools=include_tools,
+        include_compact=include_compact,
         dialect=dialect,
     )
     filename = f"{sanitize_filename(conversation.name)}.zip"
@@ -94,10 +126,26 @@ async def export_markdown_bundle(
     )
 
 
-@router.get("/conversations/{uuid}/export/pdf")
+@router.get(
+    "/conversations/{uuid}/export/pdf",
+    summary="Export a conversation as a PDF (WeasyPrint; 30s timeout)",
+    responses={
+        200: {"content": {"application/pdf": {}}},
+        504: {"description": "PDF render exceeded the configured timeout"},
+    },
+)
 async def export_pdf(
     uuid: str,
     include_tools: bool = True,
+    include_compact: bool = Query(
+        False,
+        description=(
+            "When false (default), /compact summaries collapse to a "
+            "single-line indicator and the trigger row is dropped. "
+            "When true, both render verbatim. Mirrors the user "
+            "preference 'export.includeCompactContent'."
+        ),
+    ),
     store: ConversationStore = Depends(get_store),
 ) -> Response:
     """Export a conversation as PDF.
@@ -125,7 +173,7 @@ async def export_pdf(
     try:
         async with asyncio.timeout(PDF_RENDER_TIMEOUT_SECONDS):
             pdf_bytes = await asyncio.to_thread(
-                create_pdf, conversation, include_tools
+                create_pdf, conversation, include_tools, include_compact
             )
     except TimeoutError:
         raise HTTPException(
@@ -136,7 +184,26 @@ async def export_pdf(
             ),
         )
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Council code-review B1 (2026-05-21): do NOT leak raw
+        # exception text to the client. WeasyPrint RuntimeError
+        # messages frequently embed local file paths
+        # (``/Users/<name>/.claude-explorer/...``), library
+        # internals (cairo / pango), and other server-side detail —
+        # CWE-200 information disclosure for a portfolio-piece app.
+        # Log the real exception server-side (`exc_info=True`) so
+        # operators can still diagnose; return a static
+        # user-actionable message mirroring the timeout branch
+        # above so the frontend toast tells the user the recovery
+        # path (try Markdown export).
+        logger.exception("PDF export failed for conversation %s", uuid)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "PDF export failed due to an internal error. "
+                "Try exporting as Markdown instead, or check the "
+                "server logs for details."
+            ),
+        )
 
     filename = f"{sanitize_filename(conversation.name)}.pdf"
 
@@ -147,8 +214,21 @@ async def export_pdf(
     )
 
 
-@router.get("/export/all/markdown")
+@router.get(
+    "/export/all/markdown",
+    summary="Export all conversations as a Markdown zip archive",
+    responses={200: {"content": {"application/zip": {}}}},
+)
 async def export_all_markdown(
+    include_compact: bool = Query(
+        False,
+        description=(
+            "When false (default), /compact summaries collapse to a "
+            "single-line indicator and the trigger row is dropped. "
+            "When true, both render verbatim. Mirrors the user "
+            "preference 'export.includeCompactContent'."
+        ),
+    ),
     store: ConversationStore = Depends(get_store),
 ) -> StreamingResponse:
     """Export all conversations as a ZIP of Markdown files.
@@ -166,7 +246,7 @@ async def export_all_markdown(
         if detail:
             conversations.append(detail)
 
-    zip_bytes = create_markdown_zip(conversations)
+    zip_bytes = create_markdown_zip(conversations, include_compact=include_compact)
 
     return StreamingResponse(
         io.BytesIO(zip_bytes),

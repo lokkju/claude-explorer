@@ -876,7 +876,7 @@ def test_update_drifted_files_toctou_does_not_poison_index(tmp_path, monkeypatch
     real_loader = si._load_conversation_at
     race_mtime = bumped_mtime + 50.0
 
-    def _racy_loader(p, s):
+    def _racy_loader(p, s, source=None):
         if p == path:
             # Pretend we read the file's OLDEST snapshot (C1).
             conv = _conv("a", "A", body="content one alpha")
@@ -886,7 +886,7 @@ def test_update_drifted_files_toctou_does_not_poison_index(tmp_path, monkeypatch
             )
             os.utime(p, (race_mtime, race_mtime))
             return conv
-        return real_loader(p, s)
+        return real_loader(p, s, source=source)
 
     monkeypatch.setattr(si, "_load_conversation_at", _racy_loader)
     si.update_drifted_files(store, index=idx)
@@ -916,3 +916,174 @@ def test_update_drifted_files_toctou_does_not_poison_index(tmp_path, monkeypatch
         "second drift pass."
     )
     idx.close()
+
+
+# ----- 11. title_match_uuids — public title-sweep UUID query ----
+#
+# Council A1, 2026-05-21: previously ``backend/search.py`` reached into
+# SearchIndex._private (``_get_read_conn`` + ``_populate_allowed_conv``)
+# to run a UUID-only title sweep with a raw SELECT. This public method
+# replaces the reach-through; the tests below pin the contract so any
+# future change to the title-sweep semantics has to be deliberate.
+
+
+def test_title_match_uuids_returns_substring_hits(fresh_index):
+    """title_match_uuids returns the set of conv_uuids whose title
+    contains the needle as a LIKE substring.
+
+    Bug it would surface: title sweep stops catching substring hits
+    that the FTS5 tokenizer rejects (e.g., "edul" inside "scheduled").
+    """
+    fresh_index.upsert_conversation(
+        _conv("a", "scheduled meetings", body="x"), Path("/a.json"), 1.0
+    )
+    fresh_index.upsert_conversation(
+        _conv("b", "unrelated thread", body="x"), Path("/b.json"), 1.0
+    )
+    fresh_index.upsert_conversation(
+        _conv("c", "scheduling", body="x"), Path("/c.json"), 1.0
+    )
+    fresh_index.mark_ready()
+
+    hits = fresh_index.title_match_uuids("edul")
+    assert hits == {"a", "c"}, (
+        "title_match_uuids must catch mid-token substring matches that "
+        "FTS5's prefix tokenizer cannot reach."
+    )
+
+
+def test_title_match_uuids_empty_needle_returns_empty(fresh_index):
+    """An empty needle returns an empty set — never sweeps every title.
+
+    Bug it would surface: a blank query string returning every
+    conversation as a title match (LIKE '%%' matches everything).
+    """
+    fresh_index.upsert_conversation(
+        _conv("a", "anything", body="x"), Path("/a.json"), 1.0
+    )
+    fresh_index.mark_ready()
+
+    assert fresh_index.title_match_uuids("") == set()
+    assert fresh_index.title_match_uuids("   ") == set()
+
+
+def test_title_match_uuids_no_hits_returns_empty(fresh_index):
+    """A needle with zero title matches returns an empty set, not an
+    error.
+
+    Bug it would surface: a SQL error swallowed without returning a
+    valid empty set, causing the caller to receive ``None`` and crash
+    on set union.
+    """
+    fresh_index.upsert_conversation(
+        _conv("a", "hello world", body="x"), Path("/a.json"), 1.0
+    )
+    fresh_index.mark_ready()
+
+    assert fresh_index.title_match_uuids("nonexistent") == set()
+
+
+def test_title_match_uuids_source_filter(fresh_index):
+    """The source filter narrows the title sweep just like the body
+    sweep does — title-only hits in the wrong source are excluded.
+
+    Bug it would surface: source filter ignored on the title sweep,
+    causing cross-source bleed (a CC title-only hit appears even when
+    the user filtered to CLAUDE_AI).
+    """
+    fresh_index.upsert_conversation(
+        _conv("a", "needle in title", body="x", source="CLAUDE_AI"),
+        Path("/a.json"),
+        1.0,
+    )
+    fresh_index.upsert_conversation(
+        _conv("b", "needle in title", body="x", source="CLAUDE_CODE"),
+        Path("/b.json"),
+        1.0,
+    )
+    fresh_index.mark_ready()
+
+    assert fresh_index.title_match_uuids("needle", source="CLAUDE_AI") == {"a"}
+    assert fresh_index.title_match_uuids("needle", source="CLAUDE_CODE") == {"b"}
+
+
+def test_title_match_uuids_conversation_uuids_scope(fresh_index):
+    """The conversation_uuids set restricts the title sweep to that
+    set — title-only hits outside the allowlist are excluded.
+
+    Bug it would surface: the sidebar-scope conversation_uuids filter
+    fails to apply to title-only hits, allowing excluded conversations
+    to leak through (regression of the 2026-05-14 sidebar-scope fix).
+    """
+    fresh_index.upsert_conversation(
+        _conv("a", "shared title word", body="x"), Path("/a.json"), 1.0
+    )
+    fresh_index.upsert_conversation(
+        _conv("b", "shared title word", body="x"), Path("/b.json"), 1.0
+    )
+    fresh_index.upsert_conversation(
+        _conv("c", "shared title word", body="x"), Path("/c.json"), 1.0
+    )
+    fresh_index.mark_ready()
+
+    hits = fresh_index.title_match_uuids("title", conversation_uuids={"a", "c"})
+    assert hits == {"a", "c"}, (
+        "conversation_uuids must AND with the LIKE clause via the "
+        "per-connection allowed_conv TEMP table."
+    )
+
+
+def test_title_match_uuids_empty_conversation_uuids_returns_empty(fresh_index):
+    """An empty conversation_uuids set returns empty — never falls
+    back to "no scope" semantics.
+
+    Bug it would surface: passing ``set()`` (a deliberate "nothing
+    allowed" signal) being treated as None, returning every match
+    instead of nothing.
+    """
+    fresh_index.upsert_conversation(
+        _conv("a", "needle title", body="x"), Path("/a.json"), 1.0
+    )
+    fresh_index.mark_ready()
+
+    assert fresh_index.title_match_uuids("needle", conversation_uuids=set()) == set()
+
+
+def test_title_match_uuids_byte_for_byte_matches_legacy_reach_through(fresh_index):
+    """Lock-in test: the public method's result must match the legacy
+    private-reach-through SQL byte-for-byte for the same inputs.
+
+    Bug it would surface: the public-method extraction subtly changed
+    semantics (e.g., dropped a clause, used a different column, swapped
+    LIKE for GLOB). This is a refactor-safety pin.
+    """
+    fresh_index.upsert_conversation(
+        _conv("a", "alpha needle beta", body="x", source="CLAUDE_AI"),
+        Path("/a.json"),
+        1.0,
+    )
+    fresh_index.upsert_conversation(
+        _conv("b", "no match here", body="x", source="CLAUDE_AI"),
+        Path("/b.json"),
+        1.0,
+    )
+    fresh_index.upsert_conversation(
+        _conv("c", "needle elsewhere", body="x", source="CLAUDE_CODE"),
+        Path("/c.json"),
+        1.0,
+    )
+    fresh_index.mark_ready()
+
+    # Reproduce the legacy SQL inline (the code we're replacing).
+    conn = fresh_index._get_read_conn()
+    cur = conn.execute(
+        "SELECT DISTINCT conv_uuid FROM messages WHERE title LIKE ?",
+        ("%needle%",),
+    )
+    legacy = {row[0] for row in cur.fetchall()}
+
+    public = fresh_index.title_match_uuids("needle")
+    assert public == legacy, (
+        f"public title_match_uuids diverged from legacy SQL: "
+        f"public={public} legacy={legacy}"
+    )

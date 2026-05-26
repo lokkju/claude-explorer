@@ -44,6 +44,7 @@ from fetcher.credentials import (
     CredentialsCorruptError,
     LockContentionError,
     merge_orgs_and_save,
+    resolve_primary_org_id,
     save_credentials,
 )
 
@@ -146,9 +147,12 @@ class ClaudeCredentialCapture:
             data = json.loads(body)
         except Exception as e:
             log.warning(
-                f"organizations response decode failed (content-encoding={flow.response.headers.get('content-encoding')!r}, "
-                f"content-type={flow.response.headers.get('content-type')!r}, "
-                f"content-length={flow.response.headers.get('content-length')!r}): {e}"
+                "organizations response decode failed "
+                "(content-encoding=%r, content-type=%r, content-length=%r): %s",
+                flow.response.headers.get("content-encoding"),
+                flow.response.headers.get("content-type"),
+                flow.response.headers.get("content-length"),
+                e,
             )
             return
 
@@ -221,11 +225,12 @@ class ClaudeCredentialCapture:
             try:
                 merge_orgs_and_save(new_orgs, creds_path)
             except (FileNotFoundError, CredentialsCorruptError, LockContentionError) as e:
-                log.warning(f"merge_orgs_and_save failed: {e}")
+                log.warning("merge_orgs_and_save failed: %s", e)
             return
 
         # Bootstrap: build initial v2 record.
-        primary = self._pick_primary(list(self.orgs.values()))
+        # No prior_primary because this is the bootstrap path (no prior file).
+        primary = resolve_primary_org_id(list(self.orgs.values()))
         creds = {
             "schema_version": 2,
             "session_key": self.session_key,
@@ -243,31 +248,29 @@ class ClaudeCredentialCapture:
         try:
             save_credentials(creds, creds_path)  # type: ignore[arg-type]
         except (CredentialsCorruptError, LockContentionError) as e:
-            log.warning(f"save_credentials failed: {e}")
+            log.warning("save_credentials failed: %s", e)
             return
 
         if not self._success_printed:
             self._print_success()
             self._success_printed = True
 
-    @staticmethod
-    def _pick_primary(orgs: list[OrgRef]) -> str:
-        """Deterministic primary selection (mirrors playwright_capture)."""
-        chat_capable = [o["uuid"] for o in orgs if "chat" in (o.get("capabilities") or [])]
-        if chat_capable:
-            return sorted(chat_capable)[0]
-        return sorted(o["uuid"] for o in orgs)[0]
-
     def _print_success(self) -> None:
-        """Print success message with next steps."""
+        """Print success message with next steps.
+
+        Banner intentionally does NOT echo any portion of ``session_key`` —
+        Anthropic keys begin with the fixed prefix ``sk-ant-sid01-`` (13
+        chars), so any slice past the prefix leaks bearer-token entropy
+        into terminal scrollback, screen recordings, and CI logs. Mirrors
+        the F5 redaction in ``cli/main.py`` and
+        ``fetcher/playwright_capture.py``.
+        """
         log.info("=" * 60)
         log.info("CREDENTIALS CAPTURED SUCCESSFULLY")
         log.info("=" * 60)
-        log.info(
-            f"   Session key: {self.session_key[:20] if self.session_key else ''}..."
-        )
-        log.info(f"   Orgs seen so far: {len(self.orgs)}")
-        log.info(f"   Saved to: {self.credentials_path}")
+        log.info("   Session key: *** [REDACTED]")
+        log.info("   Orgs seen so far: %d", len(self.orgs))
+        log.info("   Saved to: %s", self.credentials_path)
         log.info("")
         log.info(
             "   You can quit mitmproxy (press 'q') after Claude Desktop has"

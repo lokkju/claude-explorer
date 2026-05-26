@@ -118,6 +118,19 @@ interface Draft {
   childIds: FilterId[]
 }
 
+// Stable reference for the "no-references" case below. `referencingById.get()`
+// returns `undefined` for nodes with zero referencing groups; we coalesce to
+// this frozen constant so the `referencingGroups` prop holds the same identity
+// across renders (lets `FilterRow`'s memoization, if any, treat the prop as
+// unchanged).
+// Cast through `unknown` because Object.freeze([]) is typed
+// `readonly never[]`, which TS strict mode refuses to widen to the
+// mutable `GroupFilter[]` consumer signature. The runtime value is a
+// frozen empty array; downstream callers only read from it (the freeze
+// also blocks any accidental mutation), so the lie about mutability is
+// inert.
+const EMPTY_GROUP_ARRAY: GroupFilter[] = Object.freeze([]) as unknown as GroupFilter[]
+
 function newId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID()
@@ -218,6 +231,34 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
     if (!q) return allNodes
     return allNodes.filter((n) => n.name.toLowerCase().includes(q))
   }, [allNodes, searchQuery])
+
+  // LOW-2 (council follow-up): pre-compute child -> referencing-groups
+  // map once per filtersState.nodes change. Before this memo, the row
+  // map at L370-396 called `findReferencingGroups(n.id, filtersState)`
+  // per visible row per render — O(V * (V+E)) on every keystroke into
+  // searchQuery, every draft selection, every deleteUi update. At
+  // today's typical filter counts (~5-20 nodes) sub-millisecond, but
+  // the cliff is steep and the fix is trivial.
+  //
+  // Memo key is `filtersState.nodes` (not the full `filtersState`) on
+  // the same rationale as `allNodes` above: FilterContext rebuilds
+  // `filtersState` identity on activeId / migration-banner / sentinel
+  // changes too, but `findReferencingGroups` only reads `nodes`.
+  const referencingById = useMemo(() => {
+    const map = new Map<FilterId, GroupFilter[]>()
+    for (const node of Object.values(filtersState.nodes)) {
+      if (node.type !== 'group') continue
+      for (const childId of node.childIds) {
+        const list = map.get(childId)
+        if (list) {
+          list.push(node)
+        } else {
+          map.set(childId, [node])
+        }
+      }
+    }
+    return map
+  }, [filtersState.nodes])
 
   const handleClose = () => {
     setDraft(null)
@@ -390,7 +431,7 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
                       onRequestDelete={() => handleRequestDelete(n)}
                       onCancelDelete={() => handleCancelDelete(n.id)}
                       onConfirmDelete={() => handleConfirmDelete(n.id)}
-                      referencingGroups={findReferencingGroups(n.id, filtersState)}
+                      referencingGroups={referencingById.get(n.id) ?? EMPTY_GROUP_ARRAY}
                     />
                   )
                 })}

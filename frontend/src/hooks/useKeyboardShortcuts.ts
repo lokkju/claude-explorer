@@ -7,6 +7,7 @@ import { useSearchPanel } from '@/contexts/SearchPanelContext'
 import { useFetchPipeline } from '@/contexts/FetchPipelineContext'
 import { queryKeys } from '@/lib/queryClient'
 import { messageToMarkdown } from '@/lib/utils'
+import { errorToast } from '@/lib/errorToast'
 import type { ConversationDetail } from '@/lib/types'
 
 function isInputElement(target: EventTarget | null): boolean {
@@ -47,7 +48,7 @@ export function useKeyboardShortcuts() {
     const match = location.pathname.match(/\/conversations\/(.+)/)
     return match?.[1]
   }, [location.pathname])
-  const { keyboardMode, showToolCalls, setRightPaneTab } = useSettings()
+  const { keyboardMode, showToolCalls, rightPaneTab, setRightPaneTab } = useSettings()
   const queryClient = useQueryClient()
   const {
     selectNext,
@@ -126,7 +127,16 @@ export function useKeyboardShortcuts() {
             if (message) {
               e.preventDefault()
               const markdown = messageToMarkdown(message, showToolCalls)
-              navigator.clipboard.writeText(markdown)
+              // LOW-1 (council follow-up): the surrounding handler is a
+              // synchronous keydown listener (useEffect-mounted at the
+              // window level), so we can't `await`. Without a `.catch()`
+              // a permission/secure-origin denial surfaces as an
+              // unhandled promise rejection. Architect-chosen pattern:
+              // chain `.catch()` to absorb the rejection and surface
+              // errorToast without altering the sync signature.
+              navigator.clipboard.writeText(markdown).catch(() => {
+                errorToast('Failed to copy to clipboard.')
+              })
               return
             }
           }
@@ -175,7 +185,7 @@ export function useKeyboardShortcuts() {
       // close it without touching the tab state.
       if (cmdOrCtrl && e.key === 'k' && !e.altKey && !e.shiftKey) {
         e.preventDefault()
-        if (!searchPanel.isOpen) {
+        if (!searchPanel.isOpen && rightPaneTab !== 'search') {
           setRightPaneTab('search')
         }
         searchPanel.toggle()
@@ -191,7 +201,14 @@ export function useKeyboardShortcuts() {
       // Bookmarks active should still get Search when they Cmd+F.
       if (cmdOrCtrl && e.key === 'f' && !e.altKey && !e.shiftKey) {
         e.preventDefault()
-        setRightPaneTab('search')
+        // 2026-05-22 perf fix: skip the PATCH+rerender chain when the
+        // tab is already on 'search'. setRightPaneTab → usePreferences
+        // → localStorage write + PATCH /api/preferences → onSuccess
+        // → setQueryData(['preferences']) → ALL useSettings consumers
+        // re-render. On the 16K-msg conversation, that cascade dwarfed
+        // the actual focus work (multi-second Cmd+F lag). The guard
+        // makes the steady-state Cmd+F path a no-state-change focus.
+        if (rightPaneTab !== 'search') setRightPaneTab('search')
         searchPanel.requestFocus()
         return
       }
@@ -467,7 +484,7 @@ export function useKeyboardShortcuts() {
      selectNextUserMessage, selectPreviousUserMessage,
      selectNextAssistantMessage, selectPreviousAssistantMessage,
      pageDown, pageUp, getSelectedMessageId, searchPanel,
-     setRightPaneTab, startRefresh, isRefreshRunning]
+     rightPaneTab, setRightPaneTab, startRefresh, isRefreshRunning]
   )
 
   useEffect(() => {

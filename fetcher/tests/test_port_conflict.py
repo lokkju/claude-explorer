@@ -6,7 +6,7 @@ Build-8 #3 (BLOCKER) — see PLANS/explorer-improvements-build.md.
 import pytest
 from click.testing import CliRunner
 
-from fetcher.cli import main
+from cli.main import main
 
 
 def test_address_in_use_oserror_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:

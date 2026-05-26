@@ -42,6 +42,7 @@ from fetcher.credentials import (
     DEFAULT_CREDENTIALS_PATH,
     OrgRef,
     load_credentials,
+    resolve_primary_org_id,
     save_credentials,
 )
 
@@ -152,40 +153,15 @@ async def get_orgs(page: Page) -> list[OrgRef]:
                             "seen_in_response": False,
                         }
                     ]
-    except Exception:
-        pass
+    except Exception as e:
+        # Council C3: don't swallow silently. The visible failure mode
+        # is "capture returned no orgs"; a debug breadcrumb here means
+        # operators can diagnose Claude API URL-shape changes without
+        # having to add instrumentation after the fact. Debug level
+        # keeps the happy path quiet.
+        log.debug("get_orgs URL fallback extraction failed: %s", e)
 
     return []
-
-
-def _resolve_primary_org_id(
-    orgs: list[OrgRef],
-    prior_primary: str | None = None,
-) -> str:
-    """Deterministic primary-org selection (cowork-multi-org "Primary org selection").
-
-    Resolution order (from spec):
-      1. ``prior_primary`` if it still refers to an org in ``orgs``.
-      2. The first org with ``"chat"`` in capabilities (Phase 0 hint).
-      3. Lex-sort by uuid (deterministic; never index-based).
-
-    Step 3 of the spec ("most conversations on disk") is deferred to C5; in C2
-    we don't yet read the by-org filesystem layout. This is acceptable because
-    primary selection's only consumer right now is the single-org fetch path
-    which uses whatever uuid we pick.
-    """
-    if not orgs:
-        raise ValueError("orgs must be non-empty for primary resolution")
-
-    org_uuids = {o["uuid"] for o in orgs}
-    if prior_primary and prior_primary in org_uuids:
-        return prior_primary
-
-    chat_capable = [o["uuid"] for o in orgs if "chat" in (o.get("capabilities") or [])]
-    if chat_capable:
-        return sorted(chat_capable)[0]
-
-    return sorted(o["uuid"] for o in orgs)[0]
 
 
 def _build_credentials(
@@ -227,7 +203,7 @@ def _build_credentials(
         # scratch. The .bak left by the prior save is the recovery path.
         log.warning("Existing credentials corrupt; recapturing from scratch: %s", e)
 
-    primary = _resolve_primary_org_id(orgs, prior_primary=prior_primary)
+    primary = resolve_primary_org_id(orgs, prior_primary=prior_primary)
 
     # Default legacy_migration_target to current primary on FIRST EVER capture
     # (no prior file). On every subsequent recapture, inherit the prior value
@@ -405,7 +381,11 @@ def main(output: Path, timeout: int, verbose: bool) -> None:
         click.echo("=" * 60)
         click.echo("CREDENTIALS CAPTURED SUCCESSFULLY")
         click.echo("=" * 60)
-        click.echo(f"   Session key: {credentials['session_key'][:20]}...")
+        # Council F5: do NOT echo any prefix of the session key. The
+        # Anthropic prefix "sk-ant-sid01-" is 13 chars, so even a
+        # 20-char slice leaked ~7 chars of bearer-token entropy into
+        # terminal scrollback, screenshots, CI logs, and shell history.
+        # Saved-path + org summary remain as non-secret confirmation.
         click.echo(f"   Saved to:    {output}")
         click.echo(f"   {len(credentials['orgs'])} organization(s):")
         click.echo(_format_org_summary(credentials["orgs"], credentials["primary_org_id"], verbose))

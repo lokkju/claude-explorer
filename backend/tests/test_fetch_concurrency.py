@@ -1,11 +1,15 @@
 """Concurrency / 409-on-second-request semantics for /api/fetch/refresh.
 
 The ``/api/fetch/refresh`` endpoint serializes refresh attempts via a
-module-level boolean (``_refresh_in_progress``) — NOT the declared-but-
-unused ``_refresh_lock: asyncio.Lock`` at ``backend/routers/fetch.py:41``.
-This test validates the ACTUAL mechanism: a second concurrent request
-returns 409 Conflict; once the first stream completes, the flag is
-cleared and a third sequential request returns 200.
+module-level boolean (``_refresh_in_progress``). An earlier version
+also declared a never-acquired ``asyncio.Lock`` next to the flag; it
+was removed in Council A1 (2026-05-21) as dead code — the boolean
+check-then-set under the single-threaded asyncio event loop is the
+actual mechanism, and the streamer's ``finally`` block clears the
+flag when the stream ends. This test validates THAT mechanism: a
+second concurrent request returns 409 Conflict; once the first
+stream completes, the flag is cleared and a third sequential request
+returns 200.
 
 Spec: ``PLANS/2026.05.07-frontend-api-contract.md`` (clause BKM-FETCH-409).
 Plan: ``PLANS/2026.05.08 BACKEND TEST PLAN.md`` (P2.3, Tier 4 Concurrency).

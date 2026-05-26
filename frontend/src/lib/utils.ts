@@ -103,6 +103,57 @@ export function messageHasVisibleContent(message: Message, showToolCalls: boolea
   return false
 }
 
+/**
+ * Compute the "visible" subset of a conversation's messages for the
+ * detail-pane render loop. Keeps render and keyboard-nav registration
+ * in lockstep so the user can't click an empty wrapper that produces
+ * a no-op `findIndex(uuid) === -1`.
+ *
+ * Rules:
+ *   - Drop `is_prelude` messages when `showPrelude=false` (matches the
+ *     SessionPreludeAffordance contract).
+ *   - 2026-05-24 fix: when `hideCompactSummaries=true`, drop messages
+ *     whose UUID is in `compactMarkerUuids` entirely. The
+ *     isCompactSummary message body (the LLM-written summary text) and
+ *     the /compact trigger row are both chrome the user has chosen
+ *     to suppress. Without this drop, those messages fell through to
+ *     `messageHasVisibleContent` (which returns true because their
+ *     text is non-empty) and rendered as plain user-prompt-styled
+ *     bubbles — the bug the user reported in the screenshot.
+ *   - When `hideCompactSummaries=false`: keep any message whose UUID
+ *     appears in `compactMarkerUuids`. The CompactMarker affordance
+ *     renders from a separate Map; the bare message body never
+ *     reaches MessageBubble (renderBubbleRow swaps it for a
+ *     CompactMarker via compactMarkerByUuid).
+ *   - Otherwise keep iff `messageHasVisibleContent(m, showToolCalls)`
+ *     — same predicate the keyboard-nav registration uses.
+ *
+ * NIT-1 + image-only nav-alignment (council follow-up, 2026-05-22):
+ * was previously a `.filter((m) => !m.is_prelude)` only, which left
+ * empty wrappers for tool-only messages and produced a click dead zone.
+ */
+export function computeVisibleMessages(
+  messages: readonly Message[],
+  opts: {
+    showPrelude: boolean
+    showToolCalls: boolean
+    compactMarkerUuids: ReadonlySet<string>
+    /** When true, drop any message whose UUID is in
+     *  `compactMarkerUuids` from the rendered list entirely. Default
+     *  false preserves the existing "always keep markers" behavior
+     *  for non-CC / show-on call sites. The conversation view passes
+     *  true when the user unchecks "Show Compactions". */
+    hideCompactSummaries?: boolean
+  },
+): Message[] {
+  const hide = opts.hideCompactSummaries === true
+  return messages.filter((m) => {
+    if (!opts.showPrelude && m.is_prelude) return false
+    if (opts.compactMarkerUuids.has(m.uuid)) return !hide
+    return messageHasVisibleContent(m, opts.showToolCalls)
+  })
+}
+
 export function sanitizeFilename(name: string): string {
   return name
     .replace(/[<>:"/\\|?*]/g, '-')

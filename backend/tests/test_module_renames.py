@@ -55,7 +55,7 @@ def test_cc_watcher_module_exists() -> None:
     mod = importlib.import_module("backend.cc_watcher")
     assert hasattr(mod, "run_watcher"), (
         "backend.cc_watcher must expose run_watcher "
-        "(used by backend/main.py lifespan and fetcher/cli.py "
+        "(used by backend/main.py lifespan and cli/watcher.py "
         "install-watcher launcher template)"
     )
 

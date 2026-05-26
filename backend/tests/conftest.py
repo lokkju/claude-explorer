@@ -90,6 +90,43 @@ def _weasyprint_available() -> bool:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_cowork_app_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+):
+    """Autouse: point CLAUDE_DESKTOP_APP_DIR at an isolated empty dir.
+
+    Without this, ``ConversationStore.__init__`` falls through to
+    ``platformdirs.user_data_path("Claude")`` which on a developer's
+    Mac resolves to ``~/Library/Application Support/Claude``. Tests
+    that exercise ``list_conversations(source='all')`` would then
+    pull in the developer's REAL Cowork sessions and break dozens of
+    fixtures that assume a known-empty corpus.
+
+    Tests that explicitly want Cowork data must either:
+      * pass ``cowork_root=`` to ``ConversationStore`` directly
+        (e.g. test_store_cowork_integration.py), OR
+      * point CLAUDE_DESKTOP_APP_DIR at their own fixture tree via
+        monkeypatch BEFORE the store is constructed.
+
+    Cache-clear discipline matches ``isolated_data_dir``: clear the
+    @lru_cache on get_settings both before yielding and on teardown.
+    """
+    from backend import config
+
+    # Use one tmp dir per test session — the dir is empty (no
+    # ``local-agent-mode-sessions/`` subdir), so the Cowork reader's
+    # ``cowork_root.exists()`` check returns False and the walk
+    # short-circuits at zero cost.
+    cowork_app_dir = tmp_path_factory.mktemp("cowork_app_isolated")
+    monkeypatch.setenv("CLAUDE_DESKTOP_APP_DIR", str(cowork_app_dir))
+    config.get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        config.get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def _skip_pdf_tests_when_weasyprint_unavailable(request):
     """Skip PDF-export tests with a clear, actionable message instead of a
     cryptic CFFI ``OSError`` when WeasyPrint native libs (libgobject, libpango,
@@ -359,7 +396,12 @@ def _isolated_credentials_path(
     """
 
     creds = tmp_path / "credentials.json"
+    # fetcher.paths is the CANONICAL location post-Council A5-PATHS
+    # (2026-05-21). The other four are re-exports — Python attribute
+    # lookup resolves each on its own module's namespace, so we must
+    # setattr at every site for fully-isolated test scope.
     targets = (
+        "fetcher.paths.DEFAULT_CREDENTIALS_PATH",
         "fetcher.credentials.DEFAULT_CREDENTIALS_PATH",
         "fetcher.bulk_fetch.DEFAULT_CREDENTIALS_PATH",
         "backend.routers.fetch.DEFAULT_CREDENTIALS_PATH",

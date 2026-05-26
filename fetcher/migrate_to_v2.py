@@ -74,7 +74,9 @@ from fetcher.credentials import (
 log = logging.getLogger(__name__)
 
 
-DEFAULT_DATA_DIR = Path.home() / ".claude-explorer" / "conversations"
+# Canonically defined in fetcher.paths (Council A5-PATHS); re-export
+# preserves backward-compat for any external caller.
+from fetcher.paths import DEFAULT_DATA_DIR  # noqa: E402
 
 MIGRATION_SENTINEL = "by-org/.migrated_v2"
 MIGRATION_LOG = "by-org/.migration_log.json"

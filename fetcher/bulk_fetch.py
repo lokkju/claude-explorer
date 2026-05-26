@@ -32,14 +32,90 @@ import click
 from curl_cffi import requests as curl_requests
 from curl_cffi.requests.errors import RequestsError
 
+# HTTP transport vocabulary — domain exceptions + persisted error vocab —
+# extracted to a dedicated module (Council A2-SPLIT, 2026-05-21). The
+# retry layer (with_retry et al.) intentionally STAYS in this file so
+# that test patches at `fetcher.bulk_fetch._retry_sleep` continue to
+# take effect (Python resolves _retry_sleep in with_retry's defining
+# module's namespace; moving with_retry away would silently no-op the
+# patch). See fetcher/http_retry.py module docstring + CLAUDE-TESTING.md
+# §5.12. Re-exported below so existing imports keep working — backend
+# imports `PersistedErrorKind` and others as `from fetcher.bulk_fetch import ...`.
+# DO NOT REMOVE these re-exports without a coordinated update of all
+# import sites.
+from fetcher.http_retry import (  # noqa: F401  (re-exported)
+    AUTH_HTTP_STATUSES,
+    FetchAuthError,
+    FetchError,
+    FetchTerminalError,
+    FetchTransientError,
+    PERSISTED_ERROR_KINDS,
+    PersistedErrorKind,
+    TRANSIENT_CURL_CODES,
+    TRANSIENT_HTTP_STATUSES,
+    extract_http_status_from_message,
+    kind_from_http_status,
+    migrate_legacy_error_code,
+)
+
 
 logger = logging.getLogger(__name__)
 
 
-# Default paths
-DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-explorer" / "credentials.json"
-DEFAULT_OUTPUT_DIR = Path.home() / ".claude-explorer" / "conversations"
-DEFAULT_FILES_DIR = Path.home() / ".claude-explorer" / "files"
+# Default paths — canonically defined in fetcher.paths and re-exported here
+# so old imports + test patches at fetcher.bulk_fetch.DEFAULT_* keep working.
+# See backend/tests/conftest.py for the multi-site patch fixture.
+from fetcher.paths import (  # noqa: E402  (after logger configure is fine here)
+    DEFAULT_CREDENTIALS_PATH,
+    DEFAULT_DATA_DIR as DEFAULT_OUTPUT_DIR,  # legacy local alias
+    DEFAULT_FILES_DIR,
+)
+
+# Public API surface. This module is a facade — it re-exports the
+# http_retry vocabulary (so callers don't have to know about that split)
+# AND owns the retry layer locally (with_retry, _retry_sleep, etc.) so
+# `monkeypatch.setattr("fetcher.bulk_fetch._retry_sleep", ...)` patches
+# in fetcher/tests/test_retry.py keep landing. See A2-SPLIT in
+# PLANS/CODE-REVIEW-FETCHER.md and CLAUDE-TESTING.md §5.12.
+#
+# Names prefixed with `_` (e.g., `_retry_sleep`, `_classify_http_error`,
+# `_jittered_backoff`) are intentionally excluded from __all__ but
+# remain reachable via qualified attribute access — that's the surface
+# tests monkeypatch against. Adding `__all__` does NOT remove them
+# from the module namespace; it only constrains `from ... import *`
+# consumers (none today).
+__all__ = [
+    # Re-exported constants from fetcher.paths
+    "DEFAULT_CREDENTIALS_PATH",
+    "DEFAULT_OUTPUT_DIR",
+    "DEFAULT_FILES_DIR",
+    # Re-exported HTTP transport vocabulary from fetcher.http_retry
+    "AUTH_HTTP_STATUSES",
+    "PERSISTED_ERROR_KINDS",
+    "PersistedErrorKind",
+    "TRANSIENT_CURL_CODES",
+    "TRANSIENT_HTTP_STATUSES",
+    "FetchError",
+    "FetchAuthError",
+    "FetchTerminalError",
+    "FetchTransientError",
+    "extract_http_status_from_message",
+    "kind_from_http_status",
+    "migrate_legacy_error_code",
+    # Local module constants
+    "API_BASE",
+    "WEB_BASE",
+    "DEFAULT_DELAY",
+    "REQUEST_TIMEOUT",
+    "RATE_LIMIT_BACKOFF_SECONDS",
+    "RATE_LIMIT_MAX_ATTEMPTS",
+    # Retry layer (must stay co-located with _retry_sleep — see header)
+    "TransientHTTPError",
+    "with_retry",
+    # Fetcher
+    "ClaudeFetcher",
+    "load_credentials",
+]
 
 # Claude API base URL
 API_BASE = "https://claude.ai/api"
@@ -49,58 +125,18 @@ WEB_BASE = "https://claude.ai"
 DEFAULT_DELAY = 0.3
 REQUEST_TIMEOUT = 30.0
 
+# Rate-limit (HTTP 429) bounded-retry knobs. Used by ``fetch_conversation``.
+# A flat 60s backoff is preferred to ``_jittered_backoff`` here because 429
+# is a domain signal ("wait one rate-limit window") rather than a transport
+# transient — exponential 60→180→540s on attempt 3 would punish the user
+# without changing the success probability.
+RATE_LIMIT_BACKOFF_SECONDS = 60.0
+RATE_LIMIT_MAX_ATTEMPTS = 3
+
 
 # ---------------------------------------------------------------------------
-# Bug A: Transient-error retry layer.
-#
-# A first-of-process call to claude.ai through curl_cffi can fail with
-# a TLS handshake error (libcurl code 35) because the TLS context has
-# not been warmed yet. Cloudflare's edge also occasionally returns 5xx
-# during deploys. Both classes of failure recover on the very next call.
-#
-# We classify upstream errors into three domain exceptions so the SSE
-# router can decide what to do without importing curl_cffi types.
+# Retry layer (stays in this module — see header re-export comment).
 # ---------------------------------------------------------------------------
-
-# libcurl numeric codes we treat as transient.
-#   7  CURLE_COULDNT_CONNECT
-#   28 CURLE_OPERATION_TIMEDOUT
-#   35 CURLE_SSL_CONNECT_ERROR  (the cold-start case the user hit)
-#   52 CURLE_GOT_NOTHING
-#   55 CURLE_SEND_ERROR
-#   56 CURLE_RECV_ERROR
-#   5  CURLE_COULDNT_RESOLVE_PROXY (DNS / proxy failure during transient outage)
-#   6  CURLE_COULDNT_RESOLVE_HOST  (network down during fetch)
-TRANSIENT_CURL_CODES: frozenset[int] = frozenset({5, 6, 7, 28, 35, 52, 55, 56})
-
-# HTTP statuses we treat as transient (will retry).
-TRANSIENT_HTTP_STATUSES: frozenset[int] = frozenset({502, 503, 504})
-
-# HTTP statuses that mean the credentials are no longer valid. Never
-# retry these — surface immediately so the SSE pipeline can launch
-# capture once.
-AUTH_HTTP_STATUSES: frozenset[int] = frozenset({401, 403})
-
-
-class FetchError(Exception):
-    """Base class for all domain errors raised by the fetcher."""
-
-
-class FetchAuthError(FetchError):
-    """Credentials are invalid / blocked. The router should run capture."""
-
-
-class FetchTransientError(FetchError):
-    """Transient transport-layer failure (TLS, connection, 5xx).
-
-    Wraps the underlying exception in `__cause__`. Raised after retry
-    attempts have been exhausted, OR raised directly when the caller
-    asked us not to retry but the failure was still transient.
-    """
-
-
-class FetchTerminalError(FetchError):
-    """Anything else — unrecoverable. The router emits a sticky toast."""
 
 
 class TransientHTTPError(Exception):
@@ -590,41 +626,70 @@ class ClaudeFetcher:
         return conversations
 
     def fetch_conversation(self, uuid: str) -> dict | None:
-        """Fetch full conversation content."""
+        """Fetch full conversation content.
+
+        Rate-limit (429) handling: bounded loop with ``_retry_sleep`` so
+        sustained 429s cannot grow the call stack (previously this method
+        recursed into itself after a raw ``time.sleep(60)``, which would
+        ``RecursionError`` after ~1000 frames and bypassed the test patch
+        convention from CLAUDE-TESTING.md §5.12).
+
+        On exhaustion we raise ``FetchTransientError`` so the per-org
+        catch block in :py:meth:`run_all_orgs` classifies the run as
+        ``error_kind="TRANSIENT"`` (see ``bulk_fetch.py:1013``). Returning
+        ``None`` here would silently mark the org ``status="ok"`` with
+        missing conversations — a false-OK we explicitly avoid.
+        """
         # Include query params to get full content including tool calls
         url = self._api_url(f"chat_conversations/{uuid}?tree=True&rendering_mode=messages&render_all_tools=true")
         self._log(f"Fetching conversation {uuid}")
 
-        try:
-            response = self._get(url)
-            response.raise_for_status()
-            return response.json()
-        except FetchAuthError:
-            click.echo(
-                "  Error: Session expired or blocked. Re-run credential capture.",
-                err=True,
-            )
-            raise
-        except FetchTransientError:
-            # Retry layer already exhausted; bubble up to the SSE pipeline.
-            raise
-        except Exception as e:
-            status = getattr(getattr(e, "response", None), "status_code", None)
-            if status == 404:
-                click.echo(f"  Warning: Conversation {uuid} not found (404)", err=True)
-            elif status == 401 or status == 403:
+        for attempt in range(1, RATE_LIMIT_MAX_ATTEMPTS + 1):
+            try:
+                response = self._get(url)
+                response.raise_for_status()
+                return response.json()
+            except FetchAuthError:
                 click.echo(
                     "  Error: Session expired or blocked. Re-run credential capture.",
                     err=True,
                 )
-                raise FetchAuthError(str(e)) from e
-            elif status == 429:
-                click.echo("  Rate limited. Waiting 60 seconds...", err=True)
-                time.sleep(60)
-                return self.fetch_conversation(uuid)  # Retry
-            else:
+                raise
+            except FetchTransientError:
+                # Retry layer already exhausted; bubble up to the SSE pipeline.
+                raise
+            except Exception as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    click.echo(f"  Warning: Conversation {uuid} not found (404)", err=True)
+                    return None
+                if status == 401 or status == 403:
+                    click.echo(
+                        "  Error: Session expired or blocked. Re-run credential capture.",
+                        err=True,
+                    )
+                    raise FetchAuthError(str(e)) from e
+                if status == 429:
+                    if attempt < RATE_LIMIT_MAX_ATTEMPTS:
+                        click.echo(
+                            f"  Rate limited. Waiting {RATE_LIMIT_BACKOFF_SECONDS:.0f}s "
+                            f"(attempt {attempt}/{RATE_LIMIT_MAX_ATTEMPTS})...",
+                            err=True,
+                        )
+                        _retry_sleep(RATE_LIMIT_BACKOFF_SECONDS)
+                        continue
+                    click.echo(
+                        f"  Error: rate limit persists after {RATE_LIMIT_MAX_ATTEMPTS} attempts. "
+                        "Org will be marked as a transient failure.",
+                        err=True,
+                    )
+                    raise FetchTransientError(
+                        f"429 rate limit persisted after {RATE_LIMIT_MAX_ATTEMPTS} attempts"
+                    ) from e
                 click.echo(f"  Error fetching {uuid}: {e}", err=True)
-            return None
+                return None
+        # Unreachable: the loop either returns, raises, or continues.
+        return None
 
     def save_conversation(self, conversation: dict) -> None:
         """Save conversation to JSON file, downloading any attached files.
@@ -660,7 +725,8 @@ class ClaudeFetcher:
         conversations: list[dict],
         *,
         status: str = "ok",
-        error_code: str | None = None,
+        error_kind: PersistedErrorKind | None = None,
+        http_status: int | None = None,
         error_message: str | None = None,
     ) -> None:
         """Save the per-run status ledger for the **current org**.
@@ -674,6 +740,14 @@ class ClaudeFetcher:
         ``last_successful_fetched_count`` and ``last_successful_fetched_at``
         from the prior on-disk index for the same org. First-ever-failed
         orgs get ``null`` (NEW4-P1-B), not ``0``.
+
+        A1-hunt error vocabulary: persist ``(error_kind, http_status)`` —
+        a stable domain vocabulary plus the raw HTTP status for
+        diagnostics — instead of the legacy ad-hoc ``error_code``
+        ``"HTTP_***"`` strings the router used to compute on the fly.
+        The rollup at ``routers/fetch.py`` switches on ``error_kind``;
+        legacy on-disk records are tolerated read-time via
+        ``migrate_legacy_error_code()``.
 
         Atomicity: tmp + ``os.replace`` ensures crash-mid-write doesn't leave
         a torn ``_index.json`` (NEW-P1-L).
@@ -717,7 +791,11 @@ class ClaudeFetcher:
             "last_successful_fetched_count": last_success_count,
             "last_successful_fetched_at": last_success_at,
             "skipped_count": 0,
-            "error_code": error_code,
+            # A1-hunt: persisted error vocabulary. `error_kind` is one of
+            # the closed set in PERSISTED_ERROR_KINDS; `http_status` is the
+            # raw HTTP code when applicable (None for TRANSIENT/TERMINAL).
+            "error_kind": error_kind,
+            "http_status": http_status,
             "error_message": error_message,
             "conversations": [
                 {
@@ -952,8 +1030,14 @@ class ClaudeFetcher:
 
             except FetchAuthError as e:
                 msg = str(e)
-                is_401 = "401" in msg
-                is_skip = ("403" in msg) or ("404" in msg)
+                # A1-hunt: parse HTTP status from the message ONCE and
+                # derive the persisted error_kind from it. Drops the
+                # ad-hoc `"HTTP_401"` / `"HTTP_403"` / `"HTTP_404"` strings
+                # the legacy code persisted to _index.json.
+                http_status = extract_http_status_from_message(msg)
+                error_kind = kind_from_http_status(http_status) or "AUTH_EXPIRED"
+                is_401 = http_status == 401
+                is_skip = http_status in (403, 404)
 
                 if is_primary and is_401:
                     # Hard abort. Record nothing; let the existing _index.json
@@ -961,14 +1045,20 @@ class ClaudeFetcher:
                     raise
 
                 # Secondary 403/404, OR primary 403/404 (auto-demote path).
-                error_code = "HTTP_401" if is_401 else ("HTTP_403" if "403" in msg else "HTTP_404")
                 with self._scoped_org(org):
-                    self.save_index([], status="skipped", error_code=error_code, error_message=msg)
+                    self.save_index(
+                        [],
+                        status="skipped",
+                        error_kind=error_kind,
+                        http_status=http_status,
+                        error_message=msg,
+                    )
                 results.append({
                     "org_id": org_uuid,
                     "name": org_name,
                     "status": "skipped",
-                    "error_code": error_code,
+                    "error_kind": error_kind,
+                    "http_status": http_status,
                     "error_message": msg,
                 })
                 if on_event:
@@ -976,7 +1066,8 @@ class ClaudeFetcher:
                         "type": "org_done",
                         "org_id": org_uuid,
                         "status": "skipped",
-                        "error_code": error_code,
+                        "error_kind": error_kind,
+                        "http_status": http_status,
                     })
 
                 if is_primary and is_skip:
@@ -993,20 +1084,34 @@ class ClaudeFetcher:
                                 "type": "primary_demoted",
                                 "from_org_id": primary_demoted_from,
                                 "to_org_id": new_primary,
-                                "reason": error_code,
+                                "reason": error_kind,
                             })
 
             except Exception as e:
                 # Any other failure: record as failed, continue.
                 logger.warning("Org %s failed: %s", org_uuid, e)
-                error_code = type(e).__name__
+                # A1-hunt: classify rather than persisting raw type(e).__name__.
+                # FetchTransientError carries the 5xx signal; everything else
+                # is TERMINAL. http_status best-effort from message text.
+                if isinstance(e, FetchTransientError):
+                    error_kind = "TRANSIENT"
+                else:
+                    error_kind = "TERMINAL"
+                http_status = extract_http_status_from_message(str(e))
                 with self._scoped_org(org):
-                    self.save_index([], status="failed", error_code=error_code, error_message=str(e))
+                    self.save_index(
+                        [],
+                        status="failed",
+                        error_kind=error_kind,
+                        http_status=http_status,
+                        error_message=str(e),
+                    )
                 results.append({
                     "org_id": org_uuid,
                     "name": org_name,
                     "status": "failed",
-                    "error_code": error_code,
+                    "error_kind": error_kind,
+                    "http_status": http_status,
                     "error_message": str(e),
                 })
                 if on_event:
@@ -1014,7 +1119,8 @@ class ClaudeFetcher:
                         "type": "org_done",
                         "org_id": org_uuid,
                         "status": "failed",
-                        "error_code": error_code,
+                        "error_kind": error_kind,
+                        "http_status": http_status,
                     })
 
         # NO_ACCESSIBLE_ORGS guardrail (NEW2-P1-γ).
@@ -1037,14 +1143,17 @@ class ClaudeFetcher:
 
         Excludes the demoted org. Returns None if no eligible orgs remain
         (single-org account guardrail).
+
+        Delegates the actual selection to
+        :func:`fetcher.credentials.resolve_primary_org_id` so the algorithm
+        cannot drift from the bootstrap paths (council D1, 2026-05-21).
         """
+        from fetcher.credentials import resolve_primary_org_id
+
         candidates = [o for o in self.orgs if o["uuid"] not in exclude]
         if not candidates:
             return None
-        chat_capable = [o["uuid"] for o in candidates if "chat" in (o.get("capabilities") or [])]
-        if chat_capable:
-            return sorted(chat_capable)[0]
-        return sorted(o["uuid"] for o in candidates)[0]
+        return resolve_primary_org_id(candidates)
 
     def _persist_demote(self, new_primary: str) -> None:
         """Persist a primary-org demotion to credentials.json.
@@ -1105,108 +1214,14 @@ def load_credentials(credentials_path: Path) -> dict:
         ) from e
 
 
-@click.command()
-@click.option(
-    "--output-dir",
-    type=click.Path(path_type=Path),
-    default=DEFAULT_OUTPUT_DIR,
-    help="Where to save JSON files",
-)
-@click.option(
-    "--files-dir",
-    type=click.Path(path_type=Path),
-    default=DEFAULT_FILES_DIR,
-    help="Where to save downloaded files (images, PDFs)",
-)
-@click.option(
-    "--credentials",
-    type=click.Path(path_type=Path),
-    default=DEFAULT_CREDENTIALS_PATH,
-    help="Path to credentials file",
-)
-@click.option("--session-key", help="Session key (overrides credentials file)")
-@click.option("--org-id", help="Org ID (overrides credentials file)")
-@click.option(
-    "--incremental/--full-refresh",
-    default=True,
-    help="Skip already-saved conversations (default: incremental)",
-)
-@click.option(
-    "--download-files/--no-download-files",
-    default=True,
-    help="Download attached images/PDFs (default: yes)",
-)
-@click.option(
-    "--delay",
-    type=float,
-    default=DEFAULT_DELAY,
-    help="Seconds between requests",
-)
-@click.option("--limit", type=int, help="Max conversations to fetch")
-@click.option("--verbose", is_flag=True, help="Show detailed output")
-def main(
-    output_dir: Path,
-    files_dir: Path,
-    credentials: Path,
-    session_key: str | None,
-    org_id: str | None,
-    incremental: bool,
-    download_files: bool,
-    delay: float,
-    limit: int | None,
-    verbose: bool,
-) -> None:
-    """Fetch all conversations from Claude Desktop."""
-    creds_dict: dict | None = None
-    if session_key and org_id:
-        # CLI override path. Bootstrap a single-org orgs list.
-        orgs = [{"uuid": org_id, "name": None, "capabilities": [], "seen_in_response": False}]
-        primary = org_id
-        cf_bm = None
-        cf_clearance = None
-    else:
-        creds_dict = load_credentials(credentials)
-        session_key = session_key or creds_dict.get("session_key")
-
-        # Multi-org-aware: prefer the orgs array if present (v2 schema).
-        # Fall back to the legacy scalar org_id (v1 file) so this code path
-        # works during the cowork-multi-org rollout window.
-        if "orgs" in creds_dict and creds_dict.get("orgs"):
-            orgs = list(creds_dict["orgs"])
-            primary = creds_dict.get("primary_org_id") or orgs[0]["uuid"]
-        else:
-            legacy_id = org_id or creds_dict.get("org_id")
-            if not legacy_id:
-                raise click.ClickException(
-                    "Missing org_id. Run `claude-explorer capture` to refresh credentials."
-                )
-            orgs = [{"uuid": legacy_id, "name": None, "capabilities": [], "seen_in_response": False}]
-            primary = legacy_id
-
-        cf_bm = creds_dict.get("cf_bm")
-        cf_clearance = creds_dict.get("cf_clearance")
-
-    if not session_key:
-        raise click.ClickException(
-            "Missing session_key. Run `claude-explorer capture` first."
-        )
-
-    fetcher = ClaudeFetcher(
-        session_key=session_key,
-        orgs=orgs,
-        primary_org_id=primary,
-        output_dir=output_dir,
-        files_dir=files_dir,
-        delay=delay,
-        incremental=incremental,
-        verbose=verbose,
-        download_files=download_files,
-        cf_bm=cf_bm,
-        cf_clearance=cf_clearance,
-    )
-
-    fetcher.run(limit=limit)
-
-
-if __name__ == "__main__":
-    main()
+# NOTE: This module previously defined a second ``@click.command() def main``
+# duplicating ``cli.main.fetch`` (formerly ``fetcher.cli.fetch``). The
+# duplication was the root cause of the Council A-BUG-1 crash: when
+# ``ClaudeFetcher.__init__`` migrated to the v2 multi-org signature, the body
+# of ``bulk_fetch.main`` was updated but the wrapper in cli.fetch was not —
+# and every ``claude-explorer fetch`` crashed. The second CLI had no callers
+# anywhere in the repo (verified by grep; pyproject's only entry is
+# ``cli.main:main``); Council A-BUG-2 deleted it to remove the drift hazard
+# permanently.
+#
+# To run the underlying command directly, use ``claude-explorer fetch``.

@@ -148,7 +148,11 @@ def _write_all(bookmarks: list[Bookmark]) -> None:
         raise
 
 
-@router.get("", response_model=BookmarkList)
+@router.get(
+    "",
+    response_model=BookmarkList,
+    summary="List all bookmarks (read-only; never gated by corrupt-config)",
+)
 async def list_bookmarks() -> BookmarkList:
     return BookmarkList(bookmarks=_read_all())
 
@@ -157,6 +161,7 @@ async def list_bookmarks() -> BookmarkList:
     "",
     response_model=Bookmark,
     status_code=status.HTTP_201_CREATED,
+    summary="Create a new bookmark on a message",
     # Layer 2 of PLANS/2026.05.18-config-corruption-safe-mode.md:
     # refuse writes when config.json is corrupt to avoid orphaning the
     # archive at the default data_dir. GET (list_bookmarks) is NOT
@@ -182,6 +187,7 @@ async def create_bookmark(payload: BookmarkCreate) -> Bookmark:
 @router.patch(
     "/{bookmark_id}",
     response_model=Bookmark,
+    summary="Update note or snippet on an existing bookmark",
     # See create_bookmark for Layer-2 gate rationale.
     dependencies=[Depends(refuse_if_config_corrupt)],
 )
@@ -205,6 +211,7 @@ async def update_bookmark(bookmark_id: str, payload: BookmarkUpdate) -> Bookmark
 @router.delete(
     "/{bookmark_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a bookmark by id",
     # See create_bookmark for Layer-2 gate rationale.
     dependencies=[Depends(refuse_if_config_corrupt)],
 )

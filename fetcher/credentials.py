@@ -63,7 +63,37 @@ import portalocker
 log = logging.getLogger(__name__)
 
 
-DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude-explorer" / "credentials.json"
+# Canonically defined in fetcher.paths; re-exported so backend imports
+# (`from fetcher.credentials import DEFAULT_CREDENTIALS_PATH`) and
+# tests patching `fetcher.credentials.DEFAULT_CREDENTIALS_PATH` continue
+# to work. See backend/tests/conftest.py for the multi-site patch fixture.
+from fetcher.paths import DEFAULT_CREDENTIALS_PATH  # noqa: E402
+
+# Public API surface. Kept explicit so that Pyright/Mypy treat the
+# re-exported ``DEFAULT_CREDENTIALS_PATH`` as intentional public API,
+# and so accidental ``from fetcher.credentials import *`` consumers
+# (none today) cannot reach internal helpers (`_unlocked_save`,
+# `_acquire_lock`, `_validate`, `_upgrade_v1_in_memory`).
+__all__ = [
+    # Re-exported constants
+    "DEFAULT_CREDENTIALS_PATH",
+    "LOCK_TIMEOUT_SECONDS",
+    # Types
+    "CredentialsV2",
+    "OrgRef",
+    # Exceptions
+    "CredentialsCorruptError",
+    "LockContentionError",
+    # Pure functions
+    "resolve_primary_org_id",
+    # Reads
+    "load_credentials",
+    # Writes (all serialize on the same portalocker file lock)
+    "save_credentials",
+    "merge_orgs_and_save",
+    "update_primary_org_and_save",
+    "wipe_credentials",
+]
 
 #: Default seconds to wait for the file lock before raising.
 LOCK_TIMEOUT_SECONDS = 10.0
@@ -164,6 +194,53 @@ def _validate(creds: object) -> None:
         raise CredentialsCorruptError(
             f"primary_org_id {primary!r} not in orgs ({sorted(org_uuids)})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Primary-org resolution (canonical)
+# ---------------------------------------------------------------------------
+
+
+def resolve_primary_org_id(
+    orgs: list[OrgRef],
+    prior_primary: str | None = None,
+) -> str:
+    """Deterministic primary-org selection (cowork-multi-org "Primary org selection").
+
+    Resolution order (from spec):
+
+      1. ``prior_primary`` if it still refers to an org in ``orgs``.
+      2. The first org with ``"chat"`` in capabilities, lex-sorted by uuid.
+      3. Lex-sort by uuid (deterministic; never index-based).
+
+    Canonical home: ``fetcher.credentials``. All three capture/fetch paths
+    delegate here so the algorithm cannot drift (council D1, 2026-05-21):
+
+      * ``fetcher.playwright_capture._build_credentials``
+      * ``fetcher.mitmproxy_addon.ClaudeCredentialCapture._maybe_persist``
+      * ``fetcher.bulk_fetch.ClaudeFetcher._pick_new_primary``
+
+    Step 3 of the spec ("most conversations on disk") is deferred; the only
+    consumer of primary selection today is the single-org fetch path which
+    uses whatever uuid we pick.
+
+    Raises:
+        ValueError: when ``orgs`` is empty. ``prior_primary`` alone cannot
+            synthesize a valid primary — ``orgs`` is the source of truth for
+            which uuids are real.
+    """
+    if not orgs:
+        raise ValueError("orgs must be non-empty for primary resolution")
+
+    org_uuids = {o["uuid"] for o in orgs}
+    if prior_primary and prior_primary in org_uuids:
+        return prior_primary
+
+    chat_capable = [o["uuid"] for o in orgs if "chat" in (o.get("capabilities") or [])]
+    if chat_capable:
+        return sorted(chat_capable)[0]
+
+    return sorted(o["uuid"] for o in orgs)[0]
 
 
 # ---------------------------------------------------------------------------

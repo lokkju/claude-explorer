@@ -268,11 +268,12 @@ def read_claude_code_conversation(jsonl_path: Path) -> dict[str, Any] | None:
     }
 
     # P4a-fix (2026-05-06): populate ~/.claude-explorer/cc-images/ as a
-    # side effect of reading. The original wiring lived in
-    # `fetcher/local_claude_code.py`, which is an unwired migration tool
-    # — the live read path is here, so the cache directory was never
-    # being created. Failures are logged and swallowed so a transient
-    # I/O error never breaks the conversation render.
+    # side effect of reading. The live read path is here, so the cache
+    # directory is created lazily on first conversation render.
+    # Failures are logged and swallowed so a transient I/O error never
+    # breaks the conversation render. (Historical note: the original
+    # wiring lived in a never-shipped ``fetcher/local_claude_code.py``
+    # importer, deleted 2026-05-21.)
     try:
         from .cc_image_cache import cache_all_markers
 
@@ -407,4 +408,70 @@ def list_claude_code_conversations(
             conv["subagents"] = subagents
             conversations.append(conv)
 
-    return conversations
+    # CC `--resume` writes the same internal sessionId across multiple
+    # JSONL files (original + continuation, distinct stems). Both files
+    # produce conv dicts with the SAME `uuid` (sessionId-derived), so
+    # downstream consumers see duplicates: the sidebar renders two rows
+    # for one logical session, and `context_size='full'` search emits
+    # duplicate React keys (the slow path walks every conv dict). The
+    # FTS5 fast path is already last-writer-wins per conv_uuid at INSERT
+    # time, which masked this until Full mode was exercised.
+    #
+    # Collapse to one conv per uuid, keeping the LATEST `updated_at`
+    # (string compare is correct: timestamps are ISO-8601 with timezone
+    # offset and lexicographically order the same as chronologically).
+    # This matches CC's own UI behavior — when you `/resume` a session,
+    # the merged view shows the most-recent activity timestamp.
+    #
+    # Tie-breaker (same updated_at): keep the one with more messages.
+    # Final tie-breaker (still equal): preserve first-seen order so the
+    # function is deterministic across runs.
+    return _dedup_resume_continuations(conversations)
+
+
+def _dedup_resume_continuations(
+    conversations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse same-uuid conv dicts produced by CC `--resume` flows.
+
+    See call site in :func:`list_claude_code_conversations` for the full
+    rationale. Pure function over a list of conv dicts — separated out so
+    `backend/tests/test_cc_resume_dedup.py` can pin behavior without
+    needing a filesystem fixture for every variant.
+    """
+    by_uuid: dict[str, dict[str, Any]] = {}
+    order: list[str] = []  # first-seen order, preserved across deletes
+    for conv in conversations:
+        uuid = conv.get("uuid")
+        if not uuid:
+            # Skip malformed entries entirely rather than collapse under
+            # `None` (which would silently drop all of them).
+            continue
+        prev = by_uuid.get(uuid)
+        if prev is None:
+            by_uuid[uuid] = conv
+            order.append(uuid)
+            continue
+        if _conv_supersedes(conv, prev):
+            by_uuid[uuid] = conv
+        # else: keep prev — first-seen wins when tied AND prev is newer.
+    return [by_uuid[u] for u in order]
+
+
+def _conv_supersedes(new: dict[str, Any], prev: dict[str, Any]) -> bool:
+    """Return True if `new` should replace `prev` under the dedup rule.
+
+    Priority order:
+      1. Strictly later `updated_at` (lex compare on ISO-8601 strings).
+      2. Same `updated_at` AND more chat_messages.
+    Anything else: prev wins (first-seen stability).
+    """
+    n_ts = new.get("updated_at") or ""
+    p_ts = prev.get("updated_at") or ""
+    if n_ts > p_ts:
+        return True
+    if n_ts == p_ts:
+        n_msgs = len(new.get("chat_messages") or [])
+        p_msgs = len(prev.get("chat_messages") or [])
+        return n_msgs > p_msgs
+    return False

@@ -99,7 +99,7 @@ async def test_pdf_export_does_not_block_other_endpoints(
     uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     _seed_conversation(isolated_data_dir, uuid)
 
-    def slow_create_pdf(conv, include_tools):  # noqa: ARG001 — signature matches real create_pdf
+    def slow_create_pdf(conv, include_tools, include_compact=False):  # noqa: ARG001 — signature matches real create_pdf
         time.sleep(2.0)
         return b"%PDF-1.4\n%fake\n"
 
@@ -162,7 +162,7 @@ async def test_pdf_export_timeout_returns_504(
     uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     _seed_conversation(isolated_data_dir, uuid)
 
-    def hanging_create_pdf(conv, include_tools):  # noqa: ARG001
+    def hanging_create_pdf(conv, include_tools, include_compact=False):  # noqa: ARG001
         time.sleep(3.0)
         return b"unreachable"
 
@@ -200,4 +200,80 @@ async def test_pdf_export_timeout_returns_504(
     assert elapsed < 2.0, (
         f"504 returned in {elapsed:.3f}s, suggesting we waited for the "
         f"abandoned worker thread instead of returning on timeout"
+    )
+
+
+async def test_pdf_export_runtime_error_does_not_leak_exception_text(
+    isolated_data_dir, real_async_client, monkeypatch
+):
+    """Council code-review B1 (2026-05-21).
+
+    Pre-council the route did ``raise HTTPException(status_code=500,
+    detail=str(e))`` for a RuntimeError from create_pdf. ``str(e)`` on
+    a WeasyPrint failure typically embeds the local file path of the
+    failing resource (``/Users/<name>/.claude-explorer/files/...``),
+    library internals (``cairo``, ``pango``), and sometimes the
+    backtrace context. That's a CWE-200 information-disclosure leak
+    in a portfolio-piece app.
+
+    Post-council: the route returns a generic user-actionable message
+    and logs ``exc_info=True`` server-side so operators can still
+    diagnose. The frontend toast shows the static message; the user
+    is told to try Markdown export instead.
+
+    Bidirectional:
+      * Positive: detail is a non-empty string with user-actionable
+        guidance ("PDF export", "Markdown").
+      * Negative: detail does NOT contain the raw exception text.
+        Specifically, the canary path ``/Users/SECRET_NAME/.claude``
+        must not appear in the response body.
+    """
+    uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    _seed_conversation(isolated_data_dir, uuid)
+
+    canary = "/Users/SECRET_NAME/.claude-explorer/files/secret_token=abc123"
+
+    def leaking_create_pdf(conv, include_tools, include_compact=False):  # noqa: ARG001
+        raise RuntimeError(
+            f"WeasyPrint failed to load image at {canary}: cairo_status: out of memory"
+        )
+
+    monkeypatch.setattr(
+        "backend.routers.export.create_pdf", leaking_create_pdf
+    )
+
+    resp = await real_async_client.get(
+        f"/api/conversations/{uuid}/export/pdf",
+        timeout=10.0,
+    )
+
+    assert resp.status_code == 500, (
+        f"RuntimeError from create_pdf should still surface as 500; "
+        f"got {resp.status_code}: {resp.text}"
+    )
+    detail = resp.json().get("detail", "")
+    assert isinstance(detail, str), (
+        f"detail must be a string (council B3 unification); got {detail!r}"
+    )
+    # Negative case: raw exception text must not be exposed.
+    assert canary not in detail, (
+        f"CWE-200 leak: raw exception path appeared in 500 detail. "
+        f"detail={detail!r}"
+    )
+    assert "SECRET_NAME" not in detail, (
+        f"CWE-200 leak: raw exception path appeared in 500 detail. "
+        f"detail={detail!r}"
+    )
+    assert "cairo_status" not in detail, (
+        f"CWE-200 leak: WeasyPrint internals appeared in 500 detail. "
+        f"detail={detail!r}"
+    )
+    # Positive case: detail is user-actionable and points at the
+    # Markdown alternative (already-shipped pattern in the timeout
+    # branch).
+    assert "PDF" in detail or "pdf" in detail, (
+        f"detail should mention what failed; got {detail!r}"
+    )
+    assert "markdown" in detail.lower() or "try" in detail.lower(), (
+        f"detail should suggest a recovery action; got {detail!r}"
     )
