@@ -1,6 +1,6 @@
 // Conversation types
 
-export type ConversationSource = 'CLAUDE_AI' | 'CLAUDE_CODE'
+export type ConversationSource = 'CLAUDE_AI' | 'CLAUDE_CODE' | 'CLAUDE_COWORK'
 
 export interface SubagentSummary {
   uuid: string
@@ -44,6 +44,11 @@ export interface ConversationListItem {
   organization_id?: string | null
   organization_name?: string | null
   subagents?: SubagentSummary[]
+  // D8 (Cowork, 2026-05-25): sidecar.isArchived mirror. False for
+  // Desktop + Claude Code. Server default-hides archived sessions;
+  // when present and true, the sidebar can render an "Archived"
+  // badge under the "Show archived" toggle.
+  is_archived?: boolean
 }
 
 // Full per-conversation payload. Returned by `GET /api/conversations/{uuid}`
@@ -84,6 +89,11 @@ export interface ConversationSummary {
   organization_id?: string | null
   organization_name?: string | null
   subagents?: SubagentSummary[]
+  // D8 (Cowork, 2026-05-25): sidecar.isArchived mirror. False for
+  // Desktop + Claude Code. Server default-hides archived sessions;
+  // when present and true, the sidebar can render an "Archived"
+  // badge under the "Show archived" toggle.
+  is_archived?: boolean
 }
 
 // cowork-multi-org C6: workspace selector source.
@@ -225,6 +235,15 @@ export interface ConversationDetail extends ConversationSummary {
   // 0 for Desktop conversations and for CC conversations whose first
   // message isn't a slash-command marker.
   prelude_hidden_count?: number
+  // D9 (Cowork, 2026-05-25): sidecar.error — a plain string the Cowork
+  // harness writes when a session ended unexpectedly. The detail view
+  // renders an alert banner above the message stream when non-null.
+  // Null for Desktop + Claude Code (no session-fault field).
+  error?: string | null
+  // D10 (Cowork, 2026-05-25): sidecar.cwd — the VM sandbox path
+  // (e.g. /sessions/<vm>). Detail view renders as plain text labeled
+  // "Sandbox path". Null for non-Cowork sources.
+  sandbox_path?: string | null
 }
 
 export interface MessageNode {
@@ -329,7 +348,7 @@ export function isSearchResponse(v: unknown): v is SearchResponse {
 
 // Filter types
 
-export type SourceFilter = 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE'
+export type SourceFilter = 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' | 'CLAUDE_COWORK'
 
 export type SortField = 'updated_at' | 'created_at' | 'name' | 'project'
 export type SortOrder = 'asc' | 'desc'
@@ -341,7 +360,7 @@ export type SortOrder = 'asc' | 'desc'
 // predicates to silently reject unknown values instead of writing
 // garbage to a typed setter (which would propagate into the backend
 // query string, e.g. `?source=garbage`).
-const SOURCE_FILTERS: readonly SourceFilter[] = ['all', 'CLAUDE_AI', 'CLAUDE_CODE']
+const SOURCE_FILTERS: readonly SourceFilter[] = ['all', 'CLAUDE_AI', 'CLAUDE_CODE', 'CLAUDE_COWORK']
 const SORT_FIELDS: readonly SortField[] = [
   'updated_at',
   'created_at',
@@ -365,6 +384,10 @@ export interface ConversationFilters {
   sort?: SortField
   sortOrder?: SortOrder
   includePhantom?: boolean
+  // D8 (Cowork, 2026-05-25): include archived Cowork sessions
+  // (sidecar.isArchived=true). Defaults to false server-side; the
+  // sidebar's "Show archived" toggle flips this true.
+  showArchived?: boolean
   // cowork-multi-org C6: filter conversations by workspace.
   organization_id?: string
 }

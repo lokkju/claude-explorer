@@ -28,7 +28,7 @@ Installed OS launchers (launchd plist, systemd user unit, Windows
 Task Scheduler launcher at ``~/.claude-explorer/cc-watcher.py``) bake
 ``from backend.cc_watcher import run_watcher`` into the supervised
 script body at install time. If this module ever moves again, the
-launcher template in ``fetcher/cli.py:_build_watcher_inline_script``
+launcher template in ``cli/watcher.py:_build_watcher_inline_script``
 must be updated in the same commit and every installed user must
 re-run ``claude-explorer install-watcher``.
 
@@ -455,6 +455,13 @@ def _live_projects_root() -> Path:
     return get_settings().claude_dir / "projects"
 
 
+def _live_cowork_root() -> Path:
+    """Where Claude Desktop stores Cowork local-agent-mode sessions."""
+    return (
+        get_settings().claude_desktop_app_dir / "local-agent-mode-sessions"
+    )
+
+
 def _fire_drift_pass() -> None:
     """Timer callback: run the search-index drift pass once for every
     path queued since the last fire.
@@ -595,6 +602,96 @@ def _try_start_projects_observer():
     return observer
 
 
+def _build_cowork_event_handler():
+    """Watchdog FileSystemEventHandler that queues debounced drift
+    passes for every ``audit.jsonl`` modification under the cowork root.
+
+    Cowork sessions contain other files (``outputs/``, ``uploads/``,
+    ``shim-lib/``, etc.) we don't index — we filter for the audit.jsonl
+    basename specifically so unrelated writes (e.g. tool output dumps)
+    don't hammer the SQL writer.
+    """
+    from watchdog.events import FileSystemEventHandler
+
+    class _CoworkEventHandler(FileSystemEventHandler):
+        def _maybe_queue(self, src: str) -> None:
+            path = Path(src)
+            if path.name != "audit.jsonl":
+                return
+            try:
+                _schedule_drift(path)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "cowork event handler failed to schedule drift for %s",
+                    src,
+                )
+
+        def on_created(self, event) -> None:  # type: ignore[no-untyped-def]
+            if not event.is_directory:
+                self._maybe_queue(event.src_path)
+
+        def on_modified(self, event) -> None:  # type: ignore[no-untyped-def]
+            if not event.is_directory:
+                self._maybe_queue(event.src_path)
+
+        def on_moved(self, event) -> None:  # type: ignore[no-untyped-def]
+            if not event.is_directory and getattr(event, "dest_path", None):
+                self._maybe_queue(event.dest_path)
+
+    return _CoworkEventHandler()
+
+
+def _try_start_cowork_observer():
+    """Build and start a watchdog Observer on the live cowork root.
+
+    Returns the started Observer or None on any failure (missing
+    wheel, sandboxed Python, cowork root not present because the
+    user doesn't use Cowork, etc.). The caller continues with the
+    backstop-poll-only path if None.
+
+    Eagerly mkdirs the cowork root so the watch registers even on
+    a user who's never opened Cowork yet — Desktop will populate it
+    on first session.
+    """
+    try:
+        from watchdog.observers import Observer
+    except ImportError:
+        logger.warning(
+            "search-index watcher: watchdog not installed; cowork "
+            "freshness falls back to the 600 s backstop poll.",
+        )
+        return None
+
+    root = _live_cowork_root()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "search-index watcher: failed to create %s; cowork-dir "
+            "events disabled", root,
+        )
+        return None
+
+    handler = _build_cowork_event_handler()
+    observer = Observer()
+    observer.schedule(handler, str(root), recursive=True)
+    try:
+        observer.start()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "search-index watcher: cowork Observer failed to start; "
+            "falling back to backstop-poll-only freshness for Cowork",
+        )
+        return None
+
+    backend_name = type(observer).__name__
+    logger.info(
+        "search-index watcher: cowork-dir Observer started (%s) on %s",
+        backend_name, root,
+    )
+    return observer
+
+
 def shutdown_projects_drift() -> None:
     """Cancel any pending debounce Timer + flag shutdown so a fresh
     event right at this moment doesn't re-schedule.
@@ -688,6 +785,10 @@ async def run_watcher(stop_event: asyncio.Event) -> None:
     # in uvicorn `--reload`). reset_for_tests is the same op.
     reset_projects_drift_for_tests()
     projects_observer = _try_start_projects_observer()
+    # Cowork Observer: same shared debounce + drift pipeline as
+    # projects_observer, just watching a different root for Cowork
+    # audit.jsonl appends.
+    cowork_observer = _try_start_cowork_observer()
 
     cancelled = False
     try:
@@ -759,6 +860,13 @@ async def run_watcher(stop_event: asyncio.Event) -> None:
                     logger.exception(
                         "search-index watcher Observer stop failed during cancel"
                     )
+            if cowork_observer is not None:
+                try:
+                    cowork_observer.stop()
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "search-index watcher cowork Observer stop failed during cancel"
+                    )
         else:
             def _shutdown_observers_sync() -> None:
                 join_timeout = 0.5
@@ -777,6 +885,14 @@ async def run_watcher(stop_event: asyncio.Event) -> None:
                     except Exception:  # noqa: BLE001
                         logger.exception(
                             "search-index watcher projects Observer shutdown failed"
+                        )
+                if cowork_observer is not None:
+                    try:
+                        cowork_observer.stop()
+                        cowork_observer.join(timeout=join_timeout)
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "search-index watcher cowork Observer shutdown failed"
                         )
 
             try:

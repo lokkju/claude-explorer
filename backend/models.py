@@ -117,7 +117,7 @@ class ConversationListItem(BaseModel):
     is_starred: bool = False
     message_count: int = 0
     has_branches: bool = False
-    source: Literal["CLAUDE_AI", "CLAUDE_CODE"] = "CLAUDE_AI"
+    source: Literal["CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "CLAUDE_AI"
     project_path: str | None = None  # For Claude Code sessions
     project_name: str | None = None  # Short name extracted from project_path
     # Multi-org metadata (cowork-multi-org C3). Null for legacy untagged
@@ -126,7 +126,7 @@ class ConversationListItem(BaseModel):
     organization_name: str | None = None
     subagents: list[SubagentSummary] = Field(default_factory=list)
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, context: Any, /) -> None:
         """Compute project_name from project_path after initialization.
 
         Kept in sync with ``ConversationSummary.model_post_init`` — the
@@ -171,7 +171,7 @@ class ConversationSummary(BaseModel):
     # MCP path keeps working.
     human_message_count: int = 0
     has_branches: bool = False
-    source: Literal["CLAUDE_AI", "CLAUDE_CODE"] = "CLAUDE_AI"
+    source: Literal["CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "CLAUDE_AI"
     project_path: str | None = None  # For Claude Code sessions
     project_name: str | None = None  # Short name extracted from project_path
     # `git_branch` is read by the conversation-detail page (see
@@ -187,8 +187,14 @@ class ConversationSummary(BaseModel):
     organization_id: str | None = None
     organization_name: str | None = None
     subagents: list[SubagentSummary] = Field(default_factory=list)  # Nested agent conversations
+    # D8 (Cowork, 2026-05-25): Cowork sidecar.isArchived. False for
+    # Desktop + Claude Code; never user-actionable from the explorer
+    # UI (read-only mirror of Desktop's archive state). The store
+    # default-hides archived sessions from the sidebar; clients pass
+    # ``?show_archived=true`` to override.
+    is_archived: bool = False
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, context: Any, /) -> None:
         """Compute project_name from project_path after initialization."""
         if self.project_path and not self.project_name:
             # Extract just the folder name from the full path
@@ -219,6 +225,20 @@ class ConversationDetail(ConversationSummary):
     # affordance above the message stream. 0 for Desktop conversations and
     # any CC conversation whose first message is not a slash-command marker.
     prelude_hidden_count: int = 0
+    # D9 (Cowork, 2026-05-25): sidecar.error, a plain string the
+    # Cowork harness writes when a session ended unexpectedly. None
+    # when the session ended cleanly. Detail view renders an alert
+    # banner above the message stream when non-null. None for
+    # Desktop + Claude Code (those don't surface a session-fault
+    # field).
+    error: str | None = None
+    # D10 (Cowork, 2026-05-25): sidecar.cwd, the VM sandbox path
+    # (e.g. /sessions/<vm>) the Cowork agent ran under. Rendered as
+    # plain text labeled "Sandbox path" in the detail view. Distinct
+    # from project_path (which is also set to cwd on Cowork for
+    # CC-parity, but the Cowork detail view prefers the labeled
+    # sandbox_path render).
+    sandbox_path: str | None = None
 
 
 class MessageNode(BaseModel):
@@ -391,3 +411,75 @@ class AppConfigStats(AppConfig):
     """
 
     conversation_count: int
+
+
+# ---------------------------------------------------------------------------
+# Fetch pipeline contracts (council D1 — moved here from
+# backend/routers/fetch.py so models.py is the single source of truth for
+# wire shapes mirrored by frontend/src/lib/types.ts and api.ts).
+# ---------------------------------------------------------------------------
+
+
+class FetchStatus(BaseModel):
+    """Status response for fetch operations.
+
+    Returned by ``GET /api/fetch/status``. Frontend ``getFetchStatus``
+    in ``lib/api.ts`` re-declares this shape inline; this model is
+    the wire-contract source of truth.
+    """
+
+    has_credentials: bool
+    credentials_path: str
+    output_dir: str
+    existing_count: int
+    credentials_age_days: int | None = None
+
+
+class FetchProgress(BaseModel):
+    """Progress update during fetch.
+
+    The ``type`` field is a closed ``Literal`` union mirroring the
+    frontend ``FetchProgress.type`` in
+    ``frontend/src/components/fetch/FetchToast.tsx``. Pre-Task-B
+    (2026-05-18) the field was bare ``str``; the frontend had a
+    narrow union but the backend would have happily emitted an
+    undocumented variant. Tightening locks the contract on both ends.
+
+    Note: SSE events are constructed as raw dicts in
+    ``_build_error_event`` and similar helpers, not via this model
+    (the dicts carry ``kind`` and ``retryable`` fields that aren't
+    part of this base contract). Do NOT pipe SSE dicts through
+    ``FetchProgress.model_dump()`` — that would strip the extra
+    fields and break the frontend. The model is the contract spec;
+    the SSE dict is the wire payload.
+    """
+
+    type: Literal[
+        "start",
+        "progress",
+        "complete",
+        "error",
+        # Build-9: combined capture+fetch pipeline events.
+        "capture_start",
+        "capture_waiting_login",
+        "capture_done",
+    ]
+    message: str
+    current: int = 0
+    total: int = 0
+    conversation_name: str | None = None
+
+
+class ForceRefetchResponse(BaseModel):
+    """Response shape for ``POST /api/fetch/conversation/{uuid}``.
+
+    Council code-review B6+D1 (2026-05-21): pre-council the route
+    returned a bare ``dict`` with no ``response_model=``, so OpenAPI
+    documented the response as ``{}``. The Pydantic model surfaces
+    the wire contract in /docs and pins it for the FE
+    ``forceRefetchConversation`` caller.
+    """
+
+    uuid: str
+    status: Literal["refetched"]
+    name: str

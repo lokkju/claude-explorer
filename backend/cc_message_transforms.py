@@ -38,19 +38,13 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
+from .agent_session_io import (  # noqa: F401  re-export
+    _convert_entry_to_message,
+    _get_message_key,
+    _get_message_text,
+    _merge_entries_to_message,
+)
 from .parsing import _parse_iso_opt
-
-
-def _get_message_text(entry: dict) -> str:
-    """Extract text content from a message entry."""
-    msg = entry.get("message", {})
-    content = msg.get("content", "")
-    if isinstance(content, str):
-        return content
-    elif isinstance(content, list):
-        text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-        return " ".join(text_parts)
-    return ""
 
 
 # Local-command boilerplate collapse (V1 polish, 2026-05-12):
@@ -627,121 +621,6 @@ def _extract_title_from_message(entry: dict) -> str | None:
             return clean_line[:100]
 
     return text[:100].strip() if text.strip() else None
-
-
-def _get_message_key(entry: dict) -> str | None:
-    """Get a unique key for grouping streaming chunks of the same message.
-
-    Assistant messages have message.id, user messages use entry uuid.
-    """
-    entry_type = entry.get("type")
-    if entry_type not in ("user", "assistant"):
-        return None
-
-    msg = entry.get("message", {})
-    # Assistant messages have message.id for grouping streaming chunks
-    if entry_type == "assistant" and msg.get("id"):
-        return f"assistant:{msg['id']}"
-    # User messages use entry uuid
-    return f"user:{entry.get('uuid', '')}"
-
-
-def _merge_entries_to_message(entries: list[dict]) -> dict | None:
-    """Merge multiple streaming entries into a single message.
-
-    Claude Code streams messages as multiple entries, each with different
-    content blocks (thinking, text, tool_use, etc.). This merges them all.
-    """
-    if not entries:
-        return None
-
-    first_entry = entries[0]
-    last_entry = entries[-1]
-    entry_type = first_entry.get("type")
-
-    if entry_type not in ("user", "assistant"):
-        return None
-
-    # Collect ALL content blocks from ALL entries
-    all_content_blocks = []
-    text_parts = []
-
-    for entry in entries:
-        message_data = entry.get("message", {})
-        content = message_data.get("content", "")
-
-        if isinstance(content, str):
-            if content:
-                all_content_blocks.append({"type": "text", "text": content})
-                text_parts.append(content)
-        elif isinstance(content, list):
-            for block in content:
-                all_content_blocks.append(block)
-                if block.get("type") == "text":
-                    text_parts.append(block.get("text", ""))
-
-    text = "\n".join(text_parts)
-
-    timestamp = first_entry.get("timestamp", datetime.now(timezone.utc).isoformat())
-
-    # Use first entry's uuid as the message uuid (for parent chain)
-    # Use first entry's parentUuid to link to previous message
-    return {
-        "uuid": first_entry.get("uuid", ""),
-        "sender": "human" if entry_type == "user" else "assistant",
-        "text": text,
-        "content": all_content_blocks,
-        "created_at": timestamp,
-        "updated_at": last_entry.get("timestamp", timestamp),
-        "truncated": False,
-        "parent_message_uuid": first_entry.get("parentUuid"),
-        "attachments": [],
-        "files": [],
-    }
-
-
-def _convert_entry_to_message(entry: dict) -> dict | None:
-    """Convert a JSONL entry to a chat message format.
-
-    Note: For streaming conversations, use _merge_entries_to_message instead.
-    """
-    entry_type = entry.get("type")
-
-    if entry_type not in ("user", "assistant"):
-        return None
-
-    message_data = entry.get("message", {})
-
-    # Extract text content
-    content = message_data.get("content", "")
-    if isinstance(content, str):
-        text = content
-        content_blocks = [{"type": "text", "text": content}] if content else []
-    elif isinstance(content, list):
-        content_blocks = content
-        text_parts = []
-        for block in content:
-            if block.get("type") == "text":
-                text_parts.append(block.get("text", ""))
-        text = "\n".join(text_parts)
-    else:
-        text = ""
-        content_blocks = []
-
-    timestamp = entry.get("timestamp", datetime.now(timezone.utc).isoformat())
-
-    return {
-        "uuid": entry.get("uuid", ""),
-        "sender": "human" if entry_type == "user" else "assistant",
-        "text": text,
-        "content": content_blocks,
-        "created_at": timestamp,
-        "updated_at": timestamp,
-        "truncated": False,
-        "parent_message_uuid": entry.get("parentUuid"),
-        "attachments": [],
-        "files": [],
-    }
 
 
 def _extract_conversation_metadata(entries: list[dict], jsonl_path) -> dict:

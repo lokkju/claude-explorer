@@ -51,6 +51,7 @@ dependencies = [
     "fastmcp>=3.0",
     "portalocker>=2.8",
     "watchdog>=4.0",
+    "platformdirs>=4.0",
 ]
 
 [project.urls]
@@ -61,7 +62,7 @@ Issues = "https://github.com/rpeck/claude-explorer/issues"
 Changelog = "https://github.com/rpeck/claude-explorer/releases"
 
 [project.scripts]
-claude-explorer = "fetcher.cli:main"
+claude-explorer = "cli.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -78,7 +79,7 @@ dev = [
 # bundle is injected at build time by hatch_build.py via build_data["force_include"]
 # (so it doesn't need to live in the source tree or be git-tracked).
 [tool.hatch.build.targets.wheel]
-packages = ["backend", "fetcher", "mcp_server"]
+packages = ["backend", "cli", "fetcher", "mcp_server"]
 exclude = [
     "**/tests/**",
     "**/__pycache__/**",
@@ -91,6 +92,7 @@ exclude = [
 [tool.hatch.build.targets.sdist]
 include = [
     "backend/**/*.py",
+    "cli/**/*.py",
     "fetcher/**/*.py",
     "mcp_server/**/*.py",
     "frontend/src/**",

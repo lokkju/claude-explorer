@@ -18,6 +18,7 @@ import shutil
 from pathlib import Path
 from functools import lru_cache
 
+import platformdirs
 from pydantic import BaseModel
 
 
@@ -145,6 +146,20 @@ class Settings(BaseModel):
     # runner) so contributors without ~/.claude/projects on disk can run
     # the e2e suite against committed synthetic fixtures.
     claude_dir: Path
+    # Root directory for the Claude Desktop application's user data. The
+    # Cowork reader walks
+    # ``claude_desktop_app_dir / "local-agent-mode-sessions" / <deployment>
+    # / <org> / local_<uuid>/audit.jsonl`` plus the sibling
+    # ``local_<uuid>.json`` sidecar.
+    #
+    # Override precedence (matches ``claude_dir``):
+    #   1. ``CLAUDE_DESKTOP_APP_DIR`` env var (Playwright fixture mode)
+    #   2. ``config.json`` ``claude_desktop_app_dir`` key
+    #   3. ``platformdirs.user_data_path("Claude")`` (cross-platform default;
+    #      e.g. ``~/Library/Application Support/Claude`` on macOS,
+    #      ``~/.local/share/Claude`` on Linux,
+    #      ``%APPDATA%/Claude`` on Windows).
+    claude_desktop_app_dir: Path
     # Layer 1 of PLANS/2026.05.18-config-corruption-safe-mode.md.
     #
     # Set to a one-line, human-readable description of WHY the config
@@ -181,12 +196,14 @@ class Settings(BaseModel):
             "CLAUDE_EXPLORER_DATA_DIR", "CLAUDE_EXPORTER_DATA_DIR"
         )
         env_claude_dir = os.environ.get("CLAUDE_DIR")
+        env_claude_desktop_app_dir = os.environ.get("CLAUDE_DESKTOP_APP_DIR")
 
         # Check config file (used as fallback for fields not set via env).
         # Prefer the canonical location; fall back to the legacy location
         # for users whose lifespan migration has not yet renamed the dir.
         config_data_dir: Path | None = None
         config_claude_dir: Path | None = None
+        config_claude_desktop_app_dir: Path | None = None
         # Layer 1 (2026-05-18): accumulate per-candidate parse failures.
         # Joined with `` | `` into ``config_corrupt_reason`` at the bottom
         # of ``load``. The list is empty in the happy path (no parse
@@ -238,6 +255,10 @@ class Settings(BaseModel):
                     config_data_dir = Path(parsed["data_dir"])
                 if "claude_dir" in parsed:
                     config_claude_dir = Path(parsed["claude_dir"])
+                if "claude_desktop_app_dir" in parsed:
+                    config_claude_desktop_app_dir = Path(
+                        parsed["claude_desktop_app_dir"]
+                    )
                 break
             except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
                 log.warning(
@@ -283,9 +304,21 @@ class Settings(BaseModel):
             if config_claude_dir
             else Path.home() / ".claude"
         )
+        # Cowork app dir: env → config → platformdirs default.
+        # ``platformdirs.user_data_path("Claude")`` resolves to the
+        # platform-correct Claude Desktop user-data directory
+        # (``~/Library/Application Support/Claude`` on macOS, etc.).
+        claude_desktop_app_dir = (
+            Path(env_claude_desktop_app_dir)
+            if env_claude_desktop_app_dir
+            else config_claude_desktop_app_dir
+            if config_claude_desktop_app_dir
+            else platformdirs.user_data_path("Claude")
+        )
         return cls(
             data_dir=data_dir,
             claude_dir=claude_dir,
+            claude_desktop_app_dir=claude_desktop_app_dir,
             config_corrupt_reason=(
                 " | ".join(corruption_reasons) if corruption_reasons else None
             ),

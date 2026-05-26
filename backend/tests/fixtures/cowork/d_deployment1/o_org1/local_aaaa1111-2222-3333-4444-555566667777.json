@@ -1,0 +1,18 @@
+{
+  "sessionId": "local_aaaa1111-2222-3333-4444-555566667777",
+  "processName": "synthetic-sandbox",
+  "cliSessionId": "cli-aaaa1111",
+  "cwd": "/sessions/synthetic-sandbox",
+  "userSelectedFolders": [],
+  "createdAt": 1748167200000,
+  "lastActivityAt": 1748167265000,
+  "model": "claude-opus-4-7",
+  "isArchived": false,
+  "title": "Synthetic Cowork Fixture One",
+  "vmProcessName": "synthetic-sandbox",
+  "hostLoopMode": false,
+  "initialMessage": "Hello from the cowork session.",
+  "slashCommands": [],
+  "enabledMcpTools": {"some_tool": true},
+  "remoteMcpServersConfig": [{"name": "remote"}]
+}

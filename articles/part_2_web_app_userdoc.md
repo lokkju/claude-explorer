@@ -88,7 +88,7 @@ To pull in your Claude Desktop history, click the **Refresh** button in the top 
 
 ## The Conversation List (Sidebar)
 
-The sidebar makes the unified corpus visible: one list containing both Claude Desktop conversations and Claude Code sessions, with a few affordances that make it usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read! That was my intro to the word "affordance".
+The sidebar makes the unified corpus visible: one list containing all three Claude session sources — Claude Desktop conversations, Claude Code sessions, and Claude Cowork sessions (Desktop's "Cowork mode" local agent, whose `audit.jsonl` logs live under `~/Library/Application Support/Claude/local-agent-mode-sessions/`). All three are indexed by the same full-text search and exported by the same Markdown / PDF pipeline. A few affordances make the list usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read! That was my intro to the word "affordance".
 
 <div align="center">
 <img src="Pasted image 20260514121201.png" alt="The Claude Explorer sidebar showing the source filter dropdown, project grouping, starred sessions, and the refresh button" width="300">
@@ -100,7 +100,7 @@ At the top, you can search by title or project.
 
 Just below that, you'll see the named filter dropdown. More on that in a bit.
 
-Next is a simple source filter dropdown: `All Conversations` | `Claude Desktop` | `Claude Code`. That sounds trivial, but it helps because your brain tends to remember context before content.
+Next is a simple source filter dropdown: `All Conversations` | `Claude Desktop` | `Claude Code` | `Claude Cowork`. That sounds trivial, but it helps because your brain tends to remember context before content. Cowork sessions also pick up a "Show archived" sidebar toggle (default-off) so the sessions you've archived in Desktop don't clutter the list until you ask for them.
 
 Claude Code sessions can also be grouped by project. The UI pulls the project name from the directory the session ran in, which is usually the git repo root, then renders a collapsible grouping so you can treat *"everything I did in repo `foo`"* as a first-class bucket.
 

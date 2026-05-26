@@ -41,7 +41,7 @@ from typing import Any, Iterator
 
 import orjson
 
-from .cache import parse_jsonl_fast
+from .agent_session_io import parse_jsonl_file  # noqa: F401  re-export
 from .cc_message_transforms import (
     _extract_title_from_message,
     _is_system_message,
@@ -52,14 +52,6 @@ from .parsing import parse_datetime as _parse_datetime
 
 # Default Claude directory
 DEFAULT_CLAUDE_DIR = Path.home() / ".claude"
-
-
-def parse_jsonl_file(path: Path) -> list[dict]:
-    """Parse a JSONL file and return all entries.
-
-    Uses orjson for ~5x faster parsing than stdlib json.
-    """
-    return parse_jsonl_fast(path)
 
 
 def read_conversation_summary_fast(jsonl_path: Path) -> dict[str, Any] | None:

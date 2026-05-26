@@ -172,9 +172,11 @@ def test_empty_index_marks_every_path_as_drifted(isolated_store, fresh_index):
 
     drifted, missing = si._drift_first_scan(store, fresh_index)
 
-    assert set(drifted) == expected, (
+    # After Phase 3 (Cowork), drifted is now list[tuple[Path, str]].
+    drifted_paths = {p for p, _ in drifted}
+    assert drifted_paths == expected, (
         f"Empty index must mark every on-disk path as drifted. "
-        f"Got drifted={set(drifted)}, expected={expected}"
+        f"Got drifted={drifted_paths}, expected={expected}"
     )
     assert set(missing) == set(), (
         f"Empty index has nothing to clean up; missing must be empty. "
@@ -230,9 +232,10 @@ def test_one_modified_file_is_drifted(isolated_store, fresh_index):
 
     drifted, missing = si._drift_first_scan(store, fresh_index)
 
-    assert set(drifted) == {target}, (
+    drifted_paths = {p for p, _ in drifted}
+    assert drifted_paths == {target}, (
         f"Only the touched file should be drifted. "
-        f"Got {set(drifted)}, expected {{{target}}}"
+        f"Got {drifted_paths}, expected {{{target}}}"
     )
     assert list(missing) == [], (
         f"Touching a file does not delete it; missing must be empty. "
@@ -329,9 +332,9 @@ def test_mark_ready_fires_after_drift_absorbed(
 
     real_loader = si._load_conversation_at
 
-    def _slow_loader(path: Path, store_arg):
+    def _slow_loader(path: Path, store_arg, source=None):
         time.sleep(1.0)
-        return real_loader(path, store_arg)
+        return real_loader(path, store_arg, source=source)
 
     monkeypatch.setattr(si, "_load_conversation_at", _slow_loader)
 

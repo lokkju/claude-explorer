@@ -115,7 +115,7 @@ With credentials in hand, the fetch step uses the unofficial `chat_conversations
 
 ## The Conversation List (Sidebar)
 
-The sidebar makes the unified corpus visible: one list, containing both Claude Desktop conversations (read from the fetched JSON files) and Claude Code sessions (read live and cached from `~/.claude/projects/*.jsonl`), with a few affordances that make it usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read! That was my intro to the word "affordance".
+The sidebar makes the unified corpus visible: one list containing all three Claude session sources side by side. Claude Desktop conversations (read from the fetched JSON files), Claude Code sessions (read live and cached from `~/.claude/projects/*.jsonl`), and Claude Cowork sessions — Desktop's "Cowork mode" local agent, whose append-only `audit.jsonl` logs live under `~/Library/Application Support/Claude/local-agent-mode-sessions/`. All three are indexed by the same full-text search and exported by the same Markdown / PDF pipeline. A few affordances make the list usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read! That was my intro to the word "affordance".
 
 <div align="center">
 <img src="Pasted image 20260514121201.png" alt="The Claude Explorer sidebar showing the source filter dropdown, project grouping, starred sessions, and the refresh button" width="300">
@@ -127,7 +127,7 @@ At the top, you can search by title or project.
 
 Just below that, you'll see the named filter dropdown. More on that in a bit.
 
-Next is a simple source filter dropdown: `All Conversations` | `Claude Desktop` | `Claude Code`. That sounds trivial, but it helps because your brain tends to remember context before content.
+Next is a simple source filter dropdown: `All Conversations` | `Claude Desktop` | `Claude Code` | `Claude Cowork`. That sounds trivial, but it helps because your brain tends to remember context before content. Cowork sessions also pick up a "Show archived" sidebar toggle (default-off) so the sessions you've archived in Desktop don't clutter the list until you ask for them.
 
 Claude Code sessions can also be grouped by project. The UI pulls the project name from the directory the session ran in, which is usually the git repo root (or at least somewhere inside it); it then renders a collapsible grouping so you can treat *"everything I did in repo `foo`"* as a first-class bucket.
 
@@ -249,7 +249,7 @@ Both modes highlight every matched token (or phrase) in the snippet, so you can 
 
 #### Scope composition
 
-Both search surfaces (the title-search input at the top of the left sidebar and the right-pane full-text search) honor whatever scope the sidebar is currently showing. That includes the **source dropdown** (`All Conversations` | `Claude Desktop` | `Claude Code`), the **workspace dropdown** (for Claude Code sessions, scoping you to a single project), and the **active filter** (any of your saved filters from the *Manage Filters* modal). Search results also respect the **Tools** toggle in the conversation header, so a hit you couldn't see in the viewer never shows up in the result list either. Every active filter narrows the result set further.
+Both search surfaces (the title-search input at the top of the left sidebar and the right-pane full-text search) honor whatever scope the sidebar is currently showing. That includes the **source dropdown** (`All Conversations` | `Claude Desktop` | `Claude Code` | `Claude Cowork`), the **workspace dropdown** (for Claude Code sessions, scoping you to a single project), and the **active filter** (any of your saved filters from the *Manage Filters* modal). Search results also respect the **Tools** toggle in the conversation header, so a hit you couldn't see in the viewer never shows up in the result list either. Every active filter narrows the result set further.
 
 The mental model is "the sidebar is the lens; search asks questions through it." Flip a filter off and the previously-hidden matches re-appear without you having to re-type the query, because the search auto-re-runs whenever the scope changes. Same on the MCP side: `list_sessions` already accepts `source` and `project` arguments that mirror the dropdowns; an MCP-aware client (another Claude session) gets the same scoping vocabulary. (There is also a per-conversation *pin* scope, which I'll get to in the next section; it composes the same way.)
 
@@ -259,7 +259,7 @@ Search defaults to global, which is the behavior most people expect; you opened 
 
 There's a small `Search scope` button next to the conversation title with a dropdown carrying two entries: `Pin this conversation` and (when applicable) `Pin this project`. Click one and you're scoped; the SearchPanel sprouts a small rounded scope indicator (a "chip") that says `In: <Conversation Title>` (or the project name), and the sidebar dims any rows that fall outside the scope so you can see at a glance what's currently in play.
 
-This design owes a lot to chip-style scope indicators in macOS Finder, GitHub's repo and org search, and Slack's channel/DM filter; the pattern works because it makes a *mode* visible at the point of decision, instead of hiding it behind a toggle the user might forget they set. The dim, rather than a hard filter, was a deliberate call: the sidebar already does real filtering through the `All / Claude Desktop / Claude Code` source dropdown, and stacking two different *"not applicable"* semantics (*hidden* and *grayed*) would make the sidebar harder to read. Dim says *"still here, just not in scope right now,"* which is a clear description of the state.
+This design owes a lot to chip-style scope indicators in macOS Finder, GitHub's repo and org search, and Slack's channel/DM filter; the pattern works because it makes a *mode* visible at the point of decision, instead of hiding it behind a toggle the user might forget they set. The dim, rather than a hard filter, was a deliberate call: the sidebar already does real filtering through the `All / Claude Desktop / Claude Code / Claude Cowork` source dropdown, and stacking two different *"not applicable"* semantics (*hidden* and *grayed*) would make the sidebar harder to read. Dim says *"still here, just not in scope right now,"* which is a clear description of the state.
 
 The pin is *sticky*. It survives panel close, conversation switching, and a full page reload, because the scope is encoded in the URL as `?pin=conv:<uuid>` or `?pin=project:<path>` rather than in component state. That makes it shareable too; paste a URL with a pin param and the recipient ends up in the same scoped mode.
 
