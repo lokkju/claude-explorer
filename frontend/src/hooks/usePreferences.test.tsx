@@ -126,19 +126,66 @@ describe('usePreferences (P3b)', () => {
     });
   });
 
-  it('dual-read: prefers the server value over localStorage', async () => {
+  it('dual-read: prefers the localStorage value over the server (local-first)', async () => {
+    // 2026-05-22 fix: this test was previously pinned the OPPOSITE
+    // way ("prefers server over localStorage") which caused the user-
+    // reported bug "frontend keeps restarting in dark mode". When the
+    // server cached a stale value (from another tab, an earlier
+    // Playwright run, or an in-flight PATCH that never landed),
+    // server-first resolution made every reload override the user's
+    // most recent local choice. Local-first treats localStorage as the
+    // canonical "last action in this browser" signal.
+    //
+    // Discriminator: we wait for the QueryClient to settle the GET
+    // (qc.getQueryData defined) BEFORE asserting the value. Without
+    // this gate the test would pass against server-first too, because
+    // initial render returns localValue before the GET resolves and
+    // a stale-but-quick waitFor would never observe the post-GET flip.
     installPrefsHandlers({ theme: 'dark' });
     window.localStorage.setItem('theme', JSON.stringify('sepia'));
-    const { Wrapper } = makeWrapper();
+    const { Wrapper, qc } = makeWrapper();
 
     const { result } = renderHook(
       () => usePreferences<string>('theme', 'light'),
       { wrapper: Wrapper },
     );
 
+    // Force the GET to resolve before asserting on `result`.
     await waitFor(() => {
-      expect(result.current[0]).toBe('dark');
+      expect(qc.getQueryData(['preferences'])).toBeDefined();
     });
+
+    // After server returned theme='dark', the hook MUST still report
+    // 'sepia' (the localStorage choice wins).
+    expect(result.current[0]).toBe('sepia');
+  });
+
+  it("regression: stale server doesn't clobber the user's local theme choice on reload", async () => {
+    // User scenario from 2026-05-22: server somehow ended up with
+    // theme='dark' (a previous tab, a Playwright run, an external
+    // PATCH). The user explicitly cycled the theme to 'light' in
+    // THIS browser — localStorage='light'. Before the fix, every
+    // page reload re-resolved value=server='dark' and the user saw
+    // dark theme despite their local choice. After the fix, value
+    // resolves to localStorage='light' and the user's choice sticks.
+    installPrefsHandlers({ theme: 'dark' });
+    window.localStorage.setItem('theme', JSON.stringify('light'));
+    const { Wrapper, qc } = makeWrapper();
+
+    const { result } = renderHook(
+      () => usePreferences<string>('theme', 'system'),
+      { wrapper: Wrapper },
+    );
+
+    // Gate on the GET actually completing so we KNOW the test is
+    // exercising the post-GET state, not the initial render where
+    // serverValue is undefined regardless of the resolution order.
+    await waitFor(() => {
+      const data = qc.getQueryData<{ data: { theme?: string } }>(['preferences']);
+      expect(data?.data?.theme).toBe('dark');
+    });
+
+    expect(result.current[0]).toBe('light');
   });
 
   it('dual-read: falls back to localStorage when server lacks the key', async () => {

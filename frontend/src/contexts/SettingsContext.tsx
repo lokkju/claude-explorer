@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- safe: context Provider, hook, and three runtime predicates (isTheme/isKeyboardMode/isMarkdownDialect) co-located by intent. The predicates pair-narrow the Settings unions; splitting them into a separate file would force every consumer to track two imports. HMR fast refresh falls back to full reload for this file; no runtime impact. */
-import { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useState, useEffect, useMemo, type ReactNode } from 'react'
 import type { SortField, SortOrder } from '@/lib/types'
 import { usePreferences } from '@/hooks/usePreferences'
 
@@ -37,6 +37,10 @@ interface SettingsContextType {
   setExpandAllTools: (expand: boolean) => void
   showPhantomSessions: boolean
   setShowPhantomSessions: (show: boolean) => void
+  // D8 (Cowork, 2026-05-25): toggle for hidden archived Cowork sessions.
+  // Persisted via usePreferences like showPhantomSessions.
+  showArchivedSessions: boolean
+  setShowArchivedSessions: (show: boolean) => void
   hideCompactMarkers: boolean
   setHideCompactMarkers: (hide: boolean) => void
   // Sort and group settings
@@ -92,6 +96,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     false,
   )
 
+  // D8: same persistence path as showPhantomSessions. Default false
+  // so a fresh install hides archived Cowork sessions by default.
+  const [showArchivedSessions, setShowArchivedSessions] = usePreferences<boolean>(
+    'showArchivedSessions',
+    false,
+  )
+
   // P3c — persisted prefs migrated to dual-read/dual-write via
   // usePreferences. The localStorage *keys* are the same legacy strings
   // (e.g. 'theme', 'keyboardMode') so existing browser sessions keep
@@ -131,10 +142,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   // Setting sortField also flips sortOrder to its natural direction —
   // preserve that legacy UX. Both writes go through usePreferences, so
   // both PATCH the server and mirror localStorage.
-  const setSortField = (field: SortField) => {
-    setSortFieldRaw(field)
-    setSortOrder(getDefaultSortOrder(field))
-  }
+  //
+  // `useCallback` is load-bearing for the value-object memo below: a
+  // fresh function identity each render would defeat the memo and let
+  // the whole context value object churn even when no preferences
+  // changed.
+  const setSortField = useCallback(
+    (field: SortField) => {
+      setSortFieldRaw(field)
+      setSortOrder(getDefaultSortOrder(field))
+    },
+    [setSortFieldRaw, setSortOrder],
+  )
 
   const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -156,14 +175,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     return theme
   }, [theme, systemPrefersDark])
 
-  return (
-    <SettingsContext.Provider value={{
+  // 2026-05-22 perf fix (defense-in-depth alongside per-key `select` in
+  // usePreferences.ts): memoize the context value so consumers like
+  // MessageBubble (which reads useSettings() in its hot render path,
+  // MessageBubble.tsx:50) don't get force-rerendered every time
+  // SettingsProvider itself rerenders. A bare object literal here
+  // would change identity on every render and punch through every
+  // consumer's `React.memo` via context-invalidation. Each field is
+  // listed explicitly so a future addition that forgets to thread its
+  // value/setter into the deps list will surface as a stale-data bug
+  // in dev rather than a silent memo-defeat.
+  const value = useMemo<SettingsContextType>(
+    () => ({
       showToolCalls,
       setShowToolCalls,
       expandAllTools,
       setExpandAllTools,
       showPhantomSessions,
       setShowPhantomSessions,
+      showArchivedSessions,
+      setShowArchivedSessions,
       hideCompactMarkers,
       setHideCompactMarkers,
       sortField,
@@ -183,7 +214,38 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setMarkdownBundleImages,
       markdownDialect,
       setMarkdownDialect,
-    }}>
+    }),
+    [
+      showToolCalls,
+      expandAllTools,
+      showPhantomSessions,
+      setShowPhantomSessions,
+      showArchivedSessions,
+      setShowArchivedSessions,
+      hideCompactMarkers,
+      setHideCompactMarkers,
+      sortField,
+      setSortField,
+      sortOrder,
+      setSortOrder,
+      groupByProject,
+      setGroupByProject,
+      theme,
+      setTheme,
+      effectiveTheme,
+      keyboardMode,
+      setKeyboardMode,
+      rightPaneTab,
+      setRightPaneTab,
+      markdownBundleImages,
+      setMarkdownBundleImages,
+      markdownDialect,
+      setMarkdownDialect,
+    ],
+  )
+
+  return (
+    <SettingsContext.Provider value={value}>
       {children}
     </SettingsContext.Provider>
   )

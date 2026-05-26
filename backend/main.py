@@ -1,17 +1,120 @@
 """FastAPI application for Claude Explorer."""
 
-import asyncio
-import logging
-from contextlib import asynccontextmanager
-from pathlib import Path
+import os
+import sys
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
-from .config import get_settings, migrate_legacy_data_dir, read_env
-from .routers import conversations, search, export, config, fetch, bookmarks, orgs, files, preferences
+def _bootstrap_macos_dyld_for_weasyprint() -> None:
+    """On macOS, ensure WeasyPrint's CFFI bindings can locate Homebrew-installed
+    GLib/Pango/Cairo at runtime.
+
+    macOS SIP strips ``DYLD_*`` env vars from subprocess invocations (e.g.
+    ``uv run uvicorn ...``), so prefixing the shell command with
+    ``DYLD_LIBRARY_PATH=/opt/homebrew/lib`` silently no-ops once the python
+    interpreter is re-execed under SIP. Setting the env var from inside
+    Python at import time DOES survive because :func:`ctypes.util.find_library`
+    on macOS inherits the updated process environment.
+
+    Mirrors ``backend/tests/conftest.py`` for the live dev server path. Must
+    run BEFORE the ``.routers import export`` line below — that import
+    transitively triggers WeasyPrint's CFFI loader at module-load time.
+
+    No-op on non-Darwin or when Homebrew lib dir doesn't exist.
+    """
+    if sys.platform != "darwin":
+        return
+    for brew_lib in ("/opt/homebrew/lib", "/usr/local/lib"):
+        if not os.path.isdir(brew_lib):
+            continue
+        existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+        if brew_lib in existing.split(":"):
+            return
+        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = (
+            f"{brew_lib}:{existing}" if existing else brew_lib
+        )
+        return
+
+
+_bootstrap_macos_dyld_for_weasyprint()
+
+
+# Imports below MUST run AFTER the bootstrap above. The ``export`` router
+# transitively pulls in WeasyPrint, which loads native libgobject/libpango/
+# libcairo via CFFI at import time. Without the DYLD bootstrap, that import
+# raises ``OSError: cannot load library 'libgobject-2.0-0'`` and the PDF
+# export route returns 500. Do not reorder.
+import asyncio  # noqa: E402
+import logging  # noqa: E402
+import re  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+
+from .config import get_settings, migrate_legacy_data_dir, read_env  # noqa: E402
+from .routers import conversations, search, export, config, fetch, bookmarks, orgs, files, preferences  # noqa: E402
+
+
+# Exact-match pattern for the conversation-detail route.
+# Matches /api/conversations/<uuid-like-string> but NOT /tree or any other
+# sub-path. The path segment after .../conversations/ must contain no
+# additional slashes — this is the discriminator that keeps the bypass
+# scoped (e.g. /tree, /export/markdown, /export/pdf all keep gzip).
+_CONV_DETAIL_PATH_RE = re.compile(r"^/api/conversations/[^/]+$")
+
+
+class SelectiveGZipMiddleware(GZipMiddleware):
+    """GZipMiddleware that bypasses compression for /api/conversations/<uuid>.
+
+    Why: a 69 MB ConversationDetail payload (real user corpus, 16K
+    messages) takes ~700 ms of synchronous gzip CPU per request on the
+    asyncio event loop. While that compresses, EVERY other concurrent
+    response is blocked from being sent — three parallel conversation
+    fetches serialize at ~3 s instead of ~1 s, and small endpoints like
+    /api/config / /api/orgs / /api/preferences all queue behind the
+    big one. This produced the user-reported "10 s perceived load" on
+    2026-05-23.
+
+    Trade-off (per the 2026-05-23 council decision record): the
+    conversation route's wire size goes from ~27 MB (gzipped) to
+    ~69 MB (identity). On localhost transfer is ~50 ms either way; on
+    a 50 Mbps remote link the bigger payload costs ~6 s extra. V1 is a
+    local-only single-user tool, so the trade-off is acceptable.
+
+    Why not solve it globally (off-loop gzip via threadpool):
+      * The conversation route is THE pathological case. Other large
+        payloads (export endpoints, search results) are ~10-100 KB and
+        their gzip-on-loop cost is sub-perceptible.
+      * Per-route bypass ships in <50 LOC; an off-loop wrapper around
+        GZipMiddleware needs careful interaction with streaming
+        responses (Starlette emits the body as chunked
+        ``http.response.body`` messages and the gzip middleware
+        compresses each chunk). That is a larger V2 refactor.
+
+    Why exact match not prefix:
+      * Sub-routes /tree, /export/markdown, /export/pdf return
+        normal-sized payloads and benefit from gzip. The exact-match
+        regex (``^/api/conversations/[^/]+$``) skips bypass for any
+        path with an extra slash, preserving gzip for everything except
+        the detail route itself.
+
+    Pinned by:
+      * ``test_conversation_detail_does_not_gzip_response``
+      * ``test_concurrent_conversation_fetches_do_not_serialize``
+      * ``test_other_routes_still_gzip_when_large``
+      * ``test_conversation_tree_route_still_gzips``
+    """
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and _CONV_DETAIL_PATH_RE.match(scope["path"]):
+            # Bypass gzip entirely: pass through to the wrapped app.
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
 
 
 log = logging.getLogger(__name__)
@@ -315,6 +418,60 @@ async def lifespan(app: FastAPI):
                     f"search index build complete: {files} files / {msgs} messages",
                     flush=True,
                 )
+
+                # W2 (2026-05-23 council decision): pre-execute two
+                # FTS5 warmup queries to warm SQLite's page cache
+                # before the user's first interactive search.
+                #
+                # Without this, the first user search after restart
+                # takes ~6 s on the user's real corpus because SQLite
+                # has to page in the FTS5 inverted-list segments cold.
+                # Subsequent same-term queries are sub-second.
+                #
+                # Two queries (per council Decision Record #1):
+                #   1. No-match sentinel — exercises term-dictionary
+                #      lookup path (proves the read side is functional).
+                #   2. Common-term ("the") with LIMIT 1 — forces the
+                #      engine to read doclist + segment pages that
+                #      no-match queries short-circuit past.
+                #
+                # Both fire via asyncio.to_thread to keep the event
+                # loop free. Total cost: ~100 ms on the user's corpus,
+                # well inside the lifespan budget.
+                #
+                # Skip via CLAUDE_EXPLORER_DISABLE_FTS5_WARM=1.
+                fts5_warm_disabled = (
+                    read_env(
+                        "CLAUDE_EXPLORER_DISABLE_FTS5_WARM",
+                        "CLAUDE_EXPORTER_DISABLE_FTS5_WARM",
+                    )
+                    == "1"
+                )
+                if not fts5_warm_disabled:
+                    import time as _time
+                    for needle, label in (
+                        ("warmup_zzzz_xyzzy_nomatch", "nomatch-sentinel"),
+                        ("the", "common-term"),
+                    ):
+                        t0 = _time.monotonic()
+                        try:
+                            await asyncio.to_thread(
+                                idx.query, needle, limit=1
+                            )
+                            print(
+                                f"search index warmup ({label}): "
+                                f"{(_time.monotonic() - t0) * 1000:.0f}ms",
+                                flush=True,
+                            )
+                        except Exception as warm_exc:  # noqa: BLE001
+                            # Warmup failures are non-fatal — they
+                            # just mean the first user search will
+                            # be slower. Log and continue.
+                            print(
+                                f"search index warmup ({label}) "
+                                f"failed: {warm_exc!r}",
+                                flush=True,
+                            )
             except Exception as exc:  # noqa: BLE001
                 print(
                     f"search index: initial build failed: {exc!r}",
@@ -430,6 +587,112 @@ async def lifespan(app: FastAPI):
             _build_summary_cache(), name="summary_cache_task"
         )
 
+    # W1 (2026-05-23 council decision): pre-warm the per-conversation
+    # FileCache for the N=5 most-recently-updated conversations. First
+    # navigation to a known-recent conversation otherwise pays ~1.3 s of
+    # cold I/O + JSONL parse; pre-warming makes it warm.
+    #
+    # The task DEPENDS on the summary cache being filled (it reads
+    # ``updated_at`` from the summary cache to pick the "most recent"
+    # set). We await summary_cache_task first inside the warm coroutine
+    # so the ordering is explicit without entangling the two tasks at
+    # the spawn site.
+    #
+    # Bounded concurrency: ``asyncio.gather`` with N=5 + the default
+    # threadpool (8 workers) is safe. If N is ever increased past ~8,
+    # gate with an ``asyncio.Semaphore``.
+    #
+    # "Most recent" heuristic: the explorer doesn't track per-user
+    # access history, so updated_at from the source (Claude.ai / CC) is
+    # the closest proxy. Acceptable for V1.
+    #
+    # Skip via ``CLAUDE_EXPLORER_DISABLE_FILECACHE_WARM=1``.
+    filecache_warm_task: asyncio.Task | None = None
+    filecache_warm_disabled = (
+        read_env(
+            "CLAUDE_EXPLORER_DISABLE_FILECACHE_WARM",
+            "CLAUDE_EXPORTER_DISABLE_FILECACHE_WARM",
+        )
+        == "1"
+    )
+    if not filecache_warm_disabled:
+        async def _warm_filecache(n: int = 5) -> None:
+            # Wait for the summary cache fill to land so the "most
+            # recent" sort sees populated rows. If the summary cache
+            # task didn't spawn (e.g. it was disabled), just no-op —
+            # the warm relies on it.
+            if summary_cache_task is not None:
+                try:
+                    await summary_cache_task
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Summary fill failure is logged separately; we
+                    # still try to warm from whatever IS in the
+                    # cache.
+                    pass
+
+            try:
+                from backend.summary_cache import get_summary_cache
+                from backend.claude_code_reader import discover_jsonl_files
+                from backend.store import ConversationStore
+                import os as _os
+
+                cache = get_summary_cache()
+                if cache is None:
+                    # FTS5 not available — nothing to read from.
+                    return
+
+                paths = list(discover_jsonl_files(get_settings().claude_dir))
+                if not paths:
+                    return
+
+                stat_index: dict = {}
+                for p in paths:
+                    try:
+                        stat_index[p] = _os.stat(p)
+                    except OSError:
+                        continue
+
+                cached = cache.get_many(paths, stat_index)
+                # Build (uuid, updated_at) pairs and pick top-N by
+                # updated_at. Missing/None summaries are skipped.
+                ranked: list[tuple[str, str]] = []
+                for _path, summary in cached.items():
+                    if not summary:
+                        continue
+                    uuid = summary.get("uuid")
+                    updated_at = summary.get("updated_at") or ""
+                    if uuid and isinstance(updated_at, str):
+                        ranked.append((uuid, updated_at))
+
+                ranked.sort(key=lambda x: x[1], reverse=True)
+                top = [uuid for uuid, _ in ranked[:n]]
+                if not top:
+                    return
+
+                # Hand off each uuid to a thread so the synchronous
+                # file I/O + JSONL parse happens off the event loop.
+                store = ConversationStore()
+                await asyncio.gather(
+                    *(
+                        asyncio.to_thread(store._find_conversation_data, uuid)
+                        for uuid in top
+                    ),
+                    return_exceptions=True,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"filecache warm: failed: {exc!r}",
+                    flush=True,
+                )
+
+        filecache_warm_task = asyncio.create_task(
+            _warm_filecache(5), name="filecache_warm_task"
+        )
+
     try:
         yield
     finally:
@@ -477,6 +740,7 @@ async def lifespan(app: FastAPI):
                 warm_task,
                 search_index_task,
                 summary_cache_task,
+                filecache_warm_task,
             ) if t is not None and not t.done()
         ]
 
@@ -536,12 +800,132 @@ async def lifespan(app: FastAPI):
             )
 
 
+def install_request_timing_middleware(app: FastAPI) -> None:
+    """Install a single-line per-request timing log.
+
+    Emits ONE INFO log per response with the request method, path, status
+    code, and elapsed wall time. Replaces uvicorn's default access log
+    (which lacks elapsed time); when `claude-explorer serve` boots
+    uvicorn, it passes `access_log=False` to avoid duplicate lines.
+
+    Line format::
+
+        GET /api/search?q=foo 200 elapsed=0.234s
+
+    Routes the log through the ``uvicorn.error`` logger (NOT
+    ``uvicorn.access`` — that logger's handler is removed by
+    `--no-access-log`, and NOT a module-private logger like
+    ``backend.main`` either — that one isn't wired to a handler by
+    uvicorn's default LOGGING_CONFIG, so its INFO records get dropped
+    silently by the root logger's WARNING-level handler). Routing
+    through ``uvicorn.error`` means the line appears in the same
+    stream as startup messages and stays visible regardless of the
+    `--no-access-log` flag. The 2026-05-22 bug it fixes: live
+    backend was silent after `--no-access-log` because the
+    ``backend.main`` logger had no handler attached.
+
+    Wrapped in a separate function so the FastAPI test harness can
+    install the middleware on a minimal app without re-importing the
+    full router stack — see `backend/tests/test_request_timing_log.py`.
+
+    Why a custom middleware vs uvicorn's `--log-config`: keeping the
+    timing logic in-tree means it survives any deploy config (Docker,
+    systemd, ad-hoc `uvicorn` from a shell) and is unit-testable.
+
+    Implementation: PURE ASGI middleware, NOT the BaseHTTPMiddleware-
+    based ``@app.middleware("http")`` decorator. The decorator form
+    buffers the response body internally, which makes every response
+    look like a streaming response (``more_body=True`` on the first
+    chunk) to downstream middleware. That broke ``GZipMiddleware``'s
+    ``minimum_size=1024`` small-skip optimization on 2026-05-23 — every
+    tiny /api/health / /api/info response was being gzipped and shipping
+    a Content-Encoding: gzip header. The pure-ASGI form below preserves
+    the ``more_body`` flag end-to-end so GZip's small-skip works as
+    designed. Pinned by ``test_small_response_is_not_gzipped``.
+    """
+    import time
+
+    timing_logger = logging.getLogger("uvicorn.error")
+
+    class _RequestTimingMiddleware:
+        def __init__(self, asgi_app):
+            self.app = asgi_app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            t0 = time.perf_counter()
+            status_code = 500  # Default if the route never sends a response.
+
+            async def _send_capture(message):
+                nonlocal status_code
+                if message["type"] == "http.response.start":
+                    status_code = message["status"]
+                await send(message)
+
+            try:
+                await self.app(scope, receive, _send_capture)
+            finally:
+                elapsed = time.perf_counter() - t0
+                # Path includes the query string so a slow
+                # `/api/search?q=foo` is distinguishable from a fast one
+                # at a glance.
+                path = scope["path"]
+                if scope.get("query_string"):
+                    path = f"{path}?{scope['query_string'].decode('latin-1')}"
+                timing_logger.info(
+                    "%s %s %d elapsed=%.3fs",
+                    scope["method"],
+                    path,
+                    status_code,
+                    elapsed,
+                )
+
+    app.add_middleware(_RequestTimingMiddleware)
+
+
 app = FastAPI(
     title="Claude Explorer",
     description="API for browsing and exporting Claude Desktop conversations",
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Request-timing middleware FIRST so the elapsed measurement covers all
+# downstream middleware (CORS preflight, body parsing, route work).
+install_request_timing_middleware(app)
+
+# GZip compression for large API responses (2026-05-23 user-report fix).
+#
+# The user's 16K-message ConversationDetail payload is ~69 MB
+# uncompressed. Gzip-1 reduces this to ~28 MB (60% reduction) at ~50 ms
+# of CPU cost on a Mac M-series — far less than the 11+ seconds saved
+# on a typical broadband network. Browsers always send
+# ``Accept-Encoding: gzip, deflate, br`` and transparently decode the
+# response, so no frontend change is needed.
+#
+# Trade-off (documented per 2026-05-23 council review): compression runs
+# on the asyncio event loop. ``compresslevel=1`` keeps the worst-case
+# block at ~50 ms even on the 69 MB payload, acceptable for a
+# single-user localhost tool. If Claude Explorer ever becomes
+# multi-tenant or LAN-shared, move compression to a reverse proxy
+# (nginx / caddy) or wrap compression in ``asyncio.to_thread`` — same
+# pattern as the ``/api/search`` threadpool fix (commit 7623c12).
+#
+# ``minimum_size=1024`` (Starlette default-ish, industry-standard):
+# below ~1 KB, gzip's framing overhead can produce a LARGER output and
+# always wastes CPU. Pinned by ``test_small_response_is_not_gzipped``.
+#
+# Middleware order: ``add_middleware`` prepends to the response chain,
+# so the LAST middleware added runs FIRST on the request. Currently:
+#   request:  timing -> CORS -> gzip -> route
+#   response: route -> gzip -> CORS -> timing
+# This means the request-timing middleware measures pre-gzip wall time
+# (the route's actual work), NOT compression time. That keeps the
+# elapsed=Xs log meaningful for backend perf diagnosis.
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024, compresslevel=1)
 
 # CORS middleware for development
 app.add_middleware(
@@ -564,7 +948,10 @@ app.include_router(orgs.router, prefix="/api")
 app.include_router(files.router, prefix="/api")
 
 
-@app.get("/api/info")
+@app.get(
+    "/api/info",
+    summary="API metadata (name, version, docs link)",
+)
 async def api_info():
     """API metadata endpoint.
 
@@ -579,13 +966,19 @@ async def api_info():
     }
 
 
-@app.get("/health")
+@app.get(
+    "/health",
+    summary="Liveness probe (always returns healthy if the process is up)",
+)
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
 
 
-@app.get("/api/health")
+@app.get(
+    "/api/health",
+    summary="Liveness probe plus index-migration telemetry",
+)
 async def api_health():
     """Health endpoint with migration telemetry (NEW4-P1-C)."""
     state = get_migration_state()
@@ -621,11 +1014,19 @@ if _STATIC_DIR is not None:
 
     _RESERVED_PREFIXES = ("api/", "docs", "redoc", "openapi.json", "health")
 
-    @app.get("/")
+    @app.get(
+        "/",
+        summary="Serve the single-page-app shell (HTML)",
+        include_in_schema=False,
+    )
     async def _spa_root() -> FileResponse:
         return FileResponse(_STATIC_DIR / "index.html")
 
-    @app.get("/{full_path:path}")
+    @app.get(
+        "/{full_path:path}",
+        summary="SPA catch-all: serve static assets or fall through to the SPA shell",
+        include_in_schema=False,
+    )
     async def _spa_catchall(full_path: str) -> FileResponse:
         """Serve static files for known paths, else fall through to index.html
         so client-side React routing works for deep links.
@@ -654,7 +1055,10 @@ else:
 
     # Preserve the legacy JSON-at-root behavior so anyone scripting against
     # `/` still gets something useful in API-only mode.
-    @app.get("/")
+    @app.get(
+        "/",
+        summary="API-only mode: report bundle status and docs link",
+    )
     async def _root_json() -> dict:
         return {
             "name": "Claude Explorer",

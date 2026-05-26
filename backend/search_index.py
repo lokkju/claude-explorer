@@ -63,7 +63,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 from .config import get_settings
-from .search import _extract_searchable_text
+from .search_text import _extract_searchable_text
 
 
 logger = logging.getLogger(__name__)
@@ -152,7 +152,70 @@ logger = logging.getLogger(__name__)
 #     against a Bash tool_use rendered as two identical rows).
 #     Bumping forces a one-time rebuild so existing rows get the
 #     deduped projection.
-SCHEMA_VERSION = 9
+# v10 (2026-05-23): adds the ``conversations`` projection table that
+# accelerates the title sweep. Pre-v10 the sweep ran
+# ``SELECT ... FROM messages WHERE title LIKE '%X%' GROUP BY conv_uuid``
+# against the FTS5 virtual table (250K rows / 2.5GB on the user's real
+# corpus) which cost ~6.3 s per cold search — 82% of total wall time.
+# The projection is one row per conversation (~344 on the user's
+# corpus) so LIKE scans in microseconds. Bumping the version triggers
+# the v9→v10 migration in :meth:`_init_schema` which populates the
+# projection via INSERT INTO conversations SELECT ... FROM messages
+# GROUP BY conv_uuid — avoids the 30-min full FTS5 rebuild.
+#   * v11 (2026-05-23, compact-marker auto-expand fix): no schema
+#     change, but ``_extract_searchable_text`` now drops the BODY for
+#     manual ``/compact`` trigger rows (the user message that wraps
+#     ``<command-name>/compact</command-name>`` + the user prompt inside
+#     ``<command-args>``). Pre-v11 the trigger-row body — including the
+#     verbatim user prompt — was in the FTS5 inverted index, so a search
+#     for words the user typed in their own /compact prompt landed on
+#     the trigger row's UUID instead of the isCompactSummary marker
+#     UUID. The wrong UUID broke the frontend's compact-marker
+#     auto-expand chain (which keys on ``compact_marker.message_uuid``).
+#     Bumping the version forces a one-time full rebuild on next start
+#     so deployed users get the cleansed index automatically; query path
+#     falls back to linear scan during the rebuild window. The slow
+#     scatter-gather paths in backend.search also apply a per-conv
+#     trigger→marker UUID rewrite as belt-and-suspenders for any latent
+#     stale-index hits during the rebuild window AND for the linear-scan
+#     fallback's correctness.
+#   * v12 (2026-05-25, Cowork search-recovery): two coupled changes that
+#     ride one schema bump.
+#
+#     (a) Add a ``conv_uuid TEXT`` column to ``indexed_files`` so
+#     :meth:`delete_by_path` can look up the conv_uuid directly instead
+#     of guessing it from ``file_path.stem``. Pre-v12 the stem heuristic
+#     worked for CC + Desktop files (``<uuid>.jsonl`` / ``<uuid>.json``)
+#     but silently broke for Cowork (``local_<uuid>/audit.jsonl`` ⇒
+#     stem == ``"audit"``). A Cowork ``delete_by_path`` call would drop
+#     the ``indexed_files`` row (keyed by path, correct) but the
+#     ``DELETE FROM messages WHERE conv_uuid = 'audit'`` no-op'd —
+#     orphan messages + conversations rows accumulated.
+#
+#     (b) Purge orphan Cowork state from existing user indexes. The
+#     2026-05-25 bug report surfaced a live index with 42 cowork paths
+#     in ``indexed_files`` but ZERO ``messages`` rows tagged
+#     ``CLAUDE_COWORK``. The transactional code paths make this state
+#     "impossible" under normal operation, so the root cause is either
+#     an in-flight migration race or an externally-induced corruption
+#     (mid-run CLI version mismatch). The recovery path is
+#     deterministic regardless: drop all CLAUDE_COWORK rows from
+#     ``messages`` + ``conversations`` and drop all ``audit.jsonl``
+#     paths from ``indexed_files``. The next drift pass treats the
+#     live cowork sessions as "new" and re-upserts them cleanly with
+#     real messages.
+#
+#     Migration shape: FAST migration (mirrors v9→v10), NOT a full
+#     DROP+rebuild. The user's real CC corpus is ~252K rows / 2.5 GB
+#     of FTS5 inverted-list data — a full rebuild from disk would take
+#     ~minutes during which search degrades to the linear-scan
+#     fallback. The v12 migration touches only Cowork rows + adds a
+#     column to ``indexed_files`` + backfills ``conv_uuid`` from
+#     ``path.stem`` for the surviving CC/Desktop rows (where stem ==
+#     uuid by construction). Total work: ~ms on any plausible corpus.
+#     Pinned by ``test_cowork_search_bug_2026_05_25.py::
+#     test_v11_to_v12_fast_migration_purges_orphan_cowork_state``.
+SCHEMA_VERSION = 12
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata
@@ -195,10 +258,22 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     tokenize = "porter unicode61 remove_diacritics 1"
 );
 
+-- v12 (2026-05-25): added ``conv_uuid`` column so :meth:`delete_by_path`
+-- can resolve the conv UUID via a path lookup instead of guessing it
+-- from ``file_path.stem``. The stem heuristic is correct for CC files
+-- (``<uuid>.jsonl``) and Desktop files (``<uuid>.json``) but wrong for
+-- Cowork (``local_<uuid>/audit.jsonl`` ⇒ stem == ``"audit"``). The
+-- column is populated by :meth:`upsert_conversation` and backfilled
+-- for existing CC/Desktop rows by the v11→v12 fast migration in
+-- :meth:`_init_schema` (stem is the correct uuid for those rows by
+-- construction). The column is NOT a foreign key — the messages /
+-- conversations tables have their own conv_uuid columns; this one
+-- exists solely so deletion-by-path is a lookup, not a heuristic.
 CREATE TABLE IF NOT EXISTS indexed_files (
     path TEXT PRIMARY KEY,
     mtime REAL NOT NULL,
-    indexed_at INTEGER NOT NULL
+    indexed_at INTEGER NOT NULL,
+    conv_uuid TEXT
 );
 
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -216,6 +291,24 @@ CREATE TABLE IF NOT EXISTS conversation_summaries (
 CREATE TABLE IF NOT EXISTS conversation_summaries_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+-- v10 title-sweep projection. One row per conversation; ``conv_uuid`` is
+-- PK so the title sweep can ``SELECT conv_uuid FROM conversations
+-- WHERE title LIKE '%X%'`` against ~hundreds of rows instead of the
+-- 250K-row FTS5 messages virtual table. Substring semantics (e.g.
+-- "edul" inside "scheduled") are preserved because we still use LIKE;
+-- the only change is the row set it scans. Maintained in the same
+-- transaction as the matching messages-table writes so a crash mid-
+-- upsert rolls back both or neither.
+CREATE TABLE IF NOT EXISTS conversations (
+    conv_uuid TEXT PRIMARY KEY,
+    title TEXT,
+    conv_created_at TEXT,
+    conv_updated_at TEXT,
+    project_path TEXT,
+    source TEXT,
+    organization_id TEXT
 );
 """
 
@@ -372,8 +465,20 @@ class SearchIndex:
 
         # Configure WAL + sensible pragmas. Done on the write connection
         # but applies to the whole database file.
+        #
+        # 2026-05-24 concurrency fix: added busy_timeout=30000 (30 s).
+        # search_index and summary_cache share the same SQLite database
+        # file; each opens its own writer connection guarded by its own
+        # threading.Lock. WAL mode lets the writers serialize at the
+        # SQLite level via busy_timeout, but only IF a timeout is set —
+        # the default is 0, which makes the second writer raise
+        # ``database is locked`` immediately on any contention. 30 s
+        # outlasts all known writers (summary_cache.upsert_many is the
+        # slow path here, occasionally taking seconds during a fetch
+        # backfill). Matches the value set on summary_cache._write_conn.
         self._write_conn.execute("PRAGMA journal_mode = WAL")
         self._write_conn.execute("PRAGMA synchronous = NORMAL")
+        self._write_conn.execute("PRAGMA busy_timeout = 30000")
         self._write_conn.execute("PRAGMA temp_store = MEMORY")
 
         # _is_ready toggles to True after the first full build pass
@@ -450,18 +555,216 @@ class SearchIndex:
                 # On-disk schema matches; ensure all tables exist (no-op if
                 # already there) and we're done.
                 cur.executescript(SCHEMA_SQL)
+                # v10 conditional backfill (2026-05-23): a CHEAP count
+                # check guards against the race that surfaced in dev
+                # when SCHEMA_VERSION was bumped from 9 to 10 while a
+                # backend with the OLD code was still running. The OLD
+                # code wrote to ``messages`` only, leaving rows in
+                # ``messages`` that the v9→v10 migration (which fired
+                # in a different process) had already snapshotted. The
+                # next open finds version_ok=True so the migration
+                # shim skips — without this backfill the orphaned
+                # messages would never get projection rows and the
+                # title sweep would silently miss them.
+                #
+                # The count check (~2 fast aggregate queries) runs on
+                # every open. The corrective backfill INSERT only
+                # fires when counts disagree — the steady-state cost
+                # is ~ms, NOT the ~5 s full GROUP BY scan.
+                conv_count = cur.execute(
+                    "SELECT COUNT(*) FROM conversations"
+                ).fetchone()[0]
+                msg_conv_count = cur.execute(
+                    "SELECT COUNT(DISTINCT conv_uuid) FROM messages "
+                    "WHERE conv_uuid != ''"
+                ).fetchone()[0]
+                if conv_count < msg_conv_count:
+                    logger.info(
+                        "search_index: conversations projection drift "
+                        "(projection=%d, messages distinct=%d); "
+                        "backfilling",
+                        conv_count, msg_conv_count,
+                    )
+                    cur.execute(
+                        "INSERT OR IGNORE INTO conversations "
+                        "(conv_uuid, title, conv_created_at, "
+                        " conv_updated_at, project_path, source, "
+                        " organization_id) "
+                        "SELECT conv_uuid, title, conv_created_at, "
+                        "       conv_updated_at, project_path, source, "
+                        "       organization_id "
+                        "FROM messages WHERE conv_uuid != '' "
+                        "GROUP BY conv_uuid"
+                    )
                 self._write_conn.commit()
+                return
+
+            # v9 → v10 fast migration (2026-05-23): add the
+            # ``conversations`` projection without dropping the
+            # (potentially 2.5 GB) messages table. The user's real
+            # corpus would otherwise re-walk every JSONL — ~30 min on
+            # ~1,200 files. The targeted INSERT INTO conversations
+            # SELECT ... FROM messages GROUP BY conv_uuid takes one
+            # cold scan (~6 s) and is then done.
+            #
+            # Gating condition: v9 stamped, messages cols already match
+            # current code (no body-schema drift), so the only delta is
+            # the missing projection table.
+            on_disk_version = row[0] if row is not None else None
+            if (
+                on_disk_version == 9
+                and SCHEMA_VERSION == 10
+                and existing_cols == self._EXPECTED_MESSAGES_COLS
+            ):
+                logger.info(
+                    "search_index: fast-migrating v9 → v10 "
+                    "(populating conversations projection from messages)"
+                )
+                self._schema_ok = False
+                try:
+                    cur.executescript(SCHEMA_SQL)
+                    # Populate the projection from existing messages.
+                    # GROUP BY collapses the per-message rows to one
+                    # row per conv; conv_uuid='' rows (none should
+                    # exist, but be defensive) are excluded so the
+                    # PK doesn't collide.
+                    cur.execute(
+                        "INSERT OR IGNORE INTO conversations "
+                        "(conv_uuid, title, conv_created_at, "
+                        " conv_updated_at, project_path, source, "
+                        " organization_id) "
+                        "SELECT conv_uuid, title, conv_created_at, "
+                        "       conv_updated_at, project_path, source, "
+                        "       organization_id "
+                        "FROM messages WHERE conv_uuid != '' "
+                        "GROUP BY conv_uuid"
+                    )
+                    cur.execute("DELETE FROM schema_version")
+                    cur.execute(
+                        "INSERT INTO schema_version (version) VALUES (?)",
+                        (SCHEMA_VERSION,),
+                    )
+                    self._write_conn.commit()
+                finally:
+                    self._schema_ok = True
+                return
+
+            # v11 → v12 fast migration (2026-05-25): two coupled changes.
+            #
+            # (a) Add ``conv_uuid`` to ``indexed_files`` and backfill from
+            #     ``path.stem`` for existing rows. Pre-v12 the only
+            #     ``delete_by_path`` strategy was to guess the conv_uuid
+            #     from the file stem — correct for CC (``<uuid>.jsonl``)
+            #     and Desktop (``<uuid>.json``) but wrong for Cowork
+            #     (``local_<uuid>/audit.jsonl`` ⇒ stem == ``"audit"``).
+            #     The column makes the deletion a SQL lookup.
+            #
+            # (b) Purge orphan Cowork state. The 2026-05-25 bug surfaced
+            #     a live index with cowork paths in ``indexed_files``
+            #     and ZERO matching ``messages`` rows. The transactional
+            #     write paths make that state impossible under normal
+            #     operation, so the migration deterministically purges
+            #     all CLAUDE_COWORK rows + all ``audit.jsonl`` indexed
+            #     paths and lets the next drift pass re-upsert from
+            #     scratch.
+            #
+            # Gating condition: v11 stamped + messages cols match
+            # current code (no body-schema drift). If either fails we
+            # fall through to the full DROP+rebuild below — safer than
+            # half-migrating.
+            if (
+                on_disk_version == 11
+                and SCHEMA_VERSION == 12
+                and existing_cols == self._EXPECTED_MESSAGES_COLS
+            ):
+                logger.info(
+                    "search_index: fast-migrating v11 → v12 "
+                    "(adding conv_uuid to indexed_files + purging orphan "
+                    "Cowork rows)"
+                )
+                self._schema_ok = False
+                try:
+                    # Step 1: add the new column. ALTER TABLE ADD COLUMN
+                    # is constant-time in SQLite (no row rewrite); the
+                    # default is NULL for existing rows.
+                    #
+                    # Use PRAGMA table_info to check whether the column
+                    # already exists (a partial prior migration could
+                    # have added the column but failed to bump
+                    # schema_version; idempotency preserves the recovery
+                    # path).
+                    existing_idx_cols = {
+                        r[1] for r in cur.execute(
+                            "PRAGMA table_info(indexed_files)"
+                        ).fetchall()
+                    }
+                    if "conv_uuid" not in existing_idx_cols:
+                        cur.execute(
+                            "ALTER TABLE indexed_files ADD COLUMN conv_uuid TEXT"
+                        )
+
+                    # Step 2: backfill conv_uuid for existing rows. For
+                    # ALL pre-v12 rows the stem heuristic was correct
+                    # (Cowork rows weren't reachable via delete_by_path
+                    # in the broken state anyway — that was the bug).
+                    # Use Python-side stem extraction because SQLite has
+                    # no portable path-stem function.
+                    rows_to_backfill = cur.execute(
+                        "SELECT path FROM indexed_files WHERE conv_uuid IS NULL"
+                    ).fetchall()
+                    backfill: list[tuple[str, str]] = []
+                    for (path_str,) in rows_to_backfill:
+                        p = Path(path_str)
+                        # For Cowork: stem is "audit" — we're purging
+                        # those rows below so the backfill value is
+                        # irrelevant. For CC/Desktop: stem == uuid.
+                        backfill.append((p.stem, path_str))
+                    if backfill:
+                        cur.executemany(
+                            "UPDATE indexed_files SET conv_uuid = ? WHERE path = ?",
+                            backfill,
+                        )
+
+                    # Step 3: purge orphan Cowork state. The audit.jsonl
+                    # filename is a hard discriminator — no other code
+                    # path writes a file with that exact name to the
+                    # index. The DELETE FROM messages drops any rows
+                    # that DID make it into the FTS5 table (handles the
+                    # case where the live state has both indexed_files
+                    # AND messages cowork rows; the bug report had only
+                    # the former, but the migration is safe either way).
+                    cur.execute(
+                        "DELETE FROM messages WHERE source = 'CLAUDE_COWORK'"
+                    )
+                    cur.execute(
+                        "DELETE FROM conversations WHERE source = 'CLAUDE_COWORK'"
+                    )
+                    cur.execute(
+                        "DELETE FROM indexed_files WHERE path LIKE '%audit.jsonl'"
+                    )
+
+                    cur.execute("DELETE FROM schema_version")
+                    cur.execute(
+                        "INSERT INTO schema_version (version) VALUES (?)",
+                        (SCHEMA_VERSION,),
+                    )
+                    self._write_conn.commit()
+                finally:
+                    self._schema_ok = True
                 return
 
             logger.info(
                 "search_index: rebuilding (version on-disk=%s code=%s; messages cols match=%s)",
-                row[0] if row else None, SCHEMA_VERSION, existing_cols == self._EXPECTED_MESSAGES_COLS,
+                on_disk_version, SCHEMA_VERSION, existing_cols == self._EXPECTED_MESSAGES_COLS,
             )
             self._schema_ok = False
             try:
                 cur.execute("DROP TABLE IF EXISTS messages")
                 cur.execute("DROP TABLE IF EXISTS indexed_files")
                 cur.execute("DROP TABLE IF EXISTS schema_version")
+                # v10: also drop the projection so the rebuild starts
+                # clean — every upsert will repopulate it row-by-row.
+                cur.execute("DROP TABLE IF EXISTS conversations")
                 cur.executescript(SCHEMA_SQL)
                 cur.execute(
                     "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
@@ -481,6 +784,11 @@ class SearchIndex:
                 check_same_thread=False,
                 isolation_level=None,
             )
+            # 2026-05-24 concurrency fix: same rationale as the writer.
+            # Default is 0, which makes the reader fail immediately on
+            # any file-level contention (checkpoint, VACUUM). 30 s
+            # outlasts all known writers.
+            conn.execute("PRAGMA busy_timeout = 30000")
             self._read_local.conn = conn
         return conn
 
@@ -587,10 +895,36 @@ class SearchIndex:
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
+                # v10 title projection (2026-05-23). INSERT OR REPLACE
+                # keeps one-row-per-conv invariant on title renames /
+                # re-upserts. Same transaction as the messages writes
+                # so a crash mid-upsert rolls both back — no split-brain
+                # "projection updated, messages stale" state.
                 self._write_conn.execute(
-                    "INSERT OR REPLACE INTO indexed_files (path, mtime, indexed_at) "
-                    "VALUES (?, ?, ?)",
-                    (str(file_path), float(mtime), int(time.time())),
+                    "INSERT OR REPLACE INTO conversations "
+                    "(conv_uuid, title, conv_created_at, conv_updated_at, "
+                    " project_path, source, organization_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        conv_uuid,
+                        title,
+                        conv_created_at,
+                        conv_updated_at,
+                        project_path,
+                        source,
+                        organization_id,
+                    ),
+                )
+                # v12 (2026-05-25): also persist the conv_uuid so
+                # delete_by_path can resolve it via a SQL lookup
+                # instead of the stem heuristic that silently failed
+                # for Cowork (``local_<uuid>/audit.jsonl`` ⇒ stem ==
+                # "audit", DELETE no-op).
+                self._write_conn.execute(
+                    "INSERT OR REPLACE INTO indexed_files "
+                    "(path, mtime, indexed_at, conv_uuid) "
+                    "VALUES (?, ?, ?, ?)",
+                    (str(file_path), float(mtime), int(time.time()), conv_uuid),
                 )
 
         return len(rows)
@@ -601,6 +935,11 @@ class SearchIndex:
             with self._write_conn:
                 self._write_conn.execute(
                     "DELETE FROM messages WHERE conv_uuid = ?", (conv_uuid,)
+                )
+                # v10: purge the projection row alongside. Otherwise the
+                # title sweep would still surface a deleted conversation.
+                self._write_conn.execute(
+                    "DELETE FROM conversations WHERE conv_uuid = ?", (conv_uuid,)
                 )
                 if file_path is not None:
                     self._write_conn.execute(
@@ -613,19 +952,51 @@ class SearchIndex:
         Used by the drift-cleanup pass: if ``indexed_files`` mentions a
         path that ``os.path.exists`` says is gone, drop both the file
         record and any messages whose source file was that path.
+
+        v12 (2026-05-25, Cowork search-recovery): resolve the conv_uuid
+        by SQL lookup against the new ``indexed_files.conv_uuid``
+        column. Pre-v12 the lookup was a ``file_path.stem`` heuristic
+        — correct for CC (``<uuid>.jsonl``) and Desktop
+        (``<uuid>.json``) where stem == uuid, but silently broken for
+        Cowork (``local_<uuid>/audit.jsonl`` ⇒ stem == ``"audit"``).
+        A Cowork ``delete_by_path`` call would drop the
+        ``indexed_files`` row (correct, keyed by path) but the
+        ``DELETE FROM messages WHERE conv_uuid = 'audit'`` no-op'd,
+        leaking orphan ``messages`` + ``conversations`` rows until
+        the next full rebuild.
+
+        Defensive fallback: if no ``indexed_files`` row exists for the
+        path (e.g., caller invoked delete_by_path on a path that was
+        never indexed, or on a partial write), fall back to the stem
+        heuristic so the legacy correctness contract for CC/Desktop
+        paths still holds. The fallback is no-op for Cowork (stem ==
+        "audit" matches no real conv_uuid), which is the same safety
+        story as pre-v12 for that branch — the migration has already
+        purged any orphans by the time this fallback would fire.
         """
-        # We don't have a reverse path→conv_uuid index, so look up the
-        # path's conv_uuid via the messages table is not possible (we don't
-        # store path on messages). Instead, the indexed_files table is the
-        # source of truth for "which files contributed rows": when a file
-        # disappears we look up its conv_uuid via the source layout
-        # convention (file stem == conv uuid for both Desktop JSONs and CC
-        # JSONLs).
-        conv_uuid_from_stem = file_path.stem
         with self._write_lock:
             with self._write_conn:
+                row = self._write_conn.execute(
+                    "SELECT conv_uuid FROM indexed_files WHERE path = ?",
+                    (str(file_path),),
+                ).fetchone()
+                if row is not None and row[0]:
+                    conv_uuid = row[0]
+                else:
+                    # No indexed_files row → fall back to the historical
+                    # stem heuristic. Correct for CC/Desktop; no-op for
+                    # Cowork (acceptable: the migration purged orphans;
+                    # any post-migration Cowork upsert wrote conv_uuid
+                    # so the primary lookup above succeeds).
+                    conv_uuid = file_path.stem
                 self._write_conn.execute(
-                    "DELETE FROM messages WHERE conv_uuid = ?", (conv_uuid_from_stem,)
+                    "DELETE FROM messages WHERE conv_uuid = ?", (conv_uuid,)
+                )
+                # v10: same uuid scope applies to the projection;
+                # leave-no-trace contract matches delete_conversation.
+                self._write_conn.execute(
+                    "DELETE FROM conversations WHERE conv_uuid = ?",
+                    (conv_uuid,),
                 )
                 self._write_conn.execute(
                     "DELETE FROM indexed_files WHERE path = ?", (str(file_path),)
@@ -678,11 +1049,24 @@ class SearchIndex:
         return {row[0]: row[1] for row in cur.fetchall()}
 
     def clear_all(self) -> None:
-        """Wipe all rows. Caller is responsible for a subsequent rebuild."""
+        """Wipe all rows. Caller is responsible for a subsequent rebuild.
+
+        v12 (2026-05-25): also truncates the v10 ``conversations``
+        projection. Pre-v12 ``clear_all`` deleted ``messages`` +
+        ``indexed_files`` only, leaking projection rows for any
+        conversations whose source file later disappeared between
+        the wipe and the subsequent rebuild. A subsequent
+        :func:`build_full_index` repopulated the projection for
+        files still present (via INSERT OR REPLACE), so the leak
+        was partly self-healing — but the title sweep would still
+        surface deleted-from-disk conversations until the next
+        watcher cleanup pass caught them.
+        """
         with self._write_lock:
             with self._write_conn:
                 self._write_conn.execute("DELETE FROM messages")
                 self._write_conn.execute("DELETE FROM indexed_files")
+                self._write_conn.execute("DELETE FROM conversations")
 
     # ----- query -----------------------------------------------------
 
@@ -690,7 +1074,7 @@ class SearchIndex:
         self,
         user_query: str,
         *,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
         conversation_uuid: str | None = None,
         project_path: str | None = None,
         bookmarks: set[str] | None = None,
@@ -825,7 +1209,7 @@ class SearchIndex:
         self,
         user_query: str,
         *,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
         conversation_uuid: str | None = None,
         project_path: str | None = None,
         bookmarks: set[str] | None = None,
@@ -901,7 +1285,7 @@ class SearchIndex:
         self,
         user_query: str,
         *,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
         conversation_uuid: str | None = None,
         project_path: str | None = None,
         bookmarks: set[str] | None = None,
@@ -1021,11 +1405,95 @@ class SearchIndex:
             for row in cur.fetchall()
         ]
 
+    def query_with_full_body(
+        self,
+        user_query: str,
+        *,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
+        conversation_uuid: str | None = None,
+        project_path: str | None = None,
+        bookmarks: set[str] | None = None,
+        organization_id: str | None = None,
+        conversation_uuids: set[str] | None = None,
+        include_tool_calls: bool = True,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """FTS5 fast path that returns the FULL body text in-band.
+
+        Mirrors :meth:`query_with_snippets` but selects the indexed
+        ``body``/``body_text`` column directly instead of calling
+        ``snippet()``. Used by the ``context_size='full'`` fast path
+        (:func:`backend.search._search_via_index_fast_full`) to avoid
+        the slow corpus walk that was the cold-cache "tens of seconds"
+        bottleneck (2026-05-22 perf fix).
+
+        Bytes-on-wire warning: a body can be 100KB+ for large
+        conversations. The LIMIT (1000 by default) caps the worst-
+        case response payload at ~100MB. The HTTP transport plus
+        the frontend's already-deployed contextSize toggle render
+        path absorb that volume fine for the current corpus, but if
+        you raise the LIMIT you should also revisit the FastAPI
+        response-streaming story.
+
+        ``include_tool_calls=False`` returns ``body_text`` (the same
+        text-only projection ``snippet()`` would target under the
+        same flag). Otherwise returns ``body`` (full content
+        including tool blocks).
+        """
+        built = self._build_match_where_clause(
+            user_query,
+            source=source, conversation_uuid=conversation_uuid,
+            project_path=project_path, bookmarks=bookmarks,
+            organization_id=organization_id,
+            conversation_uuids=conversation_uuids,
+            include_tool_calls=include_tool_calls,
+        )
+        if built is None:
+            return []
+        where_sql, params, use_allowed_join = built
+
+        body_col = "body" if include_tool_calls else "body_text"
+
+        sql = (
+            "SELECT conv_uuid, message_uuid, sender, created_at, "
+            "       title, project_path, organization_id, source, "
+            "       conv_created_at, conv_updated_at, "
+            f"      {body_col} "
+            "FROM messages "
+            f"WHERE {where_sql} "
+            "ORDER BY bm25(messages) "
+            "LIMIT ?"
+        )
+        full_params: list[Any] = list(params) + [int(limit)]
+
+        conn = self._get_read_conn()
+        if use_allowed_join:
+            assert conversation_uuids is not None
+            self._populate_allowed_conv(conn, conversation_uuids)
+
+        cur = conn.execute(sql, tuple(full_params))
+        return [
+            {
+                "conv_uuid": row[0],
+                "message_uuid": row[1],
+                "sender": row[2],
+                "created_at": row[3],
+                "title": row[4],
+                "project_path": row[5],
+                "organization_id": row[6],
+                "source": row[7],
+                "conv_created_at": row[8],
+                "conv_updated_at": row[9],
+                "body": row[10] or "",
+            }
+            for row in cur.fetchall()
+        ]
+
     def count_matches(
         self,
         user_query: str,
         *,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
         conversation_uuid: str | None = None,
         project_path: str | None = None,
         bookmarks: set[str] | None = None,
@@ -1075,7 +1543,7 @@ class SearchIndex:
         self,
         user_query: str,
         *,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
         conversation_uuid: str | None = None,
         project_path: str | None = None,
         bookmarks: set[str] | None = None,
@@ -1146,12 +1614,17 @@ class SearchIndex:
         # Per-conv metadata (timestamps, project_path) returned alongside
         # the marked title so the caller can build SearchResult objects
         # for title-only hits without loading the conversation body.
+        #
+        # v10 (2026-05-23): scan the ``conversations`` projection (1
+        # row per conv, ~hundreds of rows) instead of the FTS5 ``messages``
+        # virtual table (250K rows / 2.5GB). conv_uuid is the PK so
+        # GROUP BY is unnecessary — every match is already unique.
+        # See SCHEMA_VERSION=10 docstring for the cold-search bench.
         sql = (
             "SELECT conv_uuid, title, conv_created_at, conv_updated_at, "
             "       project_path, source, organization_id "
-            "FROM messages "
-            f"WHERE {' AND '.join(title_clauses)} "
-            "GROUP BY conv_uuid"
+            "FROM conversations "
+            f"WHERE {' AND '.join(title_clauses)}"
         )
         conn = self._get_read_conn()
         if use_allowed_join:
@@ -1190,6 +1663,96 @@ class SearchIndex:
                 "organization_id": org,
             }
         return out
+
+    def title_match_uuids(
+        self,
+        needle: str,
+        *,
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
+        conversation_uuid: str | None = None,
+        project_path: str | None = None,
+        bookmarks: set[str] | None = None,
+        organization_id: str | None = None,
+        conversation_uuids: set[str] | None = None,
+    ) -> set[str]:
+        """Return the set of ``conv_uuid`` whose ``title`` contains
+        ``needle`` as a case-insensitive LIKE substring, honoring all
+        the same scope filters as :meth:`query`.
+
+        Council A1, 2026-05-21: extracted as a public method so
+        ``backend/search.py`` no longer reaches into private internals
+        (``_get_read_conn`` + ``_populate_allowed_conv``). The body of
+        this method preserves the exact SQL shape and semantics of the
+        original inline reach-through — including the ``SELECT
+        DISTINCT conv_uuid`` shape and the per-connection
+        ``allowed_conv`` TEMP table population — so the
+        :func:`_search_via_index` title sweep is byte-for-byte
+        equivalent to the pre-refactor behavior.
+
+        Unlike :meth:`title_match_snippets`, this method does NOT
+        re-parse the query for quoted-phrase semantics — callers pass
+        the already-extracted needle (the result of
+        ``parse_user_query()``). It also returns only UUIDs (not
+        snippets), which is what the legacy ``context_size="full"``
+        path needs.
+
+        Returns ``set()`` on:
+          * empty / whitespace-only ``needle``;
+          * ``conversation_uuids=set()`` (explicit "nothing allowed");
+          * ``bookmarks=set()`` (explicit "nothing allowed");
+          * SQL error (defensive — the body sweep still wins).
+        """
+        if not needle or not needle.strip():
+            return set()
+
+        title_sql_clauses: list[str] = ["title LIKE ?"]
+        title_sql_params: list[Any] = [f"%{needle}%"]
+        use_allowed_join = False
+
+        if conversation_uuid is not None:
+            title_sql_clauses.append("conv_uuid = ?")
+            title_sql_params.append(conversation_uuid)
+        else:
+            if project_path is not None:
+                title_sql_clauses.append("project_path = ?")
+                title_sql_params.append(project_path)
+            if bookmarks is not None:
+                if not bookmarks:
+                    return set()
+                placeholders = ",".join("?" * len(bookmarks))
+                title_sql_clauses.append(f"conv_uuid IN ({placeholders})")
+                title_sql_params.extend(sorted(bookmarks))
+            if conversation_uuids is not None:
+                if not conversation_uuids:
+                    return set()
+                use_allowed_join = True
+                title_sql_clauses.append(
+                    "conv_uuid IN (SELECT uuid FROM allowed_conv)"
+                )
+        if source != "all":
+            title_sql_clauses.append("source = ?")
+            title_sql_params.append(source)
+        if organization_id is not None:
+            title_sql_clauses.append("organization_id = ?")
+            title_sql_params.append(organization_id)
+
+        try:
+            conn = self._get_read_conn()
+            if use_allowed_join:
+                assert conversation_uuids is not None
+                self._populate_allowed_conv(conn, conversation_uuids)
+            # v10 (2026-05-23): same projection-table switch as
+            # title_match_snippets. conv_uuid PK ⇒ DISTINCT unneeded.
+            sql = (
+                "SELECT conv_uuid FROM conversations "
+                f"WHERE {' AND '.join(title_sql_clauses)}"
+            )
+            cur = conn.execute(sql, tuple(title_sql_params))
+            return {row[0] for row in cur.fetchall()}
+        except sqlite3.Error:
+            # Fall back to empty — body matches still win.
+            logger.exception("search_index: title_match_uuids sweep failed")
+            return set()
 
     def _populate_allowed_conv(
         self, conn: sqlite3.Connection, uuids: set[str]
@@ -1344,6 +1907,35 @@ def _file_path_for_conv(conv: dict[str, Any], data_dir: Path, claude_dir: Path) 
                     return candidate
         return None
 
+    if source == "CLAUDE_COWORK":
+        # Cowork files: claude_desktop_app_dir/local-agent-mode-sessions/
+        # <deployment>/<org>/local_<uuid>/audit.jsonl. We don't have the
+        # cowork_root in this helper's signature (call sites are pinned
+        # to data_dir + claude_dir for back-compat), so consult
+        # Settings directly. Drift detection on Cowork without a tagged
+        # path can fall back to the next backstop poll, so a missing
+        # cowork_root just returns None.
+        cowork_root = (
+            get_settings().claude_desktop_app_dir / "local-agent-mode-sessions"
+        )
+        if cowork_root.exists():
+            try:
+                deployment_dirs = list(cowork_root.iterdir())
+            except OSError:
+                deployment_dirs = []
+            for deployment_dir in deployment_dirs:
+                if not deployment_dir.is_dir():
+                    continue
+                try:
+                    org_dirs = list(deployment_dir.iterdir())
+                except OSError:
+                    continue
+                for org_dir in org_dirs:
+                    candidate = org_dir / f"local_{uuid}" / "audit.jsonl"
+                    if candidate.exists():
+                        return candidate
+        return None
+
     # Desktop: by-org first, legacy flat last.
     by_org = data_dir / "by-org"
     if by_org.exists():
@@ -1361,14 +1953,21 @@ def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
     """Stat-only enumeration of every on-disk conversation file.
 
     Returns ``[(path, source), ...]`` where ``source`` is one of
-    ``"CLAUDE_AI"`` or ``"CLAUDE_CODE"``. NO content is loaded — we
-    only need the file list and (later) ``os.stat`` for mtime.
+    ``"CLAUDE_AI"``, ``"CLAUDE_CODE"``, or ``"CLAUDE_COWORK"``. NO
+    content is loaded — we only need the file list and (later)
+    ``os.stat`` for mtime.
 
     Uses the existing path-discovery helpers
     (:meth:`ConversationStore._get_conversation_files` for Desktop and
     :func:`backend.claude_code_reader.discover_jsonl_files` for CC) so
     this stays the single source of truth for "what counts as a
     conversation file on disk."
+
+    Cowork (2026-05-25): walks ``cowork_root / <deployment>/<org>/
+    local_*/audit.jsonl``. Since Cowork's audit.jsonl shares the
+    ``.jsonl`` extension with CC, the source tag in the returned
+    tuple is LOAD-BEARING for :func:`_load_conversation_at` — that
+    dispatcher routes on the tag, not the extension.
     """
     from .claude_code_reader import discover_jsonl_files
 
@@ -1380,27 +1979,84 @@ def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
     claude_dir = getattr(store, "claude_dir", None) or get_settings().claude_dir
     for p in discover_jsonl_files(claude_dir):
         paths.append((p, "CLAUDE_CODE"))
+    # Cowork audit.jsonl files (always tagged CLAUDE_COWORK so the
+    # source-tag dispatch in _load_conversation_at routes correctly —
+    # extension-based dispatch would silently route Cowork through
+    # the CC reader, which doesn't understand the _audit_timestamp
+    # field rename).
+    cowork_root = getattr(store, "cowork_root", None)
+    if cowork_root is None:
+        cowork_root = (
+            get_settings().claude_desktop_app_dir / "local-agent-mode-sessions"
+        )
+    if cowork_root.exists():
+        try:
+            deployment_dirs = list(cowork_root.iterdir())
+        except OSError:
+            deployment_dirs = []
+        for deployment_dir in deployment_dirs:
+            if not deployment_dir.is_dir():
+                continue
+            try:
+                org_dirs = list(deployment_dir.iterdir())
+            except OSError:
+                continue
+            for org_dir in org_dirs:
+                if not org_dir.is_dir():
+                    continue
+                try:
+                    sess_dirs = list(org_dir.iterdir())
+                except OSError:
+                    continue
+                for sess_dir in sess_dirs:
+                    if sess_dir.is_dir() and sess_dir.name.startswith("local_"):
+                        audit = sess_dir / "audit.jsonl"
+                        if audit.exists():
+                            paths.append((audit, "CLAUDE_COWORK"))
     return paths
 
 
-def _load_conversation_at(path: Path, store: Any) -> dict[str, Any] | None:
+def _load_conversation_at(
+    path: Path, store: Any, source: str | None = None
+) -> dict[str, Any] | None:
     """Load a single conversation's full content from its on-disk path.
 
-    Dispatches by file extension:
-      * ``*.json`` → :meth:`ConversationStore._load_conversation`
-        (Desktop JSON; mtime-cached via FileCache).
-      * ``*.jsonl`` → :func:`backend.claude_code_reader.read_claude_code_conversation`
+    Dispatches by SOURCE TAG (when provided), not by file extension —
+    Cowork's ``audit.jsonl`` shares the ``.jsonl`` extension with CC,
+    so extension-based dispatch would silently route Cowork through
+    the CC reader and corrupt every Cowork session in the index.
+
+    Source dispatch:
+      * ``CLAUDE_COWORK`` → :func:`backend.cowork_reader.read_cowork_conversation`
+        (reads ``path.parent`` since the Cowork reader takes the
+        session directory, not the audit.jsonl path).
+      * ``CLAUDE_CODE`` → :func:`backend.claude_code_reader.read_claude_code_conversation`
         (CC streaming format; also runs the
         ``cache_all_markers`` image-warm side effect).
+      * ``CLAUDE_AI`` (or any unrecognized source) →
+        :meth:`ConversationStore._load_conversation` (Desktop JSON;
+        mtime-cached via FileCache).
+
+    Back-compat: when ``source`` is ``None`` (legacy callers that
+    weren't updated when the source-tag dispatch landed), we fall
+    back to the pre-Cowork extension-based behavior. New call sites
+    MUST pass the source tag explicitly.
 
     Returns ``None`` on read failure (the caller logs and skips). The
     drift-first refactor calls this ONLY for paths the diff already
     identified as drifted, so a missing/corrupt file at this stage is
     rare and surfaces in logs.
     """
-    from .claude_code_reader import read_claude_code_conversation
+    if source == "CLAUDE_COWORK":
+        from .cowork_reader import read_cowork_conversation
+        try:
+            return read_cowork_conversation(path.parent)
+        except Exception:  # noqa: BLE001
+            logger.exception("search_index: failed to read Cowork %s", path)
+            return None
 
-    if path.suffix.lower() == ".jsonl":
+    if source == "CLAUDE_CODE" or (source is None and path.suffix.lower() == ".jsonl"):
+        from .claude_code_reader import read_claude_code_conversation
         try:
             return read_claude_code_conversation(path)
         except Exception:  # noqa: BLE001
@@ -1416,7 +2072,7 @@ def _load_conversation_at(path: Path, store: Any) -> dict[str, Any] | None:
 
 def _drift_first_scan(
     store: Any, index: SearchIndex
-) -> tuple[list[Path], list[Path]]:
+) -> tuple[list[tuple[Path, str]], list[Path]]:
     """Diff the live file set against ``indexed_files`` WITHOUT loading
     content. Returns ``(drifted_paths, missing_paths)``.
 
@@ -1447,8 +2103,7 @@ def _drift_first_scan(
     ~10 s to ~100–300 ms.
     """
     live_paths_with_source = _enumerate_conversation_paths(store)
-    live_paths = [p for p, _ in live_paths_with_source]
-    live_set = set(live_paths)
+    live_set = {p for p, _ in live_paths_with_source}
 
     # Bulk-fetch the entire indexed_files table in one round-trip via
     # the per-thread read connection. The dict lookup below is O(1)
@@ -1456,8 +2111,11 @@ def _drift_first_scan(
     # that the old per-file needs_update() check had.
     indexed_mtimes = index._read_indexed_files_map()
 
-    drifted: list[Path] = []
-    for path in live_paths:
+    # Carry the source tag through with each drifted path — Cowork
+    # dispatch in _load_conversation_at depends on it (extension
+    # collides with CC's .jsonl).
+    drifted: list[tuple[Path, str]] = []
+    for path, source in live_paths_with_source:
         try:
             current_mtime = path.stat().st_mtime
         except OSError:
@@ -1467,7 +2125,7 @@ def _drift_first_scan(
             continue
         indexed_mtime = indexed_mtimes.get(str(path))
         if indexed_mtime is None or float(indexed_mtime) != float(current_mtime):
-            drifted.append(path)
+            drifted.append((path, source))
 
     # Missing pass: any indexed_files row whose path is no longer on disk.
     missing: list[Path] = []
@@ -1516,7 +2174,7 @@ def build_full_index(
     files_indexed = 0
     messages_indexed = 0
     total = len(drifted)
-    for i, path in enumerate(drifted):
+    for i, (path, source) in enumerate(drifted):
         # Hunt #8 TOCTOU fix: check-read-check (see update_drifted_files
         # for the full rationale). Stat before AND after the read; if
         # the file was mutated during the read, skip the upsert so the
@@ -1525,7 +2183,7 @@ def build_full_index(
             mtime_before = path.stat().st_mtime
         except OSError:
             mtime_before = None
-        conv = _load_conversation_at(path, store)
+        conv = _load_conversation_at(path, store, source=source)
         if conv is None:
             if on_progress is not None:
                 on_progress(i + 1, total)
@@ -1608,7 +2266,7 @@ def update_drifted_files(
             logger.exception("search_index: cleanup-delete failed for %s", path)
 
     updated = 0
-    for path in drifted:
+    for path, source in drifted:
         # Hunt #8 TOCTOU fix: check-read-check. Stat BEFORE the read so
         # the mtime we stamp into the index reflects the snapshot we
         # actually read, not a later one. If the file is mutated during
@@ -1621,7 +2279,7 @@ def update_drifted_files(
             mtime_before = path.stat().st_mtime
         except OSError:
             continue
-        conv = _load_conversation_at(path, store)
+        conv = _load_conversation_at(path, store, source=source)
         if conv is None:
             continue
         try:

@@ -24,253 +24,28 @@ import sqlite3
 from typing import Any, Literal
 
 from .models import SearchResponse, SearchResult, MessageSnippet, SnippetFragment
+from .search_text import (
+    _TOOL_PLACEHOLDER_RE,
+    _extract_searchable_text,
+    _is_compact_trigger_message,
+    _stringify_tool_input,
+)
 from .store import ConversationStore, _parse_datetime
+
+# Re-exports for backwards compatibility — multiple test modules import these
+# directly from ``backend.search`` (e.g. ``from backend.search import
+# _extract_searchable_text``). The canonical definitions live in
+# ``backend.search_text`` (the stdlib-only leaf created to break the
+# search.py ↔ search_index.py import cycle); we re-bind them here so the
+# existing import path continues to work byte-for-byte.
+__all__ = [
+    "_TOOL_PLACEHOLDER_RE",
+    "_extract_searchable_text",
+    "_stringify_tool_input",
+]
 
 
 logger = logging.getLogger(__name__)
-
-
-# Placeholder pattern used by Claude Desktop when a content block (tool call,
-# canvas widget, etc.) can't be rendered in the current client. Mirrors the
-# frontend's filter in frontend/src/lib/utils.ts (filterToolPlaceholders): when
-# we render a message with showToolCalls=false, this exact pattern is stripped
-# from the displayed text. We strip the same pattern from the searchable text
-# projection when include_tool_calls=False so that a message whose `text`
-# field consists ONLY of this placeholder is treated as "no visible text"
-# (mirrors messageHasVisibleContent semantics).
-_TOOL_PLACEHOLDER_RE = re.compile(
-    r"```\s*\n?\s*(?:"
-    r"This block is not supported on your current device yet\."
-    r"|"
-    r"Viewing artifacts created via the Analysis Tool web feature preview "
-    r"isn't yet supported on mobile\."
-    r")\s*\n?\s*```"
-)
-
-
-def _extract_searchable_text(
-    message: dict[str, Any],
-    *,
-    include_tool_calls: bool = True,
-) -> str:
-    """Flatten every searchable surface of a message into one string.
-
-    Covers: message['text'] (Desktop API plain text), and all content blocks —
-    text, tool_use input dicts (Bash command, file paths, prompt args), and
-    tool_result content (which can be a string OR a list of text blocks).
-
-    When ``include_tool_calls=False``:
-      * Skips ``tool_use`` and ``tool_result`` content blocks.
-      * Strips the Desktop "This block is not supported…" placeholder from
-        ``message['text']`` (mirrors frontend ``messageHasVisibleContent``
-        and ``filterToolPlaceholders``). A message whose ``text`` field is
-        only that placeholder yields the empty string here.
-      * ``text``-type blocks are unchanged — they ARE the user-visible body.
-
-    ``thinking`` blocks are NEVER indexed regardless of the toggle
-    (V1 polish 2026-05-13): the frontend has no `case 'thinking':`
-    renderer in V1, so indexing thinking content produces search
-    "ghosts" — a query that hits inside a thinking block returns a
-    result whose bubble shows nothing matching. Until a `Show thinking`
-    UI affordance ships, hide it from search too. Spec invariant: search
-    only returns hits the user can navigate to. The accompanying
-    `backend/search_index.SCHEMA_VERSION` bump (2 → 3) forces a one-time
-    rebuild so stale thinking-only matches don't pollute the FTS5
-    top-N ranking.
-
-    Default ``include_tool_calls=True`` preserves prior indexing behavior
-    for tool blocks; the FTS5 index ALWAYS uses the full projection so
-    the index stays correct regardless of the per-query filter (the
-    filter is applied at snippet/scatter time, not at index time — see
-    search.py module docstring on the "include_tool_calls" architecture).
-
-    Argless command-marker exclusion (V1 polish 2026-05-13):
-    Argless slash markers (``is_command_marker=True``: ``/exit``, ``/clear``,
-    ``/compact`` and the leading-prelude rows that ``_flag_leading_prelude_markers``
-    flags on top of them) are CHROME, not user content. The viewer hides them
-    behind ``SessionPreludeAffordance`` / ``SlashCommandBadge`` and the export
-    surfaces drop them via ``export._is_excludable_marker``. The search
-    projection mirrors that exclusion here — typing ``exit`` in the search
-    box should NOT produce hits on ``Session: /exit`` chrome rows.
-
-    Predicate equivalence with ``export._is_excludable_marker`` (export.py:159)
-    is INTENTIONAL: both surfaces apply the same definition of "chrome" so the
-    spec invariant "one truth, three surfaces" (viewer + search + export) holds.
-    Argful markers (``/coding <prose>``, ``/plan <prose>``) carry
-    ``is_command_marker=False`` post-Fix-2 (claude_code_reader 2026-05-13), so
-    they pass through this guard and remain searchable on the user's real
-    prose body AND on the ``slash_command`` token.
-
-    Strict ``is True`` check (not truthy): defends against non-bool injections
-    (e.g. ``"false"`` string, ``1`` int) from fixtures or future code paths that
-    might silently exclude legitimate messages. Production data is always bool
-    per the Pydantic ``Message`` model (models.py) and the CC ingester
-    (claude_code_reader.py:342 sets it as a real boolean), but the function
-    signature is ``dict[str, Any]`` so we don't trust truthiness.
-
-    Index-time side effect (paired with SCHEMA_VERSION bump 3 → 4 in
-    search_index.py): ``upsert_conversation`` writes ``body=""`` for these
-    rows, so they contribute no tokens to the FTS5 inverted index. Title is
-    still populated, so unqualified MATCH on a conversation title is still
-    correct — the title pseudo-message comes from the `_search_via_index`
-    title-sweep, not from marker-row body matches.
-    """
-    if message.get("is_command_marker") is True:
-        return ""
-
-    parts: list[str] = []
-
-    # Dedupe contract (2026-05-18, doubled-snippet bug):
-    # ``backend/store._parse_message`` populates ``Message.text`` from
-    # ``raw.get("text", "") or _extract_text(content)``. For Claude
-    # Code AND Desktop messages, the resulting ``text`` field is the
-    # newline-join of every text-type content block. If we then also
-    # append each content block's text inside the loop below, the
-    # indexed body carries the prose twice (``"X\nX"``). FTS5's
-    # ``snippet()`` echoes the duplication and the search panel
-    # renders each hit twice.
-    #
-    # Mirror the frontend ``MessageBubble`` renderer instead: when
-    # ``content`` has at least one text block, treat the blocks as
-    # the canonical source and skip ``message['text']``. Fall back
-    # to ``text`` only when no text blocks exist — bare-text legacy
-    # shapes (Desktop messages with no ``content`` array, or messages
-    # whose content is only ``tool_use``/``tool_result``/``image``
-    # blocks) still need the field as the sole index source.
-    content_blocks = message.get("content") or []
-    has_text_block = any(
-        isinstance(b, dict) and b.get("type") == "text" and b.get("text")
-        for b in content_blocks
-    )
-
-    text = message.get("text") or ""
-    if text and not has_text_block:
-        if not include_tool_calls:
-            # Mirror frontend filterToolPlaceholders so a message whose
-            # `text` is ONLY a tool placeholder is correctly treated as
-            # empty when the user has hidden tool calls.
-            text = _TOOL_PLACEHOLDER_RE.sub("", text).strip()
-        if text:
-            parts.append(text)
-
-    # CC slash-command name (V1 polish round 3, 2026-05-12). Set by the
-    # triplet collapser on synthetic "Session: /foo" markers AND on
-    # argful markers where `message["text"]` is the user's prompt body.
-    # We append the "/foo" string so both surface forms are searchable:
-    #   * Literal substring `/coding` hits via linear-scan regex.
-    #   * FTS5's `unicode61` tokenizer splits on `/` so the token
-    #     `coding` ALSO appears in the indexed projection — a user
-    #     searching for either form gets the marker.
-    # MUST guard against None: an unguarded `parts.append(None)` would
-    # raise TypeError in the trailing `"\n".join(parts)`. The truthy
-    # guard also drops empty-string values without poisoning the index
-    # with a stray "None" literal.
-    slash_command = message.get("slash_command")
-    if slash_command:
-        parts.append(slash_command)
-
-    for block in message.get("content") or []:
-        if not isinstance(block, dict):
-            continue
-        btype = block.get("type")
-
-        if btype == "text":
-            t = block.get("text") or ""
-            if t:
-                parts.append(t)
-
-        elif btype == "tool_use":
-            if not include_tool_calls:
-                continue
-            name = block.get("name") or ""
-            if name:
-                parts.append(name)
-            tool_input = block.get("input")
-            if isinstance(tool_input, dict):
-                parts.append(_stringify_tool_input(tool_input))
-            elif isinstance(tool_input, str):
-                parts.append(tool_input)
-
-        elif btype == "tool_result":
-            if not include_tool_calls:
-                continue
-            tr_content = block.get("content")
-            if isinstance(tr_content, str):
-                parts.append(tr_content)
-            elif isinstance(tr_content, list):
-                for sub in tr_content:
-                    if isinstance(sub, dict) and sub.get("type") == "text":
-                        t = sub.get("text") or ""
-                        if t:
-                            parts.append(t)
-
-        # `thinking` blocks: deliberately NOT indexed (V1 polish 2026-05-13).
-        # The frontend has no renderer for `thinking` content blocks
-        # (see frontend/src/components/message/MessageBubble.tsx
-        # ContentBlockRenderer — only 'text', 'tool_use', 'tool_result',
-        # 'image' branches). Indexing thinking would produce search hits
-        # that map to bubbles where the matching text is invisible —
-        # a confusing UX failure mode. Re-add this branch (gated by a
-        # new `include_thinking` setting wired through SettingsContext +
-        # preferences + a header toggle + the search query) when a
-        # "Show thinking" affordance ships.
-
-    return "\n".join(parts)
-
-
-def _stringify_tool_input(tool_input: dict[str, Any]) -> str:
-    """Render a tool_use input dict so its keys AND string values are
-    searchable, WITHOUT duplicating any value-text.
-
-    Two search axes, no overlap (Option C, SCHEMA_VERSION v8→v9):
-
-      * **Keys axis** — every dict key reachable (top-level and nested)
-        is emitted once, space-joined into a single line. A user query
-        like ``command`` or ``file_path`` hits this line via the FTS5
-        unicode61 tokenizer.
-      * **Values axis** — every unique string value at any depth is
-        emitted on its own line. A user query like ``echo hello`` hits
-        a value line directly.
-
-    Pre-v9 implementation used ``json.dumps(tool_input)`` (which already
-    contained both keys AND values, including nested) AND ALSO appended
-    each top-level string value verbatim. The overlap surfaced as
-    user-visible doubled snippets on every tool-call search hit (e.g.
-    ``"echo hello\\necho hello"``). FTS5's ``snippet()`` echoed the
-    duplication faithfully. See:
-      backend/tests/test_search_extract_no_double_index.py::
-        test_tool_input_value_appears_once_in_body
-
-    Set-based dedupe across the value axis (rare but possible: an
-    ``Edit`` block with ``old_string == new_string``, a tool that
-    repeats the same path across multiple keys) preserves the
-    one-occurrence contract that the bidirectional tests pin.
-    """
-    keys: list[str] = []
-    values: list[str] = []
-    seen_values: set[str] = set()
-
-    def walk(obj: Any) -> None:
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if isinstance(k, str):
-                    keys.append(k)
-                walk(v)
-        elif isinstance(obj, list):
-            for item in obj:
-                walk(item)
-        elif isinstance(obj, str):
-            if obj and obj not in seen_values:
-                seen_values.add(obj)
-                values.append(obj)
-
-    walk(tool_input)
-
-    parts: list[str] = []
-    if keys:
-        parts.append(" ".join(keys))
-    parts.extend(values)
-    return "\n".join(parts)
 
 
 SNIPPET_CONTEXT = 150  # Characters of context on each side of the match (~3 lines total)
@@ -340,6 +115,109 @@ def _make_snippet_regex(phrase: str | None, tokens: list[str]) -> "re.Pattern[st
 _FALLBACK_SNIPPET_LEN = 300
 
 
+# Lookahead window for the /compact-trigger-row mapping. Matches
+# ``backend.cc_image_markers._COMPACT_LOOKAHEAD = 8`` by design. Kept
+# independent (NOT imported) to preserve the leaf-module layering — a
+# behavioral coupling test in
+# backend/tests/test_search_compact_trigger_rewrite.py
+# (test_build_compact_trigger_uuid_map_respects_lookahead_window) pins
+# the two constants in lockstep so they cannot silently drift.
+_COMPACT_TRIGGER_LOOKAHEAD = 8
+
+
+def _build_compact_trigger_uuid_map(conv: dict[str, Any]) -> dict[str, str]:
+    """Map each ``/compact`` trigger row's UUID to its compact-marker UUID.
+
+    Background: a manual ``/compact`` produces TWO related user messages in
+    ``conv['chat_messages']``: the synthetic ``isCompactSummary: True`` row
+    (the LLM's compaction summary, represented in ``conv['compact_markers']``
+    as ``{message_uuid, summary_text, kind: 'manual', user_prompt, ...}``)
+    and a SECOND user row carrying the ``<command-name>/compact</command-name>``
+    envelope plus the verbatim user prompt inside ``<command-args>``. The
+    trigger row's UUID is what FTS5 returns when the user searches for
+    text from their own prompt (pre-v11 indexing exposed the trigger
+    row's body to the index). The frontend's compact-marker auto-expand
+    chain keys on the marker's UUID, not the trigger's — so a search hit
+    on the trigger UUID prevents the marker from auto-expanding.
+
+    This helper builds the trigger→marker mapping the scatter-gather
+    body-emit code uses to REWRITE any latent trigger-row hits into the
+    correct marker UUID. Belt-and-suspenders for two drift modes:
+
+      * the SQLite FTS5 index hasn't completed the v10→v11 rebuild yet
+        (so it still carries stale trigger-row body tokens); and
+      * the linear-scan fallback path, which inherits the index-time
+        exclusion via ``_extract_searchable_text`` BUT still benefits
+        from rewrite if a future code path re-introduces trigger-row
+        text into search without bumping SCHEMA_VERSION.
+
+    Algorithm: for each marker in ``conv['compact_markers']``, locate the
+    marker's row in ``chat_messages`` by message_uuid; then scan forward
+    up to :data:`_COMPACT_TRIGGER_LOOKAHEAD` messages looking for the
+    trigger row (identified by :func:`_is_compact_trigger_message`). The
+    scan window matches
+    :data:`backend.cc_image_markers._COMPACT_LOOKAHEAD` exactly — the
+    same window that pass uses to classify a marker as ``manual``. If
+    no trigger is found in window, the marker is auto-compact (no
+    user prompt to map). Silent skip rather than crash or guess.
+
+    Returns ``{}`` for conversations with no compact markers (the common
+    case — Desktop conversations and most CC sessions). The helper is
+    pure-functional and does NOT mutate the input conversation.
+
+    Idempotency: callers apply ``trigger_to_marker.get(uuid, uuid)`` at
+    emit sites. The values in the returned dict are NEVER themselves
+    keys (a marker UUID cannot also be a trigger UUID — different
+    JSONL rows, distinct UUIDs), so multiple applications of the
+    mapping are safe.
+    """
+    markers = conv.get("compact_markers") or []
+    if not markers:
+        return {}
+    messages = conv.get("chat_messages") or []
+    if not messages:
+        return {}
+
+    # Index messages by uuid for O(1) marker-row lookup. We walk the
+    # message list once even for multiple markers; the per-marker scan
+    # then jumps directly to the marker's position and reads at most
+    # _COMPACT_TRIGGER_LOOKAHEAD messages forward.
+    uuid_to_index: dict[str, int] = {}
+    for i, msg in enumerate(messages):
+        u = msg.get("uuid")
+        if isinstance(u, str) and u:
+            uuid_to_index[u] = i
+
+    mapping: dict[str, str] = {}
+    for marker in markers:
+        if not isinstance(marker, dict):
+            continue
+        marker_uuid = marker.get("message_uuid")
+        if not isinstance(marker_uuid, str) or not marker_uuid:
+            continue
+        start = uuid_to_index.get(marker_uuid)
+        if start is None:
+            continue
+        # Scan forward through the lookahead window. Mirrors
+        # cc_image_markers.extract_compact_markers, which uses
+        # ``range(idx + 1, min(len(entries), idx + 1 + _COMPACT_LOOKAHEAD))``
+        # against the raw JSONL entries. We scan the same window over
+        # ``chat_messages``; the post-parse message list is in the same
+        # order as the raw entries (store._parse_message preserves
+        # order), so the window semantics carry over.
+        end = min(len(messages), start + 1 + _COMPACT_TRIGGER_LOOKAHEAD)
+        for j in range(start + 1, end):
+            cand = messages[j]
+            if not isinstance(cand, dict):
+                continue
+            if _is_compact_trigger_message(cand):
+                trigger_uuid = cand.get("uuid")
+                if isinstance(trigger_uuid, str) and trigger_uuid:
+                    mapping[trigger_uuid] = marker_uuid
+                break
+    return mapping
+
+
 def create_snippet(text: str, match_start: int, match_end: int) -> tuple[str, int, int]:
     """Create a snippet with context around the match.
 
@@ -392,7 +270,7 @@ SortOrder = Literal["asc", "desc"]
 def search_conversations(
     store: ConversationStore,
     query: str,
-    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
     context_size: Literal["snippet", "full"] = "snippet",
     sort: SortField = "updated_at",
     sort_order: SortOrder = "desc",
@@ -510,9 +388,13 @@ def search_conversations(
                         conversation_uuids=conversation_uuids,
                         limit=limit,
                     )
-                fts_results = _search_via_index(
+                # context_size == "full" fast path (2026-05-22 cold-
+                # cache perf fix). Reads `body`/`body_text` directly
+                # from FTS5 instead of walking 150+ JSONL files from
+                # disk. Cold full-mode goes from ~13 s to ~0.5 s.
+                return _search_via_index_fast_full(
                     store, idx, query,
-                    source=source, context_size=context_size,
+                    source=source,
                     sort=sort, sort_order=sort_order,
                     conversation_uuid=conversation_uuid,
                     project_path=project_path,
@@ -520,11 +402,8 @@ def search_conversations(
                     include_tool_calls=include_tool_calls,
                     organization_id=organization_id,
                     conversation_uuids=conversation_uuids,
+                    limit=limit,
                 )
-                # Legacy scatter-gather path doesn't observe a LIMIT —
-                # wrap it in the envelope with returned == total so the
-                # truncated signal stays accurate for context_size="full".
-                return _wrap_envelope_no_truncation(fts_results)
             except sqlite3.Error:
                 logger.exception(
                     "search_index: query failed; falling back to linear scan"
@@ -684,7 +563,7 @@ def _search_via_index_fast(
     idx: Any,
     query: str,
     *,
-    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"],
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"],
     sort: SortField,
     sort_order: SortOrder,
     conversation_uuid: str | None,
@@ -885,10 +764,208 @@ def _search_via_index_fast(
     )
 
 
+def _search_via_index_fast_full(
+    store: ConversationStore,
+    idx: Any,
+    query: str,
+    *,
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"],
+    sort: SortField,
+    sort_order: SortOrder,
+    conversation_uuid: str | None,
+    project_path: str | None,
+    bookmarks: set[str] | None,
+    include_tool_calls: bool = True,
+    organization_id: str | None = None,
+    conversation_uuids: set[str] | None = None,
+    limit: int = 1000,
+) -> SearchResponse:
+    """FTS5 fast path for ``context_size='full'`` — body from the index, NO file walk.
+
+    The previous full-mode path (:func:`_search_via_index`) walked
+    every matched conversation's JSONL file from disk to extract the
+    full message body. On a 152-candidate cold corpus that was
+    ~10–13 s of `parse_jsonl_fast` + `_extract_searchable_text`
+    overhead. Since `upsert_conversation` already stores
+    `_extract_searchable_text(msg, include_tool_calls=True/False)`
+    in the FTS5 ``body``/``body_text`` columns, we can serve the
+    full-mode response directly from the index with ZERO file I/O.
+
+    Measured (152 candidates, ``this image`` query):
+      * Cold _search_via_index (file walk):   ~13 s
+      * Cold _search_via_index_fast_full:     ~0.5 s
+
+    Output shape is byte-identical to the legacy path:
+      * ``MessageSnippet.snippet`` = full body text
+      * ``MessageSnippet.match_start/end`` = first regex hit offsets
+        in the full text (so the frontend's HighlightedSnippet can
+        place a ``<mark>`` band)
+      * ``MessageSnippet.fragments`` = None (full mode doesn't use
+        the structured fragment path; the legacy linear-scan code
+        also returns None for fragments in full mode)
+
+    Falls back to the file-walk slow path on:
+      * empty or invalid query (no FTS5 MATCH expression)
+      * SQL errors (sqlite3.Error bubbles up to the caller)
+    """
+    rows = idx.query_with_full_body(
+        query,
+        source=source,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
+        include_tool_calls=include_tool_calls,
+        limit=limit,
+    )
+
+    total_messages_matched = idx.count_matches(
+        query,
+        source=source,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
+        include_tool_calls=include_tool_calls,
+    )
+
+    title_hits = idx.title_match_snippets(
+        query,
+        source=source,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
+    )
+
+    # Parse query once for regex-based highlight placement on bodies.
+    phrase, tokens = parse_user_query(query)
+    pattern = _make_snippet_regex(phrase, tokens) if tokens else None
+    tokens_lower = [t.lower() for t in tokens] if tokens else []
+
+    # Group body rows by conv_uuid (mirrors _search_via_index_fast).
+    by_conv: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        cu = r["conv_uuid"]
+        body = r.get("body") or ""
+        slot = by_conv.setdefault(
+            cu,
+            {
+                "title": r.get("title") or "Untitled",
+                "project_path": r.get("project_path") or None,
+                "conv_created_at": r.get("conv_created_at") or "",
+                "conv_updated_at": r.get("conv_updated_at") or "",
+                "body_messages": [],
+                "title_marked": None,
+            },
+        )
+
+        # Skip rows whose body is empty (the title-only sentinel
+        # rows upsert_conversation writes for messageless convs).
+        if not body or not body.strip():
+            continue
+
+        # Mirror the linear-scan AND-of-tokens body gate. FTS5
+        # already filtered by MATCH at SQL time, but title-only
+        # FTS5 hits (where MATCH fired because of a TITLE token,
+        # not a body token) need to be re-filtered here. Same
+        # invariant as the slow path at search.py:1048-1050.
+        if tokens_lower:
+            body_lower = body.lower()
+            if not all(t in body_lower for t in tokens_lower):
+                continue
+
+        # Find first regex hit in the full body for highlight
+        # placement. Mirrors slow-path semantics at search.py:1058.
+        # Stemmer/diacritic drift case (FTS5 matched but Python
+        # regex doesn't): emit start=0/end=0 fallback, same as
+        # slow path.
+        m_start, m_end = 0, 0
+        if pattern is not None:
+            match = pattern.search(body)
+            if match is not None:
+                m_start, m_end = match.start(), match.end()
+
+        slot["body_messages"].append(
+            MessageSnippet(
+                message_uuid=r.get("message_uuid", "") or "",
+                sender=r.get("sender", "") or "",
+                snippet=body,
+                match_start=m_start,
+                match_end=m_end,
+                created_at=_parse_datetime(r.get("created_at")),
+                fragments=None,
+            )
+        )
+
+    # Merge title-only hits (mirrors _search_via_index_fast).
+    for cu, meta in title_hits.items():
+        slot = by_conv.setdefault(
+            cu,
+            {
+                "title": meta.get("title") or "Untitled",
+                "project_path": meta.get("project_path") or None,
+                "conv_created_at": meta.get("conv_created_at") or "",
+                "conv_updated_at": meta.get("conv_updated_at") or "",
+                "body_messages": [],
+                "title_marked": None,
+            },
+        )
+        slot["title_marked"] = meta.get("marked_title")
+
+    results: list[SearchResult] = []
+    for cu, slot in by_conv.items():
+        matching: list[MessageSnippet] = []
+
+        if slot.get("title_marked"):
+            rendered, frags, m_start, m_end = _parse_snippet_to_fragments(
+                slot["title_marked"],
+            )
+            matching.append(
+                MessageSnippet(
+                    message_uuid="title",
+                    sender="title",
+                    snippet=rendered,
+                    match_start=m_start,
+                    match_end=m_end,
+                    fragments=frags,
+                )
+            )
+
+        matching.extend(slot["body_messages"])
+
+        if not matching:
+            continue
+
+        results.append(
+            SearchResult(
+                conversation_uuid=cu,
+                conversation_name=slot["title"],
+                conversation_updated_at=_parse_datetime(slot["conv_updated_at"]),
+                conversation_created_at=_parse_datetime(slot["conv_created_at"]),
+                project_name=_derive_project_name(slot["project_path"]),
+                matching_messages=matching,
+            )
+        )
+
+    sorted_results = _sort_results(results, sort=sort, sort_order=sort_order)
+    returned_messages = len(rows)
+    truncated = returned_messages < total_messages_matched
+    return SearchResponse(
+        results=sorted_results,
+        total_messages_matched=total_messages_matched,
+        returned_messages=returned_messages,
+        truncated=truncated,
+    )
+
+
 def _search_via_linear_scan(
     store: ConversationStore,
     query: str,
-    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
     context_size: Literal["snippet", "full"] = "snippet",
     sort: SortField = "updated_at",
     sort_order: SortOrder = "desc",
@@ -950,6 +1027,25 @@ def _search_via_linear_scan(
         if organization_id is not None and conv.get("organization_id") != organization_id:
             continue
         matching_messages: list[MessageSnippet] = []
+
+        # Per-conv /compact trigger→marker UUID rewrite map (2026-05-23).
+        # Empty for the common case (no compact markers). When a body hit
+        # would otherwise land on a /compact trigger row's UUID, the
+        # rewrite redirects it to the corresponding isCompactSummary
+        # marker UUID so the frontend's auto-expand chain (which keys on
+        # ``compact_marker.message_uuid``) can fire. Belt-and-suspenders
+        # — the index-time exclusion in _extract_searchable_text should
+        # already prevent trigger-row hits after the v11 rebuild, but
+        # this layer catches (a) stale-index hits during the rebuild
+        # window and (b) any future code path that re-introduces
+        # trigger-row text into linear-scan without bumping
+        # SCHEMA_VERSION. ``emitted_seen`` dedupes UUIDs so a transient
+        # double-hit (marker AND stale trigger) does not produce two
+        # MessageSnippet rows pointing at the same emitted UUID — the
+        # frontend does NOT dedupe at render time (see
+        # frontend/src/contexts/SearchPanelContext.tsx).
+        trigger_to_marker = _build_compact_trigger_uuid_map(conv)
+        emitted_seen: set[str] = set()
 
         # Search in conversation name. Title-match policy:
         #   * Phrase mode → literal substring (the whole phrase appears).
@@ -1058,9 +1154,19 @@ def _search_via_linear_scan(
                     )
                 start = 0
                 end = 0
+            # Apply /compact trigger→marker UUID rewrite (no-op when the
+            # message is not a trigger row — empty mapping returns the
+            # uuid unchanged via dict.get(uuid, uuid)). Dedupe across
+            # emitted UUIDs so a stale-index double-hit on the same
+            # conceptual row collapses to ONE MessageSnippet.
+            raw_uuid = msg.get("uuid", "")
+            emitted_uuid = trigger_to_marker.get(raw_uuid, raw_uuid)
+            if emitted_uuid in emitted_seen:
+                continue
+            emitted_seen.add(emitted_uuid)
             matching_messages.append(
                 MessageSnippet(
-                    message_uuid=msg.get("uuid", ""),
+                    message_uuid=emitted_uuid,
                     sender=msg.get("sender", ""),
                     snippet=snippet,
                     match_start=start,
@@ -1089,7 +1195,7 @@ def _search_via_index(
     idx: Any,
     query: str,
     *,
-    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"],
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"],
     context_size: Literal["snippet", "full"],
     sort: SortField,
     sort_order: SortOrder,
@@ -1152,64 +1258,30 @@ def _search_via_index(
     # phrase) — conservative substring semantics, mirroring the linear
     # path. Token-level AND on titles is a future enhancement (see
     # `_search_via_linear_scan` for the matching policy).
+    #
+    # Council A1, 2026-05-21: previously this block reached into
+    # ``idx._get_read_conn()`` + ``idx._populate_allowed_conv()`` directly
+    # and built the SQL inline, crossing the module boundary into
+    # SearchIndex internals. The equivalent public API is
+    # :meth:`SearchIndex.title_match_uuids`, which preserves the exact SQL
+    # shape (SELECT DISTINCT conv_uuid + LIKE substring + scope filters +
+    # per-connection allowed_conv TEMP table). Byte-for-byte equivalence
+    # is pinned by
+    # ``test_title_match_uuids_byte_for_byte_matches_legacy_reach_through``.
+    title_matched_uuids = idx.title_match_uuids(
+        title_needle,
+        source=source,
+        conversation_uuid=conversation_uuid,
+        project_path=project_path,
+        bookmarks=bookmarks,
+        organization_id=organization_id,
+        conversation_uuids=conversation_uuids,
+    )
+    # ``query_lower`` is consumed below by the per-conversation walk to
+    # decide whether to emit a "title" pseudo-message (mirroring the
+    # linear-scan behavior); keep it local since the public title sweep
+    # has already done its work above.
     query_lower = title_needle.lower()
-    title_matched_uuids: set[str] = set()
-    title_sql_clauses = ["title LIKE ?"]
-    title_sql_params: list[Any] = [f"%{title_needle}%"]
-    # Sidebar-scope (2026-05-14): the title sweep needs the conversation_uuids
-    # gate too, so a title-only hit on an excluded conversation doesn't bleed
-    # in via this code path. We use the same TEMP TABLE that SearchIndex.query
-    # populates (under the per-thread read connection); see
-    # SearchIndex._populate_allowed_conv. If conversation_uuids is None we
-    # don't emit the JOIN at all.
-    use_allowed_join = conversation_uuids is not None
-    if conversation_uuid is not None:
-        title_sql_clauses.append("conv_uuid = ?")
-        title_sql_params.append(conversation_uuid)
-    else:
-        if project_path is not None:
-            title_sql_clauses.append("project_path = ?")
-            title_sql_params.append(project_path)
-        if bookmarks is not None:
-            if not bookmarks:
-                title_matched_uuids = set()
-                title_sql_clauses = []
-            else:
-                placeholders = ",".join("?" * len(bookmarks))
-                title_sql_clauses.append(f"conv_uuid IN ({placeholders})")
-                title_sql_params.extend(sorted(bookmarks))
-        if use_allowed_join:
-            title_sql_clauses.append(
-                "conv_uuid IN (SELECT uuid FROM allowed_conv)"
-            )
-    if source != "all":
-        title_sql_clauses.append("source = ?")
-        title_sql_params.append(source)
-    if organization_id is not None:
-        title_sql_clauses.append("organization_id = ?")
-        title_sql_params.append(organization_id)
-    if title_sql_clauses:
-        try:
-            conn = idx._get_read_conn()
-            # If we're using the allowed_conv TEMP table here, populate it
-            # on this same read connection. SearchIndex.query already did
-            # this for the main MATCH query, but the TEMP table is per-
-            # connection — we're guaranteed the same conn since both
-            # threading.local lookups happen inside one request thread.
-            if use_allowed_join:
-                idx._populate_allowed_conv(conn, conversation_uuids)
-            sql = (
-                "SELECT DISTINCT conv_uuid FROM messages "
-                f"WHERE {' AND '.join(title_sql_clauses)} "
-                # COLLATE NOCASE on title would be ideal but the column is
-                # UNINDEXED; we use case-insensitive LIKE via lower() in
-                # Python after fetch.
-            )
-            cur = conn.execute(sql, tuple(title_sql_params))
-            title_matched_uuids = {row[0] for row in cur.fetchall()}
-        except sqlite3.Error:
-            # Fall back to no title sweep — body matches still win.
-            title_matched_uuids = set()
 
     candidate_uuids = body_matched_uuids | title_matched_uuids
 
@@ -1239,19 +1311,72 @@ def _search_via_index(
         if cu in candidate_uuids:
             msgs_per_conv.setdefault(cu, set()).add(m["message_uuid"])
 
-    # Walk the conversation corpus ONCE, skipping convs not in the
-    # candidate set. This is the only place we touch
-    # ``get_all_conversations_raw()`` — the warm FileCache makes it
-    # cheap (~10-100 ms for a 1.5 GB corpus on warm disk + cache).
-    # On cold cache it's a one-time cost shared with the CC warm pass.
+    # Load ONLY the matched conversations (not the whole corpus).
+    #
+    # 2026-05-22 cold-cache perf fix: the previous version walked
+    # `store.get_all_conversations_raw(source=source)` which loads
+    # EVERY conv file from disk into the FileCache, then skipped non-
+    # matches. On a 1062-file corpus that's ~13 s cold (file I/O
+    # dominated) even when only 156 of those convs actually matched
+    # the query. The user's "tens of seconds" search reports were
+    # this code path on a freshly-restarted server.
+    #
+    # `_find_conversation_data(uuid)` loads exactly ONE conv (Pass A:
+    # stem==uuid; Pass B: summary-cache lookup). Iterating it over
+    # candidate_uuids loads only the rows we'll actually use.
+    #
+    # Measured cold cache (this image query, 156 candidates on
+    # ~/.claude-explorer):
+    #   * get_all_conversations_raw('all'):    12.86 s
+    #   * 156 × _find_conversation_data:        2.44 s  (5.3× faster)
+    #
+    # Warm cache (FileCache hits): difference is negligible (~50 ms
+    # for either path — file reads aren't happening at all).
+    # Walk ONLY the matched conversations. On warm cache (FileCache
+    # hits) this is sub-100ms even for the whole corpus. On cold
+    # cache, this loop parses 100-200 JSONL files at ~50ms each =
+    # ~5-10s — that's the inherent cost of the slow path because it
+    # needs FULL message bodies from disk to apply the per-message
+    # regex.
+    #
+    # The fast path (_search_via_index_fast for context_size="snippet")
+    # avoids this cost entirely by using FTS5's snippet() and body
+    # columns. A future enhancement (PLANS/search-fast-full.md): make
+    # context_size="full" use the same FTS5 columns since `body`
+    # already stores the full extracted text. That would skip file
+    # I/O entirely. Not in scope for V1.
     results: list[SearchResult] = []
     for conv in store.get_all_conversations_raw(source=source):
         cu = conv.get("uuid", "")
         if cu not in candidate_uuids:
             continue
+        if conv is None:
+            continue
+        cu = conv.get("uuid", "")
+        if cu not in candidate_uuids:
+            continue
+        # Belt-and-suspenders: every conv we just loaded has uuid=cu by
+        # construction, but the source filter on the FTS5 query may
+        # have passed a uuid that lives under a non-matching source on
+        # disk. Re-apply the source gate here so a `source='CLAUDE_AI'`
+        # caller can never see a Claude Code conv slip through (the
+        # FTS5 SQL already filters this; the gate is defensive).
+        if source != "all" and conv.get("source") != source:
+            continue
 
         matching_messages: list[MessageSnippet] = []
         name = conv.get("name", "") or ""
+
+        # /compact trigger→marker rewrite + emit dedupe (2026-05-23).
+        # See the linear-scan emit site for the full rationale. Defense-
+        # in-depth in case the v11 index rebuild hasn't completed (so
+        # the SQL hits below still include stale trigger-row uuids in
+        # ``wanted_msg_uuids``) — rewrite redirects them to the marker
+        # uuid the frontend's auto-expand chain keys on, and dedupe
+        # prevents a transient marker+trigger double-hit from emitting
+        # two MessageSnippet rows for the same conceptual row.
+        trigger_to_marker = _build_compact_trigger_uuid_map(conv)
+        emitted_seen: set[str] = set()
 
         # Title pseudo-message — emitted only when the conv NAME contains
         # the query (mirrors the linear-scan emit at search.py:264).
@@ -1334,9 +1459,17 @@ def _search_via_index(
                     )
                 start = 0
                 end = 0
+            # /compact trigger→marker rewrite + dedupe — see linear-scan
+            # site comment above. Empty mapping for the common case;
+            # ``dict.get(uuid, uuid)`` is a no-op when no mapping exists.
+            raw_uuid = msg.get("uuid", "")
+            emitted_uuid = trigger_to_marker.get(raw_uuid, raw_uuid)
+            if emitted_uuid in emitted_seen:
+                continue
+            emitted_seen.add(emitted_uuid)
             matching_messages.append(
                 MessageSnippet(
-                    message_uuid=msg.get("uuid", ""),
+                    message_uuid=emitted_uuid,
                     sender=msg.get("sender", ""),
                     snippet=snippet,
                     match_start=start,

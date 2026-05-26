@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { queryKeys } from '@/lib/queryClient'
 import type { ConversationFilters, SortField, SortOrder } from '@/lib/types'
@@ -82,23 +82,37 @@ export function useConversation(uuid: string, leaf?: string) {
   })
 }
 
-export function useConversationTree(uuid: string) {
+export function useConversationTree(
+  uuid: string,
+  options?: { enabled?: boolean },
+) {
   // Hunt #5 (2026-05-18): was `staleTime: Infinity`, which is wrong because
   // the tree IS mutable — the fetch pipeline can ingest a new branch for an
   // already-loaded conversation, and `Infinity` would have suppressed
   // refetchOnWindowFocus so the tree modal showed pre-branch state until a
   // hard refresh. 5min mirrors useConversation's setQueryDefaults TTL.
+  //
+  // 2026-05-23 (Commit 6 — duplicate-fetch fix): added optional
+  // `options.enabled` so consumers can gate the query on whether the
+  // tree-modal is actually open. Pre-fix, TreeViewModal called this
+  // hook UNCONDITIONALLY before its `if (!isOpen) return null` early
+  // return — the query fired the moment the component mounted, not
+  // when the user clicked "View branches". Combined with React 19
+  // StrictMode dev-mode double-mount the same /tree query fired
+  // 2× per nav. Default to true to preserve backward compat for any
+  // future consumer that doesn't want gating.
+  const enabled = (options?.enabled ?? true) && !!uuid
   return useQuery({
     queryKey: queryKeys.conversations.tree(uuid),
     queryFn: ({ signal }) => api.getConversationTree(uuid, signal),
-    enabled: !!uuid,
+    enabled,
     staleTime: 5 * 60 * 1000,
   })
 }
 
 export function useSearch(
   query: string,
-  source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' = 'all',
+  source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' | 'CLAUDE_COWORK' = 'all',
   contextSize: 'snippet' | 'full' = 'snippet',
   sort: SortField = 'updated_at',
   sortOrder: SortOrder = 'desc',
@@ -118,11 +132,53 @@ export function useSearch(
   includeToolCalls: boolean,
 ) {
   const [debouncedQuery, setDebouncedQuery] = useState(query)
+  const queryClient = useQueryClient()
 
+  // Debounce the live ``query`` state into ``debouncedQuery`` so the
+  // queryKey only changes after the user stops typing for 200 ms. This
+  // is the existing behavior — unchanged in 2026-05-22.
   useEffect(() => {
     const id = setTimeout(() => setDebouncedQuery(query), 200)
     return () => clearTimeout(id)
   }, [query])
+
+  // 2026-05-22 (council fix, live-Playwright follow-up):
+  // cancel any in-flight /api/search request immediately before the
+  // NEXT one fires, AND on unmount. ``debouncedQuery`` changing is the
+  // exact event where React Query is about to invoke ``queryFn`` for a
+  // new key; firing ``cancelQueries`` here both (a) aborts the prior
+  // observer's still-running fetch (its key just became stale), and
+  // (b) frees the backend threadpool slot for the about-to-start one.
+  //
+  // Why not co-locate with the debounce ``useEffect`` above:
+  // that effect fires on EVERY keystroke (because ``query`` changes
+  // every render), but the prior fetch isn't actually in flight on
+  // most of those keystrokes — it's still waiting for its own debounce
+  // to elapse. Calling cancelQueries on every keystroke is just noise.
+  // Firing it on ``debouncedQuery`` change is the precise moment a NEW
+  // fetch is about to start AND the OLD fetch (if any) is in flight.
+  //
+  // Why the explicit cancel is necessary even though
+  // ``api.search(..., signal)`` already plumbs the AbortSignal:
+  // React Query v5's default ``gcTime: 5min`` keeps the prior query
+  // alive in the cache when its observer rebinds to a new key. The
+  // prior query's in-flight fetch is allowed to complete so the cache
+  // is primed for future observers of the same key. For a search box
+  // where the prior key (``q='aardvar'``) will essentially never be
+  // re-observed (the user typed past it), that's just wasted backend
+  // CPU and a threadpool slot. ``cancelQueries`` overrides the
+  // gc-friendly default and aborts the AbortController directly.
+  //
+  // Prefix match on ``['search']`` covers all search queries
+  // regardless of source/contextSize/scope. The only consumer of
+  // this prefix today is ``useSearch`` itself, so the broad scope
+  // is safe — and intentional (any independent SearchPanel mount
+  // would still want this behavior).
+  useEffect(() => {
+    return () => {
+      void queryClient.cancelQueries({ queryKey: ['search'] })
+    }
+  }, [debouncedQuery, queryClient])
 
   const queryResult = useQuery({
     // Include includeToolCalls in the key so toggling re-fires the network
@@ -138,7 +194,23 @@ export function useSearch(
       api.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls, signal),
     enabled: debouncedQuery.length >= 2,
     staleTime: 60 * 1000, // 1 minute
-    placeholderData: keepPreviousData, // keep last results visible while narrowing query
+    // 2026-05-22 (per CLAUDE-TESTING §5.13): keep previous data only for
+    // changes WITHIN the same `contextSize` (typing keeps narrowing
+    // results visible — the UX that justifies placeholder in the first
+    // place). When `contextSize` flips, the previous results have a
+    // categorically different shape (snippet ~200 chars vs full message
+    // body 10K+ chars) and would create a visual lie: the Snippet/Full
+    // toggle's highlight updates immediately, but stale full-mode
+    // cards would still be rendered until the new fetch lands. That
+    // mismatch IS the "reversed sense" bug the user reported on the
+    // 16K-message conversation. queryKey index 3 is contextSize per
+    // queryKeys.search signature.
+    placeholderData: (previousData, previousQuery) => {
+      if (!previousData || !previousQuery) return undefined
+      const prevCtx = previousQuery.queryKey[3]
+      if (prevCtx !== contextSize) return undefined
+      return previousData
+    },
   })
 
   // Bug B (2026-05-03): the SearchPanel needs a unified "is the search

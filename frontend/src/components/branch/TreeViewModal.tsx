@@ -17,7 +17,17 @@ export function TreeViewModal({
   onClose,
   onSelectPath,
 }: TreeViewModalProps) {
-  const { data: tree, isLoading, error } = useConversationTree(uuid)
+  // 2026-05-23 (Commit 6 — duplicate-fetch fix): gate the tree query on
+  // `isOpen` so we don't fetch /tree until the user actually clicks
+  // "View branches". Pre-fix this fired 2× on every conversation nav
+  // (the modal mounted hidden whenever `conversation.has_branches`
+  // was true, and React 19 StrictMode dev-mode double-mount fired the
+  // query twice). The conversation's `has_branches` boolean was
+  // sufficient to drive whether the "View branches" button shows up;
+  // we don't need to pre-fetch the tree to know there are branches.
+  const { data: tree, isLoading, error } = useConversationTree(uuid, {
+    enabled: isOpen,
+  })
 
   if (!isOpen) return null
 

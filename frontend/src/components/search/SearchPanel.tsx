@@ -389,22 +389,32 @@ export function SearchPanel() {
         </div>
       </div>
 
-      {/* Match counter */}
+      {/* Match counter. When the backend truncation envelope flags
+          `truncated: true` (FTS5 returned more matches than the 1000
+          row LIMIT — see HTTP_SEARCH_LIMIT in backend/routers/search.py),
+          append `+` to the total so the user knows the count is a floor
+          not a ceiling. Detailed "Showing first N of M, refine to see
+          the rest" disclosure still lives in the footer below the
+          results — this is the at-a-glance hint at the top. */}
       {flatMatches.length > 0 && (
         <div className="border-b border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
           <span className="font-medium text-zinc-700 dark:text-zinc-300">
             {activeMatchIndex >= 0 ? activeMatchIndex + 1 : '—'}
           </span>{' '}
           of{' '}
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">
-            {flatMatches.length}
+          <span
+            className="font-medium text-zinc-700 dark:text-zinc-300"
+            title={truncated ? `at least ${flatMatches.length} — true total exceeds the per-query limit` : undefined}
+          >
+            {flatMatches.length}{truncated ? '+' : ''}
           </span>{' '}
           matches
         </div>
       )}
 
       {/* aria-live region: Cmd+G changes the active match without moving
-          DOM focus; SR users would otherwise miss it. */}
+          DOM focus; SR users would otherwise miss it. The "or more"
+          phrasing mirrors the visible `+` suffix when truncated. */}
       <div
         role="status"
         aria-live="polite"
@@ -412,7 +422,7 @@ export function SearchPanel() {
         data-testid="search-match-aria-live"
       >
         {activeMatchIndex >= 0 && flatMatches.length > 0
-          ? `Match ${activeMatchIndex + 1} of ${flatMatches.length}`
+          ? `Match ${activeMatchIndex + 1} of ${flatMatches.length}${truncated ? ' or more' : ''}`
           : ''}
       </div>
 

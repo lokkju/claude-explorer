@@ -5,17 +5,31 @@
  *
  * Reads the per-user preferences blob from `/api/preferences` (TanStack
  * Query, cached under the `['preferences']` key). When the caller asks
- * for a particular key, we resolve it as:
+ * for a particular key, resolution prefers the LATEST signal from this
+ * browser (localStorage), falling back to the server, then the default:
  *
- *     server.data[key]  ??  localStorage[key]  ??  fallback
+ *     localStorage[key]  ??  server.data[key]  ??  fallback
+ *
+ * **Local-first rationale (2026-05-22 fix):** localStorage is written
+ * synchronously on every `setValue` call from THIS browser. It captures
+ * the user's most recent explicit choice. The server is the cross-
+ * tab/cross-process fallback. If the server's cached value diverges
+ * from localStorage (stale from another tab, an earlier Playwright run,
+ * or an in-flight PATCH that never landed), the user's local choice
+ * still wins on the next render — they don't get "I changed it but it
+ * keeps reverting" on each reload.
+ *
+ * Trade-off: a multi-device user who changes prefs on Device A won't
+ * see those changes on Device B's next page load unless Device B's
+ * localStorage is empty (first-time use) or the user clears it. For
+ * the V1 single-device deployment model this is the right call —
+ * "last action in this browser wins" matches user expectation. Cross-
+ * device live sync is V1.1 territory.
  *
  * `setValue(v)` performs a *dual-write*: it PATCHes `/api/preferences`
  * with `{ data: { [key]: v } }` AND mirrors the value into localStorage
- * synchronously. The localStorage mirror is intentional during the soak
- * window — it lets the app keep working if the backend is briefly down,
- * and lets a tab that loaded before the migration still see the latest
- * value. (The mirror will be removed in a follow-up commit after the
- * server-of-record path has been validated.)
+ * synchronously. localStorage is now load-bearing for the resolution
+ * order above, NOT just a soak-window mirror.
  *
  * Migration marker: any successful call to setValue writes
  * `prefs_migrated_v1=true` to localStorage. The per-context migration
@@ -133,9 +147,42 @@ export function usePreferences<T>(
 ): [T, (value: T) => void] {
   const qc = useQueryClient();
 
-  const { data: envelope } = useQuery<PreferencesEnvelope>({
+  // 2026-05-22 perf fix: subscribe ONLY to this hook's slice of the
+  // preferences envelope via a per-key `select`. Without this, every
+  // `usePreferences` consumer subscribes to the same `['preferences']`
+  // queryKey, so a write to ANY preference notifies ALL observers
+  // (and on the 3964-bubble conversation the resulting SettingsProvider
+  // re-render cascaded through 3964 MessageBubbles via the
+  // useSettings/MessageBubble.tsx:50 context-bypass-memo route, costing
+  // ~9.6 s of sync work per Snippet/Full toggle).
+  //
+  // TanStack Query v5 short-circuits the observer notification when the
+  // `select` output is referentially === to the previous output. With a
+  // primitive return (string/boolean/enum — which IS what every current
+  // preference key holds), `===` works correctly out of the box and no
+  // custom `structuralSharing` is needed.
+  //
+  // `useCallback`-wrap the selector so its identity is stable across
+  // renders. A fresh `select` reference would force TanStack to
+  // re-evaluate it on every observer notification, defeating the
+  // bailout in some configurations.
+  //
+  // The localStorage merge stays in the render body (NOT inside
+  // select). `select` runs only when the query cache changes, but
+  // `setValue` writes localStorage synchronously and triggers a
+  // re-render via the useMutation observer's status change. The local-
+  // first contract requires reading localStorage on every render of
+  // this hook — see the regression test in
+  // `usePreferences.subscriptionIsolation.test.tsx`.
+  const selectKey = useCallback(
+    (envelope: PreferencesEnvelope) => envelope.data[key] as T | undefined,
+    [key],
+  );
+
+  const { data: serverValue } = useQuery<PreferencesEnvelope, Error, T | undefined>({
     queryKey: PREFS_QUERY_KEY,
     queryFn: ({ signal }) => fetchPrefs(signal),
+    select: selectKey,
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
@@ -147,14 +194,17 @@ export function usePreferences<T>(
     },
   });
 
-  // Dual-read: prefer server, fall back to localStorage, then to default.
-  const serverValue = envelope?.data?.[key] as T | undefined;
+  // Dual-read: prefer localStorage (the LATEST signal from THIS browser)
+  // over server (the cross-tab fallback) over the caller's fallback.
+  // See module docstring for the bug this fixes — "I keep changing the
+  // theme but it reverts on reload" was caused by stale server cache
+  // winning over localStorage's fresh user choice.
   const localValue = readLocalStorage<T>(key);
   const value: T =
-    serverValue !== undefined
-      ? serverValue
-      : localValue !== undefined
-        ? localValue
+    localValue !== undefined
+      ? localValue
+      : serverValue !== undefined
+        ? serverValue
         : fallback;
 
   const setValue = useCallback(

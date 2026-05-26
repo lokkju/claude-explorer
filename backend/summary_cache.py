@@ -147,9 +147,28 @@ class SummaryCache:
 
         # WAL + sensible pragmas. Applied via the write connection but
         # affects the database file.
+        #
+        # 2026-05-24 concurrency fix: bumped busy_timeout from 5000 ->
+        # 30000 (5s -> 30s). The summary_cache and the search_index
+        # SHARE the same SQLite database file
+        # (``<data_dir>.parent/search-index.sqlite``); each module
+        # opens its own writer connection guarded by its own Python
+        # threading.Lock. WAL mode lets the writers serialize at the
+        # SQLite level via busy_timeout, but only IF the timeout is
+        # generous enough to outlast the slowest possible writer.
+        #
+        # The slowest writer is the search_index full rebuild (250K-
+        # message FTS5 reindex on the user's real corpus, which can
+        # take 10-20 s and holds a writer transaction the whole time).
+        # 5 s was not enough; the user hit ``database is locked`` when
+        # summary_cache.upsert_many fired during a rebuild. 30 s
+        # safely outlasts all known writers; the cost is that a worst-
+        # case interactive request can wait up to 30 s for a write
+        # slot during a rebuild, which is still better than the
+        # alternative (silent data drop / observable 500).
         self._write_conn.execute("PRAGMA journal_mode = WAL")
         self._write_conn.execute("PRAGMA synchronous = NORMAL")
-        self._write_conn.execute("PRAGMA busy_timeout = 5000")
+        self._write_conn.execute("PRAGMA busy_timeout = 30000")
         self._write_conn.execute("PRAGMA temp_store = MEMORY")
 
         self._ensure_schema()
@@ -200,6 +219,12 @@ class SummaryCache:
                 check_same_thread=False,
                 isolation_level=None,
             )
+            # 2026-05-24 concurrency fix: same rationale as the writer
+            # connection. WAL mode permits a reader to proceed during
+            # a long writer transaction, but the reader still needs a
+            # busy_timeout for the rare cases where SQLite must
+            # synchronize on the file (e.g. checkpoint or VACUUM).
+            conn.execute("PRAGMA busy_timeout = 30000")
             self._read_local.conn = conn
         return conn
 

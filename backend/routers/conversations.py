@@ -33,12 +33,13 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
     "",
     response_model=list[ConversationListItem],
     response_class=ORJSONResponse,
+    summary="List conversations with optional filtering, sorting, and search",
 )
 async def list_conversations(
     search: str | None = Query(None, description="Search in name/summary"),
     starred: bool | None = Query(None, description="Filter by starred status"),
     model: str | None = Query(None, description="Filter by model"),
-    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = Query(
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = Query(
         "all", description="Filter by source (all, CLAUDE_AI, CLAUDE_CODE)"
     ),
     sort: Literal["updated_at", "created_at", "name", "project"] = Query(
@@ -56,6 +57,15 @@ async def list_conversations(
     organization_id: str | None = Query(
         None, description="Filter by organization (workspace) UUID"
     ),
+    show_archived: bool = Query(
+        False,
+        description=(
+            "Include archived sessions (currently only meaningful for "
+            "CLAUDE_COWORK; Desktop + CC have no archived flag). When "
+            "false (default), Cowork sessions with sidecar.isArchived "
+            "true are hidden."
+        ),
+    ),
     store: ConversationStore = Depends(get_store),
 ) -> list[ConversationListItem]:
     """List all conversations with optional filtering."""
@@ -69,6 +79,7 @@ async def list_conversations(
         include_phantom=include_phantom,
         include_subagents=include_subagents,
         organization_id=organization_id,
+        show_archived=show_archived,
     )
     # Pydantic v2 from_attributes=True projects the fuller
     # ConversationSummary into the skinny ConversationListItem without
@@ -81,20 +92,40 @@ async def list_conversations(
     ]
 
 
-@router.get("/{uuid}", response_model=ConversationDetail)
+@router.get(
+    "/{uuid}",
+    response_model=ConversationDetail,
+    response_class=ORJSONResponse,
+    summary="Get a single conversation, optionally on a specific branch",
+)
 async def get_conversation(
     uuid: str,
     leaf: str | None = Query(None, description="Override active branch leaf UUID"),
     store: ConversationStore = Depends(get_store),
-) -> ConversationDetail:
-    """Get a single conversation by UUID, optionally on a specific branch."""
-    conversation = store.get_conversation(uuid, leaf_override=leaf)
+) -> ORJSONResponse:
+    """Get a single conversation by UUID, optionally on a specific branch.
+
+    W3+W4 (2026-05-23): the route bypasses FastAPI's default Pydantic
+    encoder by returning ``ORJSONResponse(content=cached_dict)``
+    directly. The dict cache in :func:`backend.store.get_conversation_dict`
+    saves the ~186 ms Pydantic rebuild on warm hits, AND the
+    ORJSONResponse layer saves the ~70 ms stdlib-json encode.
+
+    ``response_model=ConversationDetail`` is kept ON THE DECORATOR
+    purely for OpenAPI schema generation — FastAPI skips its serialization
+    pipeline whenever the handler returns a Response object directly.
+    """
+    conversation = store.get_conversation_dict(uuid, leaf_override=leaf)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return conversation
+    return ORJSONResponse(content=conversation)
 
 
-@router.get("/{uuid}/tree", response_model=ConversationTree)
+@router.get(
+    "/{uuid}/tree",
+    response_model=ConversationTree,
+    summary="Get the full message tree for a conversation (all branches)",
+)
 async def get_conversation_tree(
     uuid: str,
     store: ConversationStore = Depends(get_store),

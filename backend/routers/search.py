@@ -17,15 +17,73 @@ Both methods delegate to :func:`backend.search.search_conversations` with
 identical kwargs — only the transport differs.
 """
 
-from typing import Literal
+import asyncio
+import logging
+from typing import Any, Callable, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..deps import get_store
 from ..models import SearchResponse
 from ..store import ConversationStore
 from ..search import search_conversations
+
+log = logging.getLogger("uvicorn.error")
+
+# Poll interval for client-disconnect detection (2026-05-22). Smaller
+# values bail out faster but cost more event-loop wakeups while a
+# search runs. 100ms is the typical-network-round-trip ballpark and
+# matches the user's "feels instant on cancel" target.
+_DISCONNECT_POLL_INTERVAL = 0.1
+
+
+async def _run_search_with_disconnect(
+    request: Request,
+    do_search: Callable[[], SearchResponse],
+) -> SearchResponse:
+    """Offload a sync search to the threadpool, race against client disconnect.
+
+    Returns the search response on success. Raises ``HTTPException(499)``
+    on client disconnect — the connection is already gone, so this
+    surfaces a non-2xx status to the request-timing middleware and
+    closes the request lifecycle promptly.
+
+    The threadpool task is NOT interrupted on cancellation — Python's
+    ``asyncio.to_thread`` has no kill-the-thread primitive. The
+    underlying ``search_conversations`` call runs to natural completion
+    in the background and its return value is discarded. This is
+    bounded backend CPU waste (one full search per abandoned client);
+    truly stopping the SQL mid-flight requires sqlite3 interrupt(),
+    deferred to a future commit. See test_search_client_disconnect.py
+    for the contract this fixture pins.
+    """
+    search_task = asyncio.create_task(asyncio.to_thread(do_search))
+
+    while not search_task.done():
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(search_task),
+                timeout=_DISCONNECT_POLL_INTERVAL,
+            )
+        except asyncio.TimeoutError:
+            pass
+
+        if search_task.done():
+            break
+
+        if await request.is_disconnected():
+            log.info("client disconnected mid-search; bailing out")
+            # asyncio.shield kept the task alive across the timeout, so
+            # the threadpool worker is still running. We don't await it
+            # here — it'll finish in the background and its result is
+            # discarded by the GC.
+            raise HTTPException(
+                status_code=499,
+                detail="Client closed request",
+            )
+
+    return search_task.result()
 
 
 # HTTP route LIMIT. Keeps the FTS5 fast path bounded so the snippet()
@@ -52,10 +110,26 @@ def _parse_csv_uuid_set(raw: str | None) -> set[str] | None:
     return {u.strip() for u in raw.split(",") if u.strip()} if raw.strip() else set()
 
 
-@router.get("/search", response_model=SearchResponse)
+@router.get(
+    "/search",
+    response_model=SearchResponse,
+    summary="Search across conversations (query-string form)",
+)
+# 2026-05-22 (Wave 2): ``async def`` + ``asyncio.to_thread`` inside the
+# helper. The earlier ``def search(...)`` form correctly off-threaded to
+# FastAPI's anyio threadpool, but it had no way to notice when the
+# client disconnected mid-search — the sync handler returned only
+# AFTER ``search_conversations`` completed (~13 s cold-path waste per
+# abandoned keystroke). Async wrapper races the search task against
+# ``request.is_disconnected()`` polling and raises 499 on disconnect.
+# Parallelism is preserved because ``asyncio.to_thread`` uses the same
+# anyio threadpool the sync handler would have used. The dynamic test
+# ``test_three_concurrent_searches_run_in_parallel`` keeps the
+# parallel-execution contract pinned.
 async def search(
+    request: Request,
     q: str = Query(..., min_length=1, description="Search query"),
-    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = Query(
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = Query(
         "all", description="Filter by source"
     ),
     context_size: Literal["snippet", "full"] = Query(
@@ -110,20 +184,23 @@ async def search(
     """Search across all conversations (GET form)."""
     bookmark_set = _parse_csv_uuid_set(bookmarks)
     conversation_uuids_set = _parse_csv_uuid_set(conversation_uuids)
-    return search_conversations(
-        store,
-        q,
-        source=source,
-        context_size=context_size,
-        sort=sort,
-        sort_order=sort_order,
-        conversation_uuid=conversation_uuid,
-        project_path=project_path,
-        bookmarks=bookmark_set,
-        include_tool_calls=include_tool_calls,
-        organization_id=organization_id,
-        conversation_uuids=conversation_uuids_set,
-        limit=HTTP_SEARCH_LIMIT,
+    return await _run_search_with_disconnect(
+        request,
+        lambda: search_conversations(
+            store,
+            q,
+            source=source,
+            context_size=context_size,
+            sort=sort,
+            sort_order=sort_order,
+            conversation_uuid=conversation_uuid,
+            project_path=project_path,
+            bookmarks=bookmark_set,
+            include_tool_calls=include_tool_calls,
+            organization_id=organization_id,
+            conversation_uuids=conversation_uuids_set,
+            limit=HTTP_SEARCH_LIMIT,
+        ),
     )
 
 
@@ -150,7 +227,7 @@ class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     q: str = Field(..., min_length=1, description="Search query")
-    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all"
+    source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all"
     context_size: Literal["snippet", "full"] = "snippet"
     sort: Literal["updated_at", "created_at", "name", "project"] = "updated_at"
     sort_order: Literal["asc", "desc"] = "desc"
@@ -168,8 +245,15 @@ class SearchRequest(BaseModel):
     include_tool_calls: bool = True
 
 
-@router.post("/search", response_model=SearchResponse)
+@router.post(
+    "/search",
+    response_model=SearchResponse,
+    summary="Search across conversations (JSON-body form; for large UUID sets)",
+)
+# ``async def`` + ``asyncio.to_thread`` — see the matching note on the
+# GET handler above. Same parallelism + disconnect-detection rationale.
 async def search_post(
+    request: Request,
     body: SearchRequest,
     store: ConversationStore = Depends(get_store),
 ) -> SearchResponse:
@@ -181,22 +265,25 @@ async def search_post(
     `search_conversations()` internals back both paths so any
     per-method drift is caught by ``test_post_search_get_parity_*``.
     """
-    return search_conversations(
-        store,
-        body.q,
-        source=body.source,
-        context_size=body.context_size,
-        sort=body.sort,
-        sort_order=body.sort_order,
-        conversation_uuid=body.conversation_uuid,
-        project_path=body.project_path,
-        bookmarks=set(body.bookmarks) if body.bookmarks is not None else None,
-        include_tool_calls=body.include_tool_calls,
-        organization_id=body.organization_id,
-        conversation_uuids=(
-            set(body.conversation_uuids)
-            if body.conversation_uuids is not None
-            else None
+    return await _run_search_with_disconnect(
+        request,
+        lambda: search_conversations(
+            store,
+            body.q,
+            source=body.source,
+            context_size=body.context_size,
+            sort=body.sort,
+            sort_order=body.sort_order,
+            conversation_uuid=body.conversation_uuid,
+            project_path=body.project_path,
+            bookmarks=set(body.bookmarks) if body.bookmarks is not None else None,
+            include_tool_calls=body.include_tool_calls,
+            organization_id=body.organization_id,
+            conversation_uuids=(
+                set(body.conversation_uuids)
+                if body.conversation_uuids is not None
+                else None
+            ),
+            limit=HTTP_SEARCH_LIMIT,
         ),
-        limit=HTTP_SEARCH_LIMIT,
     )

@@ -3,6 +3,8 @@
 import json
 import logging
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,6 +35,52 @@ from .models import (
 
 
 logger = logging.getLogger(__name__)
+
+
+# W3+W4 (2026-05-23 council decision): module-level cache of the
+# rendered ``model_dump(mode='json')`` output for ConversationDetail.
+#
+# Why a dict cache (not a Pydantic-object cache):
+#   * On warm hits, the route returns ORJSONResponse(content=cached_dict)
+#     which bypasses BOTH Pydantic rebuild (~186 ms per call on the
+#     user's 16K-msg conv) AND FastAPI's default encoder (~70 ms).
+#   * Caching the Pydantic object would still pay model_dump on every
+#     hit — the dict shape is the actual perf target.
+#
+# Cache key: (uuid, mtime). When the underlying file's mtime changes,
+# the next lookup is a miss and rebuilds.
+#
+# Mutability contract: the cached dict is SHARED across requests. Callers
+# MUST treat it as immutable. The conversation route returns it directly
+# to ORJSONResponse which serializes without mutation.
+#
+# LRU cap: 32 entries. Each entry is ~5-70 MB on disk worth of dict —
+# at 32 entries the worst-case resident memory is ~2 GB on a heavy
+# corpus. In practice users rotate through a handful of conversations
+# per session; the LRU keeps the hot set warm.
+#
+# Thread safety: a threading.RLock guards the OrderedDict. The route
+# layer is async but the cache lookup happens inside synchronous code.
+#
+# Invalidation: keyed by mtime, so a file write naturally invalidates.
+# For explicit cache purges, use ``invalidate_detail_dict_cache(uuid)``
+# or ``_DETAIL_DICT_CACHE.clear()``.
+_DETAIL_DICT_CACHE_MAX = 32
+_DETAIL_DICT_CACHE: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+_DETAIL_DICT_CACHE_LOCK = threading.RLock()
+
+
+def invalidate_detail_dict_cache(uuid: str | None = None) -> None:
+    """Drop one (or all) entries from the detail-dict cache.
+
+    Call with ``uuid=None`` to clear the entire cache (used by tests
+    and the CC watcher when it detects out-of-band file changes).
+    """
+    with _DETAIL_DICT_CACHE_LOCK:
+        if uuid is None:
+            _DETAIL_DICT_CACHE.clear()
+        else:
+            _DETAIL_DICT_CACHE.pop(uuid, None)
 
 
 def _safe_int(raw: Any, *, default: int = 0, field: str = "?",
@@ -271,15 +319,25 @@ def build_message_tree(messages: list[dict[str, Any]]) -> list[MessageNode]:
 class ConversationStore:
     """Store for reading conversation data from disk and Claude Code JSONL files."""
 
-    def __init__(self, data_dir: Path | None = None, claude_dir: Path | None = None):
-        # Both directories fall back through the constructor argument first,
+    def __init__(
+        self,
+        data_dir: Path | None = None,
+        claude_dir: Path | None = None,
+        cowork_root: Path | None = None,
+    ):
+        # All directories fall back through the constructor argument first,
         # then the global Settings (which reads CLAUDE_EXPLORER_DATA_DIR
         # — or legacy CLAUDE_EXPORTER_DATA_DIR — / CLAUDE_DIR /
-        # ~/.claude-explorer/config.json), and finally the platform
-        # default. claude_dir matters for tests that need a synthetic
-        # ~/.claude/projects/ tree on disk.
+        # CLAUDE_DESKTOP_APP_DIR / ~/.claude-explorer/config.json), and
+        # finally the platform default. claude_dir matters for tests
+        # that need a synthetic ~/.claude/projects/ tree on disk;
+        # cowork_root similarly for the Cowork integration tests.
         self.data_dir = data_dir or get_settings().data_dir
         self.claude_dir = claude_dir or get_settings().claude_dir
+        self.cowork_root = (
+            cowork_root
+            or get_settings().claude_desktop_app_dir / "local-agent-mode-sessions"
+        )
 
     def _get_conversation_files(self) -> list[Path]:
         """Get all conversation JSON files.
@@ -438,6 +496,9 @@ class ConversationStore:
             organization_id=data.get("organization_id"),
             organization_name=data.get("organization_name"),
             subagents=subagents,
+            # D8: Cowork sidecar.isArchived. Defaults to False on
+            # Desktop + CC (they don't surface an archived flag).
+            is_archived=bool(data.get("is_archived") or False),
         )
 
     def _get_claude_code_conversations(
@@ -456,7 +517,7 @@ class ConversationStore:
 
     def _get_all_conversations_data(
         self,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
         full_content: bool = False,
         include_phantom: bool = False,
     ) -> list[dict[str, Any]]:
@@ -475,8 +536,12 @@ class ConversationStore:
             for path in self._get_conversation_files():
                 data = self._load_conversation(path)
                 if data:
-                    # Skip Claude Code conversations that might have been imported
-                    if data.get("source") == "CLAUDE_CODE":
+                    # Skip Claude Code / Cowork conversations that might
+                    # have been imported into the Desktop data dir (e.g.
+                    # by a future export-and-reimport flow). Without
+                    # both checks a CLAUDE_COWORK conv stamped at ingest
+                    # could double-count as CLAUDE_AI.
+                    if data.get("source") in ("CLAUDE_CODE", "CLAUDE_COWORK"):
                         continue
                     conversations.append(data)
 
@@ -486,6 +551,11 @@ class ConversationStore:
                 full_content=full_content, include_phantom=include_phantom
             ))
 
+        # Load Cowork conversations (from local-agent-mode-sessions audit.jsonl)
+        if source in ("all", "CLAUDE_COWORK"):
+            from .cowork_reader import list_cowork_conversations
+            conversations.extend(list_cowork_conversations(self.cowork_root))
+
         return conversations
 
     def list_conversations(
@@ -493,18 +563,29 @@ class ConversationStore:
         search: str | None = None,
         starred: bool | None = None,
         model: str | None = None,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
         sort: str = "updated_at",
         sort_order: Literal["asc", "desc"] = "desc",
         include_phantom: bool = False,
         include_subagents: bool = False,
         organization_id: str | None = None,
+        show_archived: bool = False,
     ) -> list[ConversationSummary]:
-        """List all conversations with optional filtering."""
+        """List all conversations with optional filtering.
+
+        D8 (Cowork): archived sessions (sidecar.isArchived=True) are
+        hidden by default; pass ``show_archived=True`` to include
+        them. Desktop + CC don't surface an archived flag, so the
+        filter is effectively no-op for those sources.
+        """
         conversations = []
 
         for data in self._get_all_conversations_data(source, include_phantom=include_phantom):
             # Apply filters
+            if not show_archived and data.get("is_archived"):
+                # D8: default-hide archived Cowork sessions. The toggle
+                # in the sidebar passes show_archived=True to override.
+                continue
             if starred is not None and data.get("is_starred") != starred:
                 continue
             if model and data.get("model") != model:
@@ -651,26 +732,72 @@ class ConversationStore:
             try:
                 summary = read_conversation_summary_fast(jsonl_path)
             except Exception:
+                # C3 silent-swallow fix (LLM council code-review,
+                # 2026-05-21): the loop's leading comment promises
+                # "never silently returns 404 when the data IS on
+                # disk", but a parse / permission / decode failure on
+                # ANY file here would previously silently skip it
+                # with zero diagnostics. The user sees "Conversation
+                # not found" and there's no operator breadcrumb for
+                # which file failed. Log at WARNING with exc_info so
+                # the exception type (which drives the fix) is
+                # captured. Then keep ``continue`` so behavior is
+                # otherwise preserved.
+                logger.warning(
+                    "Failed to read Claude Code summary for %s while "
+                    "resolving uuid=%s",
+                    jsonl_path,
+                    uuid,
+                    exc_info=True,
+                )
                 continue
             if summary and summary.get("uuid") == uuid:
                 data = _load_conversation_cached(jsonl_path)
                 if data:
                     return data, jsonl_path
 
+        # Finally check Cowork sessions. The directory stem is
+        # ``local_<uuid>``, so we walk every deployment+org and look
+        # for the matching session_dir. We only call
+        # ``read_cowork_conversation`` on the candidate (not the whole
+        # tree) so this resolution is O(deployments * orgs), not
+        # O(sessions).
+        if self.cowork_root.exists():
+            from .cowork_reader import read_cowork_conversation
+            try:
+                deployment_dirs = list(self.cowork_root.iterdir())
+            except OSError:
+                deployment_dirs = []
+            for deployment_dir in deployment_dirs:
+                if not deployment_dir.is_dir():
+                    continue
+                try:
+                    org_dirs = list(deployment_dir.iterdir())
+                except OSError:
+                    continue
+                for org_dir in org_dirs:
+                    if not org_dir.is_dir():
+                        continue
+                    candidate = org_dir / f"local_{uuid}"
+                    if candidate.is_dir():
+                        data = read_cowork_conversation(candidate)
+                        if data and data.get("uuid") == uuid:
+                            return data, candidate / "audit.jsonl"
+
         return None, None
 
-    def get_conversation(self, uuid: str, leaf_override: str | None = None) -> ConversationDetail | None:
-        """Get a single conversation by UUID with resolved active branch.
+    def _build_detail_from_data(
+        self,
+        data: dict[str, Any],
+        file_path: Path | None,
+        leaf_override: str | None,
+    ) -> ConversationDetail:
+        """Build a ConversationDetail from already-loaded raw data.
 
-        Args:
-            uuid: Conversation UUID.
-            leaf_override: If provided, render the branch ending at this message
-                UUID instead of the conversation's stored current leaf.
+        Extracted from ``get_conversation`` (2026-05-23) so the W4 cache
+        layer can call this without re-running ``_find_conversation_data``
+        on every miss. Pure function of its inputs; no I/O.
         """
-        data, file_path = self._find_conversation_data(uuid)
-        if not data:
-            return None
-
         # See _make_summary for the (value or fallback) rationale —
         # an explicit null on chat_messages used to crash every
         # downstream iteration (any/len/for-in/has_branches) with a
@@ -679,7 +806,10 @@ class ConversationStore:
         chat_messages = data.get("chat_messages") or []
         stored_leaf = data.get("current_leaf_message_uuid") or ""
         source = data.get("source") or "CLAUDE_AI"
-        is_cc = source == "CLAUDE_CODE"
+        # Cowork shares the chronological append-only log semantics —
+        # no parentUuid links, no branches, no leaf-walking. Widen the
+        # CC guard so the same render path applies to both.
+        is_chronological = source in ("CLAUDE_CODE", "CLAUDE_COWORK")
 
         # Bug-fix (2026-05-12): Claude Code JSONLs are append-only
         # chronological logs, NOT branched message trees. CC re-serializes
@@ -693,7 +823,9 @@ class ConversationStore:
         # render the chronological message stream and skip leaf-walking
         # entirely. Compact markers continue to render inline via the
         # `compact_markers` array on the response.
-        if is_cc:
+        # Cowork extension (2026-05-25): same fix applies — Cowork
+        # audit.jsonl has no parentUuid field at all.
+        if is_chronological:
             leaf_uuid = stored_leaf
             branch = chat_messages
             # has_branches() is also unreliable for CC: post-compact
@@ -761,7 +893,120 @@ class ConversationStore:
             # V1 polish (2026-05-12): CC reader's `_flag_leading_prelude_markers`
             # emits this; Desktop data dicts won't contain it, so default 0.
             prelude_hidden_count=prelude_count,
+            # D8/D9/D10 (Cowork, Phase 6): forward sidecar-derived
+            # is_archived/error/sandbox_path. Defaults are safe for
+            # Desktop + CC (which don't populate these keys).
+            is_archived=bool(data.get("is_archived") or False),
+            error=data.get("error"),
+            sandbox_path=data.get("sandbox_path"),
         )
+
+    def get_conversation(self, uuid: str, leaf_override: str | None = None) -> ConversationDetail | None:
+        """Get a single conversation by UUID with resolved active branch.
+
+        Returns a Pydantic ``ConversationDetail``. **Not cached** (callers
+        that expect the Pydantic shape — export routes, tests — must keep
+        working unchanged). The /api/conversations/<uuid> route hits the
+        cached-dict path via :meth:`get_conversation_dict` instead.
+
+        Args:
+            uuid: Conversation UUID.
+            leaf_override: If provided, render the branch ending at this message
+                UUID instead of the conversation's stored current leaf.
+        """
+        data, file_path = self._find_conversation_data(uuid)
+        if not data:
+            return None
+        return self._build_detail_from_data(data, file_path, leaf_override)
+
+    def get_conversation_dict(
+        self, uuid: str, leaf_override: str | None = None
+    ) -> dict[str, Any] | None:
+        """Get a conversation as a ``model_dump(mode='json')`` dict, cached.
+
+        W3+W4 fast path for the /api/conversations/<uuid> route. The
+        returned dict is suitable for direct hand-off to ORJSONResponse,
+        bypassing both Pydantic rebuild AND FastAPI's default encoder.
+
+        Caching:
+          * Cache key: ``uuid`` only; entry value: ``(mtime, dict)``.
+            On hit when ``mtime`` matches the on-disk file, returns the
+            same dict instance (`is`-identical).
+          * ``leaf_override`` is NEVER cached — every call with a
+            non-None override rebuilds (rare path; avoids cardinality
+            explosion).
+          * Cap: 32 entries, LRU-evicted.
+
+        Mutability: callers MUST treat the returned dict as immutable.
+        The dict is shared across requests; mutating it poisons the
+        cache for every subsequent reader.
+
+        Args:
+            uuid: Conversation UUID.
+            leaf_override: If provided, NEVER cached; rebuilds every call.
+
+        Returns:
+            A dict (the ``model_dump(mode='json')`` shape of
+            :class:`ConversationDetail`), or ``None`` if no conversation
+            with that uuid exists.
+        """
+        # Leaf override: bypass cache entirely.
+        if leaf_override is not None:
+            data, file_path = self._find_conversation_data(uuid)
+            if not data:
+                return None
+            detail = self._build_detail_from_data(data, file_path, leaf_override)
+            return detail.model_dump(mode="json")
+
+        # Default-leaf path: cache by (uuid, mtime).
+        data, file_path = self._find_conversation_data(uuid)
+        if not data:
+            return None
+
+        # Compute current mtime — if file_path is None (synthetic /
+        # malformed data) we cannot key the cache; rebuild every call.
+        if file_path is None:
+            detail = self._build_detail_from_data(data, file_path, None)
+            return detail.model_dump(mode="json")
+
+        try:
+            current_mtime = file_path.stat().st_mtime
+        except OSError:
+            # Race: file vanished. Build once, don't cache.
+            detail = self._build_detail_from_data(data, file_path, None)
+            return detail.model_dump(mode="json")
+
+        with _DETAIL_DICT_CACHE_LOCK:
+            hit = _DETAIL_DICT_CACHE.get(uuid)
+            if hit is not None and hit[0] == current_mtime:
+                # Cache HIT — promote to MRU.
+                _DETAIL_DICT_CACHE.move_to_end(uuid)
+                return hit[1]
+
+        # Cache MISS — build outside the lock so concurrent misses for
+        # DIFFERENT uuids don't serialize behind each other's
+        # Pydantic+dump work. Worst case: two concurrent misses for the
+        # SAME uuid both build; the last writer wins. Idempotent
+        # (deterministic from `data`).
+        detail = self._build_detail_from_data(data, file_path, None)
+        dumped = detail.model_dump(mode="json")
+
+        with _DETAIL_DICT_CACHE_LOCK:
+            # Re-fetch in case another thread populated it; if so, return
+            # THEIR instance (so other observers' `is` identity holds).
+            existing = _DETAIL_DICT_CACHE.get(uuid)
+            if existing is not None and existing[0] == current_mtime:
+                _DETAIL_DICT_CACHE.move_to_end(uuid)
+                return existing[1]
+            # Pop-then-reinsert is the canonical MRU promotion pattern for
+            # OrderedDict (reassignment alone does NOT reposition).
+            if uuid in _DETAIL_DICT_CACHE:
+                del _DETAIL_DICT_CACHE[uuid]
+            _DETAIL_DICT_CACHE[uuid] = (current_mtime, dumped)
+            # LRU evict.
+            while len(_DETAIL_DICT_CACHE) > _DETAIL_DICT_CACHE_MAX:
+                _DETAIL_DICT_CACHE.popitem(last=False)
+            return dumped
 
     def get_conversation_tree(self, uuid: str) -> ConversationTree | None:
         """Get the full message tree for a conversation."""
@@ -774,7 +1019,8 @@ class ConversationStore:
         chat_messages = data.get("chat_messages") or []
         leaf_uuid = data.get("current_leaf_message_uuid") or ""
         source = data.get("source") or "CLAUDE_AI"
-        is_cc = source == "CLAUDE_CODE"
+        # Cowork is also chronological-only — same zero-state tree.
+        is_chronological = source in ("CLAUDE_CODE", "CLAUDE_COWORK")
 
         # Bug-fix (2026-05-12, follow-up to get_conversation): Claude Code
         # JSONLs are append-only chronological logs with no edit-branches;
@@ -787,7 +1033,7 @@ class ConversationStore:
         # response is semantically meaningless. Return the zero-state
         # envelope — same shape the route returns for an empty Desktop
         # conversation (see test_conversations_tree.py:476).
-        if is_cc:
+        if is_chronological:
             return ConversationTree(
                 uuid=uuid,
                 root_messages=[],
@@ -812,14 +1058,14 @@ class ConversationStore:
 
     def get_all_conversations_raw(
         self,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
     ) -> list[dict[str, Any]]:
         """Get all raw conversation data for search/export (includes full message content)."""
         return self._get_all_conversations_data(source, full_content=True)
 
     def count_conversations(
         self,
-        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all",
+        source: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all",
     ) -> int:
         """Count total number of conversations."""
         return len(self._get_all_conversations_data(source))
