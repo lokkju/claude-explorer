@@ -27,12 +27,12 @@ The raw material for (4–5) lives in the `claude-sessions` MCP server: one main
    │  synthesis:  themes / quotes / timeline / use_cases           │
    └──────────────────────────────────────────────────────────────┘
                                       │
-        ┌──────────────┬──────────────┼──────────────┬──────────────┐
-        ▼              ▼              ▼              ▼              ▼
-     Part 1         Part 2         Part 3         Part 4         Part 5
-     Overview       Web UI         MCP server     Build story 1  Build story 2
-     (README +      (screenshots)  (README +      (phases 1–N)   (phases N–end)
-      use_cases)                    meta demo)
+        ┌──────────────┬──────────────┼──────────────┬──────────────┬──────────────┐
+        ▼              ▼              ▼              ▼              ▼              ▼
+     Part 1         Part 2         Part 3         Part 4         Part 5         Part 6
+     Overview       Web UI         MCP server     Build story 1  Build story 2  LLM Council
+     (README +      (screenshots)  (README +      (phases 1–N)   (phases N–end) (methodology +
+      use_cases)                    meta demo)                                   catches)
 ```
 
 Single-threaded. Subagents write files, return ≤300-word summaries. Pauses between phases let the user redirect.
@@ -52,15 +52,17 @@ Single-threaded. Subagents write files, return ≤300-word summaries. Pauses bet
 | Session scope | `claude-desktop-message-exporter` project only; 7 Gmail-agent sessions skipped |
 | Target length | 2,500–5000 words per part; 600–900 for series intro |
 | Pause points | 7 approved (before start, after scaffold, after phase boundaries, every 5 phases during extraction, after synthesis, after each article part, before final PII pass) |
-| LLM Council content | **Split out of this series** (2026-04-20 decision). Full research preserved at `PLANS/future_articles/llm_council.md` for a standalone article building on user's existing LinkedIn post. In this series, Part 3 and/or Part 5 include a one-sentence forward reference only — see the scope note at the top of the *LLM Council* theme in `PROCESS/90_themes.md`. |
+| LLM Council content | **Folded back IN as Part 6** (2026-05-22 reversal of the 2026-04-20 split-out decision). Trigger: a 2026-05-21 multi-day code-review pass driven by a new `llm-council-code-review` agent (heterogeneous GPT-5.2 + Gemini-3-Pro + Opus 4.7) produced a fresh batch of concrete, citable catches — including a shipping crash in `claude-explorer fetch` that no test covered. The cumulative receipts (Phase 19/20 catches from the build session + this 2026-05-21 sweep + the user's existing LinkedIn material) now justify a full series part rather than a forward-pointer. Detailed plan in `PLANS/articles/part6_llm_council_plan.md`. The seed doc at `PLANS/future_articles/llm_council.md` is being absorbed into the new part-plan; the future-articles file remains as historical record. |
+| Part 7 (perf postmortem) | **Added 2026-05-23.** A multi-day perf hunt produced a 5-belief falsification chain on search-typing lag, plus dramatic numbers across the stack (95% warm-switch reduction via virtualization; 4× cold-load; 13.6× cold-search via FTS5 projection table; 7.5s→13ms Cmd-F; gzip-event-loop trap; React.memo bypass via useContext). Standalone Part 7 — *Hunting Latency: A Performance Postmortem in Practice* — rather than fold into Part 5 (would bury the dramatic numbers) or Part 6 (would dilute Council methodology focus). Receipts: `PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md`, `PLANS/PERFORMANCE_BASELINE_2026-05-23.md`, 31 unpushed commits. Detailed plan TODO at `PLANS/articles/part7_perf_postmortem_plan.md` (next planning session). |
+| Part 6 / Part 7 ordering | **Open question.** "Build → Reflect → Hunt" (current 1-7 order) tells story of evolving project. "Build → Hunt → Reflect" (swap 6 and 7) is stronger pedagogically since Part 7's perf work was itself Council-driven. Decide at Part 6 draft time. |
 
-## The Series (5 parts proposed; compress to 4 or expand to 6 after Phase F)
+## The Series (7 parts; was 5, +1 LLM Council added 2026-05-22, +1 Perf Postmortem added 2026-05-23)
 
 ### Part 1 — *What This Thing Is and Why You'd Want It*
 Hook: the full text of every Claude conversation you've ever had — Desktop and Code — unified in one searchable UI, and also queryable programmatically from Claude Code and Claude Desktop via an MCP server. Three concrete use cases (UI-based search / reading, MCP-powered retrospective, find-mistakes-in-your-sessions). Prose architecture diagram: capture → fetch → browse/export (UI) + MCP (programmatic). The lost-account / data-portability beat is a supported edge case mentioned briefly, not the hook.
 
 ### Part 2 — *Using the Web App*
-Install & first run. Screenshot walkthrough: conversation list, full-text search, keyboard nav, message tree, dark mode, mobile. Export to Markdown & PDF.
+Install & first run. Screenshot walkthrough: conversation list, full-text search, keyboard nav, message tree, dark mode, mobile. Export to Markdown & PDF. **Three sources** in the sidebar's source filter — Claude AI (Desktop web app via the unofficial API), Claude Code (local `~/.claude/projects/**/*.jsonl`), Claude Cowork (Desktop's local-agent-mode sessions under `~/Library/Application Support/Claude/local-agent-mode-sessions/`). All three are indexed by the same FTS5 search and exported by the same Markdown/PDF pipeline.
 
 ### Part 3 — *The MCP Server in Claude Code and Claude Desktop*
 What MCP is. The 5 tools. Claude Code config (CLI + JSON). Claude Desktop config paths for macOS/Windows/Linux. **Headline demo:** *"I used this MCP server to mine this project's own build history to write this series."*
@@ -70,6 +72,16 @@ Where Claude Desktop stores data. mitmproxy + cert pinning. Unofficial API mappi
 
 ### Part 5 — *Building It with Claude Code, Part 2 — Backend, Frontend, and MCP*
 FastAPI backend. React/Tailwind/shadcn frontend. MCP server. Retrospective on Claude Code pair-programming.
+
+### Part 6 — *The LLM Council: Adversarial Code Review with Heterogeneous Models*
+The methodology that produced the codebase the previous five parts describe. Three personas — Senior Principal Engineer (GPT-5.2), Software Architect (Gemini-3-Pro), CTO (Opus 4.7) — running blind Round-1, cross-critique Round-2, CTO-synthesis Round-3, with explicit Decision Records and WWCMM (What Would Change My Mind) on every position. Concrete receipts from two waves: (a) the Phase 19 keyboard focus-model reframe + the Phase 20 MCP server design from the original build, and (b) a 2026-05-21 multi-day cleanup pass that caught a shipping crash (`claude-explorer fetch` was crashing on every invocation with `TypeError: org_id` — no test covered it), four security findings (CWE-200 exception leak, launchd plist XML injection, two session-key prefix leaks in console banners), an unbounded retry loop, a half-wired error classifier, and a §5.12 testing-discipline rule that came out of the process. Negative example included (intended-council-degraded-to-solo for a perf pass). When NOT to use the council (routine fixes, small refactors, anywhere single-model is good enough). Detailed plan: `PLANS/articles/part6_llm_council_plan.md`.
+
+### Part 7 — *Hunting Latency: A Performance Postmortem in Practice*
+The story of taking the V1 build from "shippable but laggy" to "blazing fast" via a sequence of empirical wins on the real corpus. Three acts: (1) **Search-typing storm** — React.memo bypass via useContext, per-key TanStack `select`, memoized Provider value, MessageBubble subscription removal; 88s → 11s cumulative Long Task. (2) **Backend** — sync handler swap to `async def` + `asyncio.to_thread`, cooperative cancel via `is_disconnected()` / HTTP 499, FTS5 + conversations projection table (250K → 344 row scan; 13.6× cold), W1–W4 lifespan warmup, GZipMiddleware-blocks-event-loop trap and per-route bypass via SelectiveGZipMiddleware (~700ms saved per conv fetch). (3) **Render** — empirical baseline (Playwright MCP + PerformanceObserver longtask + MessageChannel macrotask sampler), cached-per-id ref-setter pattern (Rule P11.A11.1), `@tanstack/react-virtual` integration with scroll-coordinate gotchas; 95% warm-switch reduction (10.3s → 514ms). Close with the lesson that became `CLAUDE-TESTING.md §5.14` and `llm-council-coding.md` Rule P11: **profile, don't guess** — and the five-belief falsification chain that earned the lesson.
+
+**Sidebar (added 2026-05-24): The misleading-green e2e — and the harness that catches it.** Same article, smaller bite. The "Settings page flashes on and disappears" regression on 2026-05-24 made it past my Playwright e2e because I asserted only on DOM state (URL stays at `/settings`, expected elements present) — not on the browser console. The user found the bug on first manual test by opening dev tools. The fix was a project-wide auto-fixture in `frontend/e2e/fixtures.ts` that hooks `page.on('pageerror')` and `page.on('console')` for every spec, then asserts empty at teardown modulo an explicit allowlist (Vite HMR handshake, React DevTools install hint). Codified as `CLAUDE-TESTING.md §5.15`. The lesson generalizes §5.13/§5.14: a test that pins "the right element exists" is half-blind; tests must also pin "no unexpected errors fire during the user's flow." Concrete sidebar arc: (a) the bug; (b) why my e2e missed it; (c) the auto-fixture (~20 lines, opt-out via per-test allowlist extension); (d) what it caught in the back-fill pass across the full e2e suite.
+
+Receipts: `PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md`, `PLANS/PERFORMANCE_BASELINE_2026-05-23.md`, `frontend/e2e/fixtures.ts` (the auto-fixture), `CLAUDE-TESTING.md §5.15` (the codified rule). Detailed plan TODO at `PLANS/articles/part7_perf_postmortem_plan.md`.
 
 ## Session Inventory
 
@@ -86,7 +98,7 @@ See `PROCESS/00_session_inventory.md` for the full table. In scope: `a70251a5-�
 | E | Current + skipped | ✅ | `PROCESS/76fe578b/summary.md`, `PROCESS/skipped/gmail_sessions.md` |
 | F | Synthesis | ✅ | `PROCESS/{90_themes,91_memorable_quotes,92_timeline,93_use_cases}.md` |
 | G | User review gate | ⬜ | pause |
-| H | Article drafts | 🟡 | **2 of 5 done.** Part 1 v2 (4,290 words, post-Council review). Part 2 v1 draft (4,878 words, 8 screenshot placeholders). Awaiting user review of Part 2 before Part 3. |
+| H | Article drafts | 🟡 | **2 of 7 done.** Part 1 v2 (4,290 words, post-Council review). Part 2 v1 draft (4,878 words, 8 screenshot placeholders). Awaiting user review of Part 2 before Part 3. Part 6 (LLM Council) added 2026-05-22 — plan at `PLANS/articles/part6_llm_council_plan.md`. Part 7 (Perf Postmortem) added 2026-05-23 — plan TODO at `PLANS/articles/part7_perf_postmortem_plan.md`. |
 | I | Series intro | ⬜ | `PLANS/articles/00_series_intro.md` |
 | J | PII sweep | ⬜ | final versions |
 
@@ -207,3 +219,5 @@ Grep all drafts for `sk-ant-`, `sessionKey`, anything resembling an org UUID or 
 - **Specific Part-1 use cases** — confirm at Phase G from `93_use_cases.md`.
 - **PII to scrub** — flag at Phase J.
 - **Part-2 screenshot coverage** — confirm at Part-2 draft time.
+- **Part 6 placement** — currently slotted as Part 6 (after the build-story arc). Could alternatively slot as Part 3.5 between MCP and build-story. Decide at Part-6 draft time; current placement reflects "build → reflect on how" narrative arc.
+- **Part 6 vs LinkedIn callback** — the user's existing LinkedIn LLM-Council post needs to be pasted into the part-6 plan before drafting so the article can extend (not duplicate) it.

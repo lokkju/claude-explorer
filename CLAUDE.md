@@ -8,6 +8,16 @@ All UX flows and rules are documented in [UX.md](./UX.md). Code changes that aff
 
 When writing or reviewing tests (Playwright, pytest, vitest), read [CLAUDE-TESTING.md](./CLAUDE-TESTING.md). It codifies black-box / spec-driven discipline, bidirectional verification, Playwright-specific gotchas (overflow-clipping, shadcn `<Select>`, Radix `<ScrollArea>`), fixture-design rules, and a pre-flight checklist. Other agents (pure feature work, refactors, deployments) can skip it.
 
+## Performance Work
+
+Three project-specific invariants the 2026-05-22 → 2026-05-23 search-perf hunt earned. Full walk: [PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md](./PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md). Testing protocol: [CLAUDE-TESTING.md §5.14](./CLAUDE-TESTING.md). Council-driven perf workflow: `~/.claude/agents/llm-council-coding.md` Rules P0–P11.
+
+1. **No `useContext()` of a churning provider in any list-rendered component (N ≥ 100 rows).** Known churning providers in this codebase: `SettingsContext`, `SearchPanelContext`, `BookmarksContext` — their value identity changes on every keystroke, toggle, or navigation. `useContext` bypasses `React.memo` (Fiber resolves context deps in `beginWork` before the bailout check), so subscribing from a row component re-renders every row on every context flip. The list-owning parent (`ConversationPage`) calls `useContext` once and threads relevant fields as props. Carve-outs: dispatch-only contexts with stable function identity, and `useMemo([])`-stabilized config contexts.
+
+2. **Memoize every `<Provider value={{...}}>` with `useMemo` + explicit deps list.** Inline object literals rebuild value identity every render and fire the entire subscriber graph. Pattern lives in `SearchPanelContext.tsx` and `SettingsContext.tsx`.
+
+3. **For any user-reported "feels slow", the first commit on the branch is a measurement commit.** Output: one number from `PerformanceObserver` Long Task total OR cProfile wall time on the real corpus (not a 3-row synthetic). Every subsequent commit must move that number, or revert. A user re-reporting the same symptom after a fix shipped is a falsification event for the diagnosis — re-instrument, don't stack a second fix in the same suspected layer. Instrumentation snippet in `CLAUDE-TESTING.md §5.14`.
+
 ## Project Structure
 
 ```

@@ -1,0 +1,71 @@
+{
+  "captured_at": "2026-05-23",
+  "corpus": "live dev server, /api/conversations/a70251a5-b932-4b61-aba1-16a70410b98e (21114 messages → 4051 visible bubbles → ~141K DOM nodes)",
+  "harness": "Playwright MCP, evaluate() in real Chromium against http://localhost:5173, real backend on :8765",
+  "scenarios": {
+    "cold_first_load_LARGE": {
+      "wallMs": 12596.2,
+      "firstBubbleMs": 0,
+      "fullRenderMs": 12578.5,
+      "finalBubbleCount": 4051,
+      "domDelta": 140467,
+      "domEnd": 141094,
+      "longTaskCount": 2,
+      "longTaskTotalMs": 8609,
+      "longTaskMaxMs": 7865,
+      "fetches": 1,
+      "fetchUrls": ["/api/conversations/a70251a5-b932-4b61-aba1-16a70410b98e"]
+    },
+    "warm_switch_back_LARGE": {
+      "wallMs": 10279.0,
+      "firstBubbleMs": 0,
+      "fullRenderMs": 10235.9,
+      "finalBubbleCount": 4051,
+      "longTaskCount": 2,
+      "longTaskTotalMs": 8565,
+      "longTaskMaxMs": 8466,
+      "fetches": 0,
+      "cacheHit": true
+    },
+    "between_two_large_convs_3_cycles": {
+      "cycle_avg_wallMs": 11469.2,
+      "cycle_avg_longTaskTotalMs": 9782,
+      "cycle_avg_longTaskMaxMs": 9418,
+      "fetchesPerCycle": 0,
+      "cycles": [
+        { "label": "cycle-0-to-LARGE2", "wallMs": 11585.7, "longTaskTotalMs": 9904, "longTaskMaxMs": 9540, "steadyCount": 5787 },
+        { "label": "cycle-0-to-LARGE",  "wallMs": 11401.7, "longTaskTotalMs": 9735, "longTaskMaxMs": 9363, "steadyCount": 4051 },
+        { "label": "cycle-1-to-LARGE2", "wallMs": 11525.4, "longTaskTotalMs": 9835, "longTaskMaxMs": 9480, "steadyCount": 5787 },
+        { "label": "cycle-1-to-LARGE",  "wallMs": 11461.7, "longTaskTotalMs": 9776, "longTaskMaxMs": 9402, "steadyCount": 4051 },
+        { "label": "cycle-2-to-LARGE2", "wallMs": 11452.0, "longTaskTotalMs": 9755, "longTaskMaxMs": 9401, "steadyCount": 5787 },
+        { "label": "cycle-2-to-LARGE",  "wallMs": 11388.5, "longTaskTotalMs": 9686, "longTaskMaxMs": 9322, "steadyCount": 4051 }
+      ]
+    },
+    "search_typing_this_image_on_LARGE": {
+      "totalMsForAllKeystrokes_and_match_render": 2210.8,
+      "matchesReturned": 6,
+      "longTaskCount": 10,
+      "longTaskTotalMs": 945,
+      "longTaskMaxMs": 240,
+      "keystrokeP95Ms": 238.4,
+      "comment": "Down from prior baseline 'keystrokes landing ~17s apart' to ~240ms p95. Prior fix (active-match-only highlight) shipped at commit 3cdfcd1/c913c24."
+    },
+    "filter_drift_repro_attempt": {
+      "navMessagesCount": 4051,
+      "renderedCount": 4051,
+      "compactMarkerCount": 32,
+      "renderedNotInNavCount": 0,
+      "renderedNotInNavMarkersCount": 0,
+      "verdict": "DOES NOT REPRO on this corpus. All 32 compact markers ARE present in keyboard-nav messages. computeVisibleMessages includes compact markers via the carve-out; messageHasVisibleContent ALSO returns true for them because they have summary text content. The bug is LATENT — would manifest only when a compact-marker message lacks text/visible-content (e.g., a tool-only message marked as compact). Fix is still correct prophylactically per Task 2; just is not the dominant pain source."
+    }
+  },
+  "summary": {
+    "dominant_pain_source": "RENDER. Cold-vs-warm delta is only ~2.3s (fetch + queryClient hydration). The remaining ~10s is React reconciliation + 4051 MessageBubble first-mount + ~141K DOM node creation. Warm switch-back is barely faster than cold because the entire detail subtree unmounts on route change (no keep-alive) and re-mounts from scratch.",
+    "implications_for_ABC_plan": [
+      "Option A (Memo/render-cost optimization on MessageBubble): targets the right phase (render) but each mount is a fresh fiber tree so memo doesn't help on FIRST mount. Could help on subsequent re-renders post-mount.",
+      "Option B (Virtualization via @tanstack/react-virtual or similar): targets the right phase + addresses the 141K DOM node problem directly. Likely 10x win on cold + warm.",
+      "Option C (Route-level keep-alive / cached subtree): targets warm-switch-back specifically. Would drop warm from 10s to <100ms. Cold unaffected.",
+      "Order recommendation: B first (largest win, also fixes cold), then C for warm-switch instant-feel polish. A becomes lower priority — the per-row work isn't the dominant cost; the SHEER NUMBER of mounted rows is."
+    ]
+  }
+}
