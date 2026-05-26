@@ -19,7 +19,7 @@
  */
 
 import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
-import type { Route } from '@playwright/test'
+import type { Route } from './fixtures'
 
 const ME = '00000000-0000-0000-0000-0000000000d7'
 

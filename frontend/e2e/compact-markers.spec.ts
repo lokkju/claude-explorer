@@ -1,4 +1,4 @@
-import { test, expect, Route } from '@playwright/test';
+import { test, expect, Route } from './fixtures';
 
 /**
  * Compact-marker UX tests (Build-7).
@@ -194,16 +194,86 @@ test.describe('Compact markers', () => {
     );
   });
 
-  test('hide-compact-markers toggle removes markers and shows them again', async ({ page }) => {
+  test('manual compact panel renders the user prompt as a UNIFIED purple subsection (no blue color family)', async ({ page }) => {
+    // 2026-05-24 user report: "I don't see the user's /compact prompt"
+    // — the data IS present (extracted into compact_marker.user_prompt)
+    // and the viewer DOES render it, but the previous styling used
+    // text-blue-700 / bg-blue-50 for the "You asked" subsection which
+    // visually separated it from the purple "Summary" subsection
+    // — they looked like two unrelated panels. User wants the prompt
+    // "to fit in with the formatting of the Summary" i.e. one
+    // unified compaction block.
+    //
+    // USER-OBSERVABLE CONTRACT pinned here:
+    //   * Open the manual compact panel.
+    //   * The "You asked" subsection's prompt body MUST share the
+    //     purple color family with the rest of the panel (the panel
+    //     border, the Summary label, the pill).
+    //   * The blue color family (text-blue-700, bg-blue-50,
+    //     text-blue-900, dark variants) MUST NOT appear inside the
+    //     panel — that was the source of the visual disjunction.
+    //
+    // Black-box-ish: we assert on Tailwind class tokens because the
+    // user's "fit in" is a visual claim that doesn't reduce to a
+    // pure DOM-structure assertion. The class-token check is the
+    // smallest stable proxy for the visual claim. If we ever swap
+    // tailwind for another styling system we'll need to update this
+    // test — that's an acceptable maintenance cost.
+    await page.goto(`/conversations/${FAKE_UUID}`);
+
+    // Open the manual marker (index 1 of the 2 markers in the fixture).
+    const manualPill = page.locator(
+      '[data-compact-marker="m-compact-manual"] [data-compact-marker-pill]'
+    );
+    await manualPill.click();
+
+    const panel = page
+      .locator('[data-compact-marker="m-compact-manual"] [data-compact-marker-panel]');
+    await expect(panel).toBeVisible();
+    // Prompt copy is present (sanity check — pre-existing contract).
+    await expect(panel).toContainText('preserve context for the build phase');
+
+    // Snapshot the full panel HTML and assert color-family invariants.
+    const html = await panel.evaluate((el) => el.outerHTML);
+
+    // Negative-space assertion: blue tailwind tokens MUST NOT appear
+    // anywhere in the panel HTML. This is the bug the user reported
+    // — the "You asked" sub-block used to be styled blue.
+    expect(html).not.toMatch(/text-blue-700/);
+    expect(html).not.toMatch(/text-blue-900/);
+    expect(html).not.toMatch(/bg-blue-50/);
+    expect(html).not.toMatch(/bg-blue-950/);
+    expect(html).not.toMatch(/text-blue-100/);
+    expect(html).not.toMatch(/text-blue-300/);
+
+    // Positive-space assertion: the purple color family is present
+    // (the panel border AND a "You asked" sub-element MUST use it).
+    expect(html).toMatch(/text-purple-700/);  // "You asked" label
+    expect(html).toMatch(/bg-purple-50/);     // "You asked" body bg (light)
+  });
+
+  test('"Show Compactions" checkbox removes markers and shows them again', async ({ page }) => {
+    // 2026-05-24: replaced the Hide/Show compact markers Button with
+    // a "Show Compactions" checkbox so the on/off state is visually
+    // obvious. `header-toggles-as-checkboxes.spec.ts` has the
+    // canonical inversion test; this one is the legacy regression
+    // guard for the original 2-marker fixture's toggle path.
     await page.goto(`/conversations/${FAKE_UUID}`);
     await expect(page.locator('[data-compact-marker]').first()).toBeVisible();
 
-    const hideButton = page.getByRole('button', { name: /hide compact markers/i });
-    await hideButton.click();
+    const showCompactions = page.locator(
+      '[data-testid="header-show-compactions-checkbox"]',
+    );
+    await expect(showCompactions).toBeChecked();
+
+    // Uncheck → markers hidden.
+    await showCompactions.click();
+    await expect(showCompactions).not.toBeChecked();
     await expect(page.locator('[data-compact-marker]')).toHaveCount(0);
 
-    const showButton = page.getByRole('button', { name: /show compact markers/i });
-    await showButton.click();
+    // Re-check → markers return.
+    await showCompactions.click();
+    await expect(showCompactions).toBeChecked();
     await expect(page.locator('[data-compact-marker]')).toHaveCount(2);
   });
 

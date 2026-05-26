@@ -61,6 +61,7 @@ export const api = {
     if (filters?.sort) params.set('sort', filters.sort)
     if (filters?.sortOrder) params.set('sort_order', filters.sortOrder)
     if (filters?.includePhantom) params.set('include_phantom', 'true')
+    if (filters?.showArchived) params.set('show_archived', 'true')
     if (filters?.organization_id) params.set('organization_id', filters.organization_id)
     const query = params.toString()
     return fetchJson<ConversationListItem[]>(
@@ -97,7 +98,7 @@ export const api = {
 
   search: async (
     query: string,
-    source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE',
+    source: 'all' | 'CLAUDE_AI' | 'CLAUDE_CODE' | 'CLAUDE_COWORK',
     contextSize: 'snippet' | 'full',
     sort: SortField,
     sortOrder: SortOrder,
@@ -208,31 +209,39 @@ export const api = {
   getConfigStats: (signal?: AbortSignal): Promise<AppConfigStats> =>
     fetchJson<AppConfigStats>('/config/stats', signal),
 
-  exportMarkdown: (uuid: string, showToolCalls: boolean = true): Promise<Response> =>
-    fetch(`${BASE_URL}/conversations/${uuid}/export/markdown?include_tools=${showToolCalls}`),
+  exportMarkdown: (
+    uuid: string,
+    showToolCalls: boolean = true,
+    includeCompact: boolean = false,
+  ): Promise<Response> =>
+    fetch(
+      `${BASE_URL}/conversations/${uuid}/export/markdown?include_tools=${showToolCalls}&include_compact=${includeCompact}`,
+    ),
 
   // Issue #4 — Markdown bundle (zip with conversation.md + images/).
   exportMarkdownBundle: (
     uuid: string,
     showToolCalls: boolean = true,
     dialect: 'commonmark' | 'obsidian' = 'commonmark',
+    includeCompact: boolean = false,
   ): Promise<Response> =>
     fetch(
-      `${BASE_URL}/conversations/${uuid}/export/markdown-bundle?include_tools=${showToolCalls}&dialect=${dialect}`,
+      `${BASE_URL}/conversations/${uuid}/export/markdown-bundle?include_tools=${showToolCalls}&dialect=${dialect}&include_compact=${includeCompact}`,
     ),
 
   exportPdf: (
     uuid: string,
     showToolCalls: boolean = true,
     signal?: AbortSignal,
+    includeCompact: boolean = false,
   ): Promise<Response> =>
     fetch(
-      `${BASE_URL}/conversations/${uuid}/export/pdf?include_tools=${showToolCalls}`,
+      `${BASE_URL}/conversations/${uuid}/export/pdf?include_tools=${showToolCalls}&include_compact=${includeCompact}`,
       { signal },
     ),
 
-  exportAllMarkdown: (): Promise<Response> =>
-    fetch(`${BASE_URL}/export/all/markdown`),
+  exportAllMarkdown: (includeCompact: boolean = false): Promise<Response> =>
+    fetch(`${BASE_URL}/export/all/markdown?include_compact=${includeCompact}`),
 
   // Fetch operations (Claude Desktop only).
   //

@@ -73,11 +73,18 @@ export function MarkdownExportDialog({
   conversationUuid,
   conversationName,
 }: MarkdownExportDialogProps) {
-  const { showToolCalls } = useSettings()
+  const { showToolCalls, hideCompactMarkers } = useSettings()
   const [storedMode, setStoredMode] = usePreferences<MarkdownExportMode>(
     'markdownExportMode',
     'inline',
   )
+  // V1 polish 2026-05-24 (Bug 2) — unified toggle: the conversation
+  // header's "Show Compactions" checkbox is the SINGLE source of truth
+  // for whether compactions are visible in the viewer AND included in
+  // exports. The previous `export.includeCompactContent` Settings pref
+  // is removed. Mapping: includeCompact = !hideCompactMarkers (the
+  // pref's name is the negative, the user-facing label is the positive).
+  const includeCompact = !hideCompactMarkers
 
   // Local copy of the radio selection so the user can audition a mode
   // (without persisting) before clicking Download. We seed from the
@@ -103,7 +110,11 @@ export function MarkdownExportDialog({
       }
       const safeName = sanitizeFilename(conversationName || 'conversation')
       if (mode === 'inline') {
-        const response = await api.exportMarkdown(conversationUuid, showToolCalls)
+        const response = await api.exportMarkdown(
+          conversationUuid,
+          showToolCalls,
+          includeCompact,
+        )
         const blob = await response.blob()
         downloadBlob(blob, `${safeName}.md`)
       } else {
@@ -112,6 +123,7 @@ export function MarkdownExportDialog({
           conversationUuid,
           showToolCalls,
           dialect,
+          includeCompact,
         )
         const blob = await response.blob()
         downloadBlob(blob, `${safeName}.zip`)

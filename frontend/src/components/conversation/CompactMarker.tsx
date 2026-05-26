@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Scissors, ChevronDown, ChevronRight } from 'lucide-react'
 import { cn, formatMessageTimestamp } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/message/MarkdownRenderer'
@@ -11,10 +11,40 @@ interface CompactMarkerProps {
   isActive: boolean
   onPrev: () => void
   onNext: () => void
+  /** When true, force the marker panel open (e.g., because the
+   *  marker is the target of a search-hit highlight). Transitions
+   *  false→true open the panel; subsequent user clicks can still
+   *  collapse it. */
+  forceOpen?: boolean
+  /** Active full-text search query, threaded into the MarkdownRenderer
+   *  for the summary text so matches inside the compact summary get
+   *  `<mark>` highlights (matches the behavior MessageBubble already
+   *  has). Empty / undefined means "no highlighting". */
+  searchQuery?: string
 }
 
-export function CompactMarker({ marker, index, total, isActive, onPrev, onNext }: CompactMarkerProps) {
-  const [isOpen, setIsOpen] = useState(false)
+export function CompactMarker({
+  marker,
+  index,
+  total,
+  isActive,
+  onPrev,
+  onNext,
+  forceOpen,
+  searchQuery,
+}: CompactMarkerProps) {
+  const [isOpen, setIsOpen] = useState(forceOpen ?? false)
+
+  // 2026-05-22 (search-hit on compact bubble fix): when a search hit
+  // targets a message whose UUID matches this marker, the parent
+  // (ConversationPage) flips `forceOpen` to true. Open the panel so
+  // the user can see the matched summary text. We don't track
+  // forceOpen with a ref because the false→true edge is the only
+  // case we care about — the user can collapse the panel again
+  // afterward with the pill click.
+  useEffect(() => {
+    if (forceOpen) setIsOpen(true)
+  }, [forceOpen])
 
   const time = formatMessageTimestamp(marker.timestamp)
   const isManual = marker.kind === 'manual'
@@ -23,6 +53,13 @@ export function CompactMarker({ marker, index, total, isActive, onPrev, onNext }
     <div
       data-compact-marker={marker.message_uuid}
       data-compact-marker-kind={marker.kind}
+      // 2026-05-22: mirror the data-message-uuid attribute that
+      // MessageBubble uses so the search-hit highlight effect in
+      // ConversationPage (querySelector on `[data-message-uuid=...]`)
+      // can locate compact markers as scroll targets the same way it
+      // locates regular message bubbles.
+      data-message-uuid={marker.message_uuid}
+      tabIndex={-1}
       {...(isActive ? { 'data-compact-marker-active': '' } : {})}
       className="relative my-6"
     >
@@ -55,10 +92,14 @@ export function CompactMarker({ marker, index, total, isActive, onPrev, onNext }
         </button>
       </div>
 
-      {/* Inline-on-divider user prompt for manual compacts (always visible) */}
+      {/* Inline-on-divider user prompt for manual compacts (always visible).
+       *  2026-05-24 user report: the prompt previously used a blue color
+       *  family which made it feel disconnected from the purple "Summary"
+       *  block. Unified to purple so the whole compaction (pill +
+       *  inline prompt teaser + open panel) reads as ONE block. */}
       {isManual && marker.user_prompt && !isOpen && (
         <div className="mt-2 flex justify-center">
-          <div className="max-w-[80%] truncate rounded bg-blue-50 px-3 py-1 text-xs italic text-blue-900 dark:bg-blue-950 dark:text-blue-100">
+          <div className="max-w-[80%] truncate rounded bg-purple-50 px-3 py-1 text-xs italic text-purple-900 dark:bg-purple-950 dark:text-purple-100">
             <span className="font-semibold not-italic">You asked: </span>
             {marker.user_prompt}
           </div>
@@ -72,10 +113,15 @@ export function CompactMarker({ marker, index, total, isActive, onPrev, onNext }
         >
           {isManual && marker.user_prompt && (
             <div className="mb-4">
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-purple-700 dark:text-purple-300">
                 You asked
               </div>
-              <div className="rounded bg-blue-50 p-3 text-sm text-blue-900 dark:bg-blue-950 dark:text-blue-100">
+              {/* Match the Summary subsection's structure (label + body)
+               *  but share the purple color family so they read as
+               *  parallel parts of ONE compaction block, not two
+               *  disjoint sub-panels. The faint purple-50 bg keeps
+               *  the visual hierarchy between label and body. */}
+              <div className="rounded bg-purple-50 p-3 text-sm text-purple-900 dark:bg-purple-950 dark:text-purple-100">
                 {marker.user_prompt}
               </div>
             </div>
@@ -85,7 +131,7 @@ export function CompactMarker({ marker, index, total, isActive, onPrev, onNext }
               Summary
             </div>
             <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-zinc-800 dark:text-zinc-200">
-              <MarkdownRenderer content={marker.summary_text} showToolCalls={false} />
+              <MarkdownRenderer content={marker.summary_text} query={searchQuery} />
             </div>
           </div>
 
