@@ -1,4 +1,4 @@
-import { test, expect, Route } from '@playwright/test'
+import { test, expect, Route } from './fixtures'
 
 /**
  * M4 from PLANS/articles/part2_revision_plan.md.

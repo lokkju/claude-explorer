@@ -17,7 +17,7 @@
  */
 import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
-import type { Route } from '@playwright/test'
+import type { Route } from './fixtures'
 
 const ADJACENT_UUID = '00000000-0000-0000-0000-000000000a01'
 const SCATTERED_UUID = '00000000-0000-0000-0000-000000000a02'

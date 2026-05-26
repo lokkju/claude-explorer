@@ -1,4 +1,4 @@
-import { test, expect, Route } from '@playwright/test';
+import { test, expect, Route } from './fixtures';
 
 /**
  * Branch switching wire-up (Build-8 #6).

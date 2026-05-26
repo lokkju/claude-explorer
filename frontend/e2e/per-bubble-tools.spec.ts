@@ -1,4 +1,4 @@
-import { test, expect, Route } from '@playwright/test';
+import { test, expect, Route } from './fixtures';
 
 /**
  * Per-bubble tool-block toggle (Build-8 #5).

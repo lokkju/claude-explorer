@@ -1,4 +1,4 @@
-import { test, expect, Route } from '@playwright/test';
+import { test, expect, Route } from './fixtures';
 
 /**
  * Build-9 Bug 3 (frontend): the per-conversation "Re-download this

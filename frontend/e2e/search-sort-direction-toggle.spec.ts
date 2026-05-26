@@ -25,7 +25,7 @@
  */
 import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
-import type { Route } from '@playwright/test'
+import type { Route } from './fixtures'
 
 const NEWEST_UUID = '00000000-0000-0000-0000-00000000b001'
 const MIDDLE_UUID = '00000000-0000-0000-0000-00000000b002'

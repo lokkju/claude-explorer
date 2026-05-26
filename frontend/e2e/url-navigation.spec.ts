@@ -1,4 +1,4 @@
-import { test, expect, Route } from '@playwright/test';
+import { test, expect, Route } from './fixtures';
 
 /**
  * URL-parameter navigation (Build-6).

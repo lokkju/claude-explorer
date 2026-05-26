@@ -21,7 +21,7 @@
  */
 import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
-import type { Route } from '@playwright/test'
+import type { Route } from './fixtures'
 
 const HIT_UUID = '00000000-0000-0000-0000-0000000000b1'
 const NOHIT_UUID = '00000000-0000-0000-0000-0000000000b2'

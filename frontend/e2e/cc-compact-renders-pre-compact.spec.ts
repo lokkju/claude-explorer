@@ -117,26 +117,24 @@ test.describe('CC compact-aware rendering', () => {
     await expect(page.getByTestId('message-stream')).toBeVisible();
     await expect(page.locator('[data-message-uuid]').first()).toBeVisible();
 
-    // Read all rendered stream items in DOM order. CompactMarker
-    // doesn't carry `data-message-uuid` (it's a <CompactMarker>
-    // overlay element), so we walk the direct children under the
-    // stream and inspect each.
-    const items = page.locator(
-      '[data-testid="message-stream"] > div > div'
-    );
-    const firstItem = items.first();
-    await expect(firstItem).toBeAttached();
-
-    // NEW behavior: the first item is a regular MessageBubble (has
-    // `data-message-uuid`), NOT a compact marker.
-    await expect(firstItem.locator('[data-message-uuid="pre-msg-1"]'))
-      .toHaveCount(1);
-
-    // OLD-behavior catch: the bug the user filed had the compact
-    // marker at index 0 of the stream. If we regressed, the first
-    // child would contain `[data-compact-marker]` and this assertion
-    // would fire.
-    await expect(firstItem.locator('[data-compact-marker]')).toHaveCount(0);
+    // 2026-05-23: rewritten to be implementation-agnostic for the
+    // virtualization landing. CompactMarker carries the SAME
+    // `data-message-uuid` attribute as a regular MessageBubble (see
+    // CompactMarker.tsx:61), so we can compare by the message-uuid
+    // attribute alone — the test no longer needs to walk a specific
+    // wrapper-div depth that ChangedShape under virtualization. The
+    // load-bearing assertion (the user-observable contract): the
+    // FIRST message-uuid-carrying element in document order is
+    // pre-msg-1, NOT compact-summary.
+    const firstMessageUuid = await page
+      .locator('[data-testid="message-stream"] [data-message-uuid]')
+      .first()
+      .getAttribute('data-message-uuid');
+    expect(
+      firstMessageUuid,
+      'First rendered bubble must be pre-msg-1, NOT the compact-summary. ' +
+        'The user-reported bug had the compact marker as the head item.',
+    ).toBe('pre-msg-1');
 
     // NEW behavior: the compact marker IS rendered, just inline at
     // its original chronological position (between pre and post

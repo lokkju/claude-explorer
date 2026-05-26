@@ -1,6 +1,6 @@
 import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
 import type { Message } from '../src/lib/types'
-import type { Route } from '@playwright/test'
+import type { Route } from './fixtures'
 
 /**
  * G3 audit — cc-image rotation E2E (frontend half).

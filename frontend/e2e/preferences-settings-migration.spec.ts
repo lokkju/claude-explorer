@@ -18,7 +18,7 @@
  */
 
 import { test, expect } from './fixtures'
-import type { Route } from '@playwright/test'
+import type { Route } from './fixtures'
 
 interface PrefsState {
   data: Record<string, unknown>

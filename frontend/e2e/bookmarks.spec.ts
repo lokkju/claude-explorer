@@ -1,4 +1,4 @@
-import { test, expect, Route } from '@playwright/test';
+import { test, expect, Route } from './fixtures';
 
 /**
  * Message bookmarks (Build-4).

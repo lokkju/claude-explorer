@@ -863,6 +863,341 @@ case explicitly: missing data → 404; bad input → 422; conflict → 409;
 internal failure → 500 with a sanitized detail (no traceback in body
 for production responses).
 
+### 5.12 · Monkeypatching: prefer attribute-patch over value-binding
+
+The way a test rebinds a symbol determines whether the module under
+test can be safely refactored. Two distinct idioms:
+
+```python
+# ✓ ATTRIBUTE PATCH (refactor-safe)
+from backend.routers import fetch as fetch_router
+monkeypatch.setattr(fetch_router, "save_credentials", fake_save)
+
+# ✗ VALUE BINDING (refactor-fragile)
+from backend.routers.fetch import save_credentials
+monkeypatch.setattr("backend.routers.fetch.save_credentials", fake_save)
+# Or worse, capturing the value at import time:
+saved_real = save_credentials
+monkeypatch.setattr(saved_real, "__call__", fake_save)  # doesn't do what you think
+```
+
+**Why this matters.** When the module under test imports a helper from
+elsewhere (`from .helpers import save_credentials`), the helper is bound
+to the local module's namespace AT IMPORT TIME. A test that
+attribute-patches the local namespace (`fetch_router.save_credentials =
+...`) reaches through to the late-bound runtime call. A test that
+value-binds a snapshot of the function won't see updates.
+
+**The refactor-safety consequence.** If you extract `save_credentials`
+out of `fetch.py` into a new `fetch_pipeline.py` module:
+
+- Tests that use **attribute-patch on `fetch_router`** keep working iff
+  `fetch_router` still has `save_credentials` as a top-level attribute
+  (i.e., it's re-imported at the top of `fetch.py`). Mass refactors
+  that move helpers out without re-importing them break these tests
+  silently — the patch lands on a module that no longer routes the
+  call through.
+
+- Tests that use **value-binding** (`from backend.routers.fetch import
+  save_credentials; ... = fake`) only patch the test's local symbol —
+  the route's call goes through to the real `save_credentials`. These
+  tests are vacuously green and DON'T catch the bug they should.
+
+**Incident**: the 2026-05-21 A2 refactor of `routers/fetch.py`
+surfaced this. The Engineer council persona (gpt-5.2-pro) caught that
+23+ tests used the attribute-patch idiom against `fetch_router`, which
+forced the council to ship a CONSERVATIVE split (preserve top-level
+attributes on `fetch_router`) instead of the aggressive split the
+Architect originally proposed. Detailed in
+`PLANS/CODE-REVIEW-BACKEND.md`.
+
+**Rule**: prefer attribute-patch via `monkeypatch.setattr(module,
+"name", fake)`. Avoid value-binding via `from module import name` in
+test files — it makes future refactors strictly harder. When
+refactoring a module that has heavy test coverage, run this grep
+FIRST to surface the landmine count:
+
+```bash
+grep -rnE 'monkeypatch\.setattr\(|patch\.object\(|patch\(["\'][^"\']*<module>' \
+  backend/tests/ fetcher/tests/ | grep -E '<module>' | wc -l
+```
+
+If the count is > 0, the refactor must either (a) preserve top-level
+attributes on the original module via re-export, or (b) migrate the
+test sites in lockstep.
+
+### 5.13 · User-observable contracts over implementation-pinned rules
+
+A test that pins the **resolution rule** of an internal mechanism
+("prefers server over localStorage", "prefers Pass A over Pass B",
+"falls back to X then Y") protects the rule. A test that pins the
+**user-observable contract** ("set value, simulate restart, see same
+value") protects the user. The two are NOT equivalent. When the rule
+is wrong for users, an implementation-pinned test silently ratifies
+the bug.
+
+**Incident**: the 2026-05-22 prefs bug. The `usePreferences` hook
+resolved `value = serverValue ?? localValue ?? fallback` — server
+wins. A test `'dual-read: prefers the server value over localStorage'`
+asserted exactly this rule. When the server cached a stale value (a
+stray tab, a Playwright run, a 500'd PATCH), every reload silently
+overrode the user's most recent local choice. The user reported
+"frontend keeps restarting in dark mode" — they kept changing it
+back, and every reload kept reverting. The test that should have
+caught this was instead protecting the bug: as long as the
+resolution kept preferring server, the test stayed green, even
+though the user-observable behavior was broken.
+
+**Anti-pattern (what I wrote)**:
+
+```typescript
+it('prefers the server value over localStorage', async () => {
+  installPrefsHandlers({ theme: 'dark' });
+  window.localStorage.setItem('theme', JSON.stringify('sepia'));
+  await waitFor(() => expect(result.current[0]).toBe('dark'));
+});
+```
+
+This asserts the *resolution rule*. The rule was wrong. The test
+protected the wrong rule.
+
+**Pattern (what I should have written)**:
+
+```typescript
+it('regression: stale server does NOT clobber a user-recent local choice on reload', async () => {
+  // User explicitly set 'light' in this browser (localStorage).
+  // Server has a stale 'dark' from a previous session.
+  // After GET resolves: the user's local choice MUST stick.
+  installPrefsHandlers({ theme: 'dark' });
+  window.localStorage.setItem('theme', JSON.stringify('light'));
+  const { qc } = makeWrapper();
+  // Gate on the GET completing — otherwise we'd be asserting the
+  // initial render where serverValue is undefined regardless of rule.
+  await waitFor(() => {
+    expect(qc.getQueryData(['preferences'])).toBeDefined();
+  });
+  expect(result.current[0]).toBe('light');
+});
+```
+
+This asserts the *user-observable contract*. If the resolution rule
+ever flips back to server-first, this test goes red — protecting the
+user, not the implementation.
+
+**Rule**: for any dual-write / dual-read / multi-source system, the
+test suite MUST include user-observable persistence tests:
+
+1. **Set → restart → read** (single source of truth). After
+   `setValue(X)`, simulate a restart (unmount, fresh QueryClient,
+   etc.), and assert `value === X`.
+2. **Stores-disagree matrix** (multi-source). For two stores A and B,
+   test all 4 cells:
+   - Both empty → fallback wins
+   - Only A set → A wins
+   - Only B set → B wins
+   - Both set, **different values** → the chosen authority wins, AND
+     the test name says WHICH authority and WHY (e.g. "local-first:
+     latest signal from this browser wins over stale server").
+3. **Stale-store stress** (the failure mode I missed). Explicitly
+   construct the state "stale store has X, user-recent store has Y"
+   and assert Y wins. This is the regression test for the bug class.
+
+**Smell to grep for in your own work**: test names like
+`'prefers X over Y'`, `'falls back to Z'`, `'resolves to W'` are
+implementation-pinned. If you wrote one, also write the user-
+observable counterpart that says WHY the user wants that resolution.
+If you can't articulate the user-observable WHY, the rule is probably
+wrong.
+
+**Codebase grep before shipping** any new resolution / fallback /
+precedence code:
+
+```bash
+# Surface every test name that pins an implementation rule.
+# Each match needs a paired user-observable test, or the rule is
+# protected by a test that ratifies it instead of challenging it.
+grep -rnE "it\(['\"](prefers|falls back|resolves to|wins over)" frontend/src
+```
+
+### 5.14 · Performance regressions need a user-observable budget test
+
+`§5.13` argues that resolution-rule tests can ratify a bug. The same
+trap exists for performance. A test that asserts "handler is sync def"
+or "context value is memoized" protects an *implementation rule that
+we believe correlates with performance*. It does not measure
+performance.
+
+**Incident**: the 2026-05-22 search-typing lag took five commits to
+diagnose. Each of the first four addressed a real but secondary
+problem. The dominant cost — 88 seconds of cumulative `longtask`
+time per "snapshot" typing pass, blocking every keystroke debounce —
+was visible in a 30-second DevTools recording on the real corpus,
+but no recording was taken until commit five. Each intermediate
+commit shipped a "rule" test (`test_handler_is_sync_def`,
+`test_context_value_is_memoized`) that passed green while the user
+re-reported the same symptom three more times. Full walk:
+`PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md`.
+
+**Rule**: any commit whose message contains `perf(`, `fix(perf)`, or
+addresses a user-reported "slow" or "laggy" symptom MUST be preceded
+on the same branch by a *measurement commit* whose deliverable is:
+
+1. A reproducer script or Playwright test that exercises the user-
+   reported flow on a fixture sized to match the user's reality (not
+   a 3-row synthetic).
+2. A numeric measurement of the user's top-line metric. For
+   browser-side perf this is `PerformanceObserver` Long Task total
+   time, or `performance.mark()` deltas around the input event. For
+   backend perf this is end-to-end wall time including serialization
+   and transfer, on a realistic payload.
+3. The number written into the commit message of the fix, with
+   before/after.
+
+If the perf fix lands without that number moving, the diagnosis is
+wrong. Revert. Do not stack another fix on top.
+
+**Concrete instrumentation snippet** (drop into any React app for
+the duration of a perf hunt):
+
+```typescript
+useEffect(() => {
+  const obs = new PerformanceObserver(list => {
+    let total = 0
+    for (const e of list.getEntries()) total += e.duration
+    if (total > 50) console.log(`[longtask] +${total.toFixed(0)}ms`)
+  })
+  obs.observe({ entryTypes: ['longtask'] })
+  return () => obs.disconnect()
+}, [])
+```
+
+This costs four lines and answers every "is my fix actually working"
+question for free.
+
+**Rule, second clause**: any list-rendered component instantiated N
+times (N ≥ 100) must NOT subscribe to a *churning* context — one
+whose provider value-identity changes in response to user input.
+`useContext` bypasses `React.memo`: in Fiber, context dependencies
+are resolved during `beginWork` before the memo bailout check, so a
+provider value-identity change forces every consumer to re-render
+regardless of comparator. The list-owning parent must call
+`useContext` once and thread the relevant fields as props.
+
+Two carve-outs are allowed without changing the rule:
+
+1. **Dispatch-only contexts** whose value is a stable function /
+   setter (identity never changes across renders) cannot trigger
+   the cascade and are safe.
+2. **Provably stable contexts** wrapped in `useMemo([])` over a
+   constant input (theme that only changes on full app remount) are
+   safe in practice; rare full re-renders of 4000 rows on a deliberate
+   theme flip are acceptable.
+
+A static grep test pins the common-case violation, naming the
+specific known-churning providers in this codebase:
+
+```typescript
+it('MessageBubble does not subscribe to a churning context', () => {
+  const src = readFileSync(
+    'frontend/src/components/message/MessageBubble.tsx',
+    'utf8',
+  )
+  // These three providers' values change on every keystroke / toggle.
+  // Subscribing here would re-render all 4K bubbles per input event.
+  expect(src).not.toMatch(/use(Settings|SearchPanel|Bookmarks)\b/)
+})
+```
+
+The grep list is intentionally explicit rather than blanket-banning
+`useContext`: stable dispatch-only contexts (e.g., the lightbox
+opener) and never-changing config contexts remain legal.
+
+**Smell to grep for in your own work**: a test named
+`test_<thing>_is_<implementation_detail>` (`is_sync_def`,
+`is_memoized`, `uses_threadpool`). For every such test, also write
+the user-observable counterpart that says WHY the user wants that
+detail. If you can't state the user-observable budget in numbers,
+the rule is probably defending the bug.
+
+**Why two clauses in one section**: the postmortem's five-commit
+chain had ONE diagnostic technique (a 30-second `PerformanceObserver`
+recording on the real corpus) that would have collapsed it to one
+commit, and ONE specific antipattern (`useContext` in a list row)
+that was the dominant cost. Either rule alone leaves a gap; together
+they pin the failure mode end-to-end.
+
+### 5.15 · E2E tests MUST assert zero unexpected console errors / warnings
+
+A Playwright e2e (or Playwright MCP investigation) that asserts only
+on DOM state is half-blind. A page can have the right elements in the
+right place AND simultaneously emit red errors that crash a different
+code path, leak unhandled promises, or fire React warnings that
+correlate with a real bug. DOM-passing + console-failing is exactly
+the failure mode the user finds first on manual test.
+
+**Incident**: 2026-05-24 settings-page flash-and-disappear regression.
+My Playwright check confirmed URL stays at `/settings`, the
+`[data-section="markdown-export"]` exists, the new checkbox toggles,
+and `localStorage` updates. All green. The user opened the same page
+in their browser and reported "flashes on and disappears" — visible
+on first manual test because their console had errors mine never
+asserted on.
+
+**Rule**: every Playwright `*.spec.ts` test MUST install a
+console-error capture in `beforeEach` and assert empty in `afterEach`,
+modulo an explicit allowlist. Suggested fixture:
+
+```typescript
+import { test as base } from '@playwright/test'
+
+type ConsoleCapture = { errors: string[]; warnings: string[] }
+
+const ALLOWED_NOISE = [
+  /\[vite\] (connecting|connected)/,
+  /Download the React DevTools/,
+  // Each addition needs a comment naming the source + reason it's tolerated.
+]
+
+export const test = base.extend<{ consoleCapture: ConsoleCapture }>({
+  consoleCapture: async ({ page }, use) => {
+    const cap: ConsoleCapture = { errors: [], warnings: [] }
+    page.on('pageerror', e => cap.errors.push(`pageerror: ${e.message}`))
+    page.on('console', m => {
+      const text = m.text()
+      if (ALLOWED_NOISE.some(rx => rx.test(text))) return
+      if (m.type() === 'error') cap.errors.push(text)
+      else if (m.type() === 'warning') cap.warnings.push(text)
+    })
+    await use(cap)
+    if (cap.errors.length > 0) {
+      throw new Error(`Unexpected console errors:\n  ${cap.errors.join('\n  ')}`)
+    }
+    if (cap.warnings.length > 0) {
+      throw new Error(`Unexpected console warnings:\n  ${cap.warnings.join('\n  ')}`)
+    }
+  },
+})
+```
+
+**Rule for Playwright MCP investigation** (interactive debugging):
+after EVERY navigation and after EVERY meaningful action, call
+`mcp__playwright__browser_console_messages({ level: 'warning', all: true })`.
+Errors that fire during a navigation tell you which navigation broke;
+checking only at the end loses the timeline. A clean `level: 'error'`
+response is NOT enough — React warnings (missing keys, missing
+`aria-describedby`, effect-dependency drift) often correlate with
+the bug under investigation.
+
+**Allowlist hygiene**: the allowlist is explicit (each pattern has a
+comment naming the source and why it's tolerated), not a blanket
+skip. A new pattern in the allowlist is a code-review checkpoint.
+
+The §5.13/§5.14 framing extends here: asserting "the DOM has X" pins
+an implementation rule; asserting "the console has no errors" pins
+the user-observable contract (the developer opening the browser dev
+tools is part of the contract — red text there IS a bug). Both are
+required.
+
 ---
 
 ## 6 · Test review checklist

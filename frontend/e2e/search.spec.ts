@@ -1,5 +1,5 @@
 import { test, expect, makeSummary, makeMessage, makeDetail, searchEnvelopeJson } from './fixtures'
-import type { Route } from '@playwright/test'
+import type { Route } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
 
 const TLS_TITLE = 'Phase 5 fixture: TLS handshakes (long)';

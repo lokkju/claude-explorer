@@ -1,5 +1,5 @@
-import { test, expect } from '@playwright/test'
-import type { Browser, BrowserContext, Page, Route } from '@playwright/test'
+import { test, expect } from './fixtures'
+import type { Browser, BrowserContext, Page, Route } from './fixtures'
 
 /**
  * G1 audit — cross-browser-context preference persistence.

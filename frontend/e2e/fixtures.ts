@@ -70,9 +70,47 @@ export interface MockBackendOptions {
 
 export type MockBackendFn = (opts?: MockBackendOptions) => Promise<void>
 
+/**
+ * Console / page-error capture, attached automatically to every spec via the
+ * `consoleAssertions` auto-fixture below. Tests can opt-in to inspect or
+ * extend the allowlist by depending on `consoleAssertions` directly.
+ */
+export interface ConsoleCapture {
+  errors: string[]
+  warnings: string[]
+  /** Live-allowlist hook: each entry is a regex tested against the message
+   *  text. Caller-added entries apply only within the test that pushes them.
+   *  Pre-populated with the project-wide noise allowlist defined inside the
+   *  fixture (HMR connect handshakes, React DevTools install hint, etc.). */
+  allowlist: RegExp[]
+}
+
 interface Fixtures {
   mockBackend: MockBackendFn
+  consoleAssertions: ConsoleCapture
 }
+
+/**
+ * Project-wide console-noise allowlist. Each pattern needs a comment naming
+ * its source and reason for tolerance. Adding to this list is a code-review
+ * checkpoint per CLAUDE-TESTING.md §5.15.
+ *
+ * Tests can extend per-test by pushing into `consoleAssertions.allowlist`
+ * inside the test body (the auto-fixture is invoked AFTER the test, so
+ * mid-test additions take effect for that test only).
+ */
+const PROJECT_CONSOLE_ALLOWLIST: RegExp[] = [
+  // Vite HMR client handshake — fires on every page load in dev.
+  /\[vite\] (connecting\.{3}|connected\.)/,
+  // React DevTools install hint — environment-level info message.
+  /Download the React DevTools/,
+  // MSW unhandled-request warnings only fire in vitest, not Playwright;
+  // listed defensively in case a spec ever spins up the worker.
+  /\[MSW\]/,
+  // Our own mockBackend leakage guard writes `[mockBackend] Unmocked
+  // API call leaked through:` — that IS the failure mode (route not
+  // mocked); leave it as an error so it fails the test, NOT allowlisted.
+]
 
 const PRIMARY_ORG_ID = 'ae24ae66-4622-48e7-b4b3-1ab2c49f933d'
 
@@ -516,6 +554,76 @@ export const test = base.extend<Fixtures>({
     // eslint-disable-next-line react-hooks/rules-of-hooks -- safe: Playwright fixture API `use(value)`, not React.use(). The eslint plugin pattern-matches on the bare name.
     await use(fn)
   },
+
+  /**
+   * AUTO-FIXTURE (runs for every test): capture browser console errors
+   * and warnings + uncaught page errors throughout the test, then assert
+   * empty at teardown (modulo PROJECT_CONSOLE_ALLOWLIST + any per-test
+   * additions to `consoleAssertions.allowlist`).
+   *
+   * Codified in CLAUDE-TESTING.md §5.15. Caught by the 2026-05-24 settings
+   * flash-and-disappear regression — that bug shipped past my e2e because
+   * I asserted DOM state but never console state. The user found it on
+   * first manual test.
+   *
+   * Failure modes this catches:
+   *   - Uncaught promise rejections (e.g. setIncludeCompactInExports
+   *     racing with a destroyed component)
+   *   - React lifecycle warnings (missing key, missing aria-describedby
+   *     on Dialog, useEffect dep drift)
+   *   - Network errors that the UI silently swallows (e.g. failed
+   *     prefs PATCH that the user doesn't see but the dev tools do)
+   *
+   * Per-test opt-out: a test that legitimately needs a noisy console can
+   * push a regex into `consoleAssertions.allowlist`:
+   *
+   *     test('legacy noisy thing', async ({ page, consoleAssertions }) => {
+   *       consoleAssertions.allowlist.push(/known third-party warning/)
+   *       // ... rest of test
+   *     })
+   *
+   * The push is scoped to that test (allowlist array is fresh per test).
+   */
+  consoleAssertions: [
+    async ({ page }, use) => {
+      const capture: ConsoleCapture = {
+        errors: [],
+        warnings: [],
+        allowlist: [...PROJECT_CONSOLE_ALLOWLIST],
+      }
+      const isAllowed = (text: string) =>
+        capture.allowlist.some((rx) => rx.test(text))
+      page.on('pageerror', (e: Error) => {
+        const msg = `pageerror: ${e.message}`
+        if (!isAllowed(msg)) capture.errors.push(msg)
+      })
+      page.on('console', (m) => {
+        const text = m.text()
+        if (isAllowed(text)) return
+        const type = m.type()
+        if (type === 'error') capture.errors.push(text)
+        else if (type === 'warning') capture.warnings.push(text)
+      })
+      // eslint-disable-next-line react-hooks/rules-of-hooks -- safe: Playwright fixture API `use(value)`, not React.use().
+      await use(capture)
+      // Assert AFTER the test body completes. Both arrays empty → test
+      // truly passed. Either populated → test was misleading-green per
+      // §5.15.
+      if (capture.errors.length > 0) {
+        throw new Error(
+          `Console errors during test (see CLAUDE-TESTING.md §5.15):\n  ` +
+            capture.errors.join('\n  '),
+        )
+      }
+      if (capture.warnings.length > 0) {
+        throw new Error(
+          `Console warnings during test (see CLAUDE-TESTING.md §5.15):\n  ` +
+            capture.warnings.join('\n  '),
+        )
+      }
+    },
+    { auto: true },
+  ],
 })
 
 export { expect }

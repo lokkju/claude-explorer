@@ -16,7 +16,7 @@
  */
 
 import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
-import type { Route } from '@playwright/test'
+import type { Route } from './fixtures'
 
 const NEEDLE = 'truncationcanary'
 const CONV_UUID = '11111111-2222-3333-4444-555555555555'
