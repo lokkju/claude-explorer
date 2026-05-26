@@ -84,8 +84,14 @@ const CORRECTION_THRESHOLD_PX = 100
  * Scroll a message bubble into the center of its message-stream
  * container, resilient to layout shift from lazy-loaded images. See
  * module docstring for full rationale.
+ *
+ * @param forceInstant — Skip the smooth-scroll animation even for short
+ *   hops. Used by callers (e.g. the post-toggle re-center in
+ *   ConversationPage) where smooth motion would feel disconnected from
+ *   the originating action (a checkbox click). The multi-shot
+ *   correction tail still runs to absorb any post-settle drift.
  */
-export function scrollBubbleIntoView(element: HTMLElement): void {
+export function scrollBubbleIntoView(element: HTMLElement, forceInstant = false): void {
   const myToken = ++scrollToken
   const container = element.closest(SCROLL_CONTAINER_SELECTOR) as HTMLElement | null
 
@@ -94,7 +100,7 @@ export function scrollBubbleIntoView(element: HTMLElement): void {
   // mount bubbles directly into document.body). Keep behavior simple
   // and let the browser default handle it.
   if (!container) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    element.scrollIntoView({ behavior: forceInstant ? 'auto' : 'smooth', block: 'center' })
     return
   }
 
@@ -107,7 +113,7 @@ export function scrollBubbleIntoView(element: HTMLElement): void {
   const isLongHop = distancePx > viewportH * LONG_HOP_VIEWPORT_MULTIPLE
 
   element.scrollIntoView({
-    behavior: isLongHop ? 'auto' : 'smooth',
+    behavior: isLongHop || forceInstant ? 'auto' : 'smooth',
     block: 'center',
   })
 

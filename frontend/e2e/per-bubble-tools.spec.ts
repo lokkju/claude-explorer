@@ -77,10 +77,12 @@ test.describe('Per-bubble tool-block toggle', () => {
     await page.goto(`/conversations/${FAKE_UUID}`);
 
     // Show tool calls so the chevron is meaningful.
-    const toolsButton = page.getByRole('button', { name: /^Tools$/ });
-    if (!(await toolsButton.evaluate((el) => el.getAttribute('aria-pressed')))) {
-      await toolsButton.click();
-    }
+    // 2026-05-25: Tools control converted from Button to <input type="checkbox">
+    // (see commit 5d7d97a). `.check()` is idempotent — sets to checked
+    // regardless of starting state, replacing the prior aria-pressed branch
+    // which never matched on a checkbox.
+    const toolsCheckbox = page.getByTestId('header-show-tools-checkbox');
+    await toolsCheckbox.check();
 
     const bubble = page.locator('[data-message-uuid="msg-tools"]');
     await expect(bubble).toBeVisible();
@@ -129,22 +131,24 @@ test.describe('M3: Expand/Collapse All Tools visibility-gated on Tools toggle', 
     // Confirm we land in a known state. The default for showToolCalls
     // is false (SettingsContext.tsx:61), so Tools is off and the
     // Expand button must be absent.
-    const toolsButton = page.getByRole('button', { name: /^Tools$/ });
-    await expect(toolsButton).toBeVisible();
+    // 2026-05-25: Tools control is now a <input type="checkbox">.
+    const toolsCheckbox = page.getByTestId('header-show-tools-checkbox');
+    await expect(toolsCheckbox).toBeVisible();
+    await expect(toolsCheckbox).not.toBeChecked();
 
     // Settle signal: the conversation header has rendered if the
-    // Tools button is visible — the conditional Expand button has
+    // Tools checkbox is visible — the conditional Expand button has
     // had its chance to render or not.
     const expandButton = page.getByRole('button', { name: /^(Expand|Collapse)$/ });
     await expect(expandButton).toHaveCount(0);
 
     // Flip Tools on. The conditional render means the Expand button
     // appears in the DOM.
-    await toolsButton.click();
+    await toolsCheckbox.check();
     await expect(expandButton).toBeVisible();
 
     // Flip Tools back off. The button disappears again.
-    await toolsButton.click();
+    await toolsCheckbox.uncheck();
     await expect(expandButton).toHaveCount(0);
   });
 
@@ -154,7 +158,8 @@ test.describe('M3: Expand/Collapse All Tools visibility-gated on Tools toggle', 
     await page.goto(`/conversations/${FAKE_UUID}`);
 
     // Tools ON so the Expand button + tool blocks render.
-    await page.getByRole('button', { name: /^Tools$/ }).click();
+    // 2026-05-25: Tools control is now a <input type="checkbox">.
+    await page.getByTestId('header-show-tools-checkbox').check();
 
     const bubble = page.locator('[data-message-uuid="msg-tools"]');
     await expect(bubble).toBeVisible();

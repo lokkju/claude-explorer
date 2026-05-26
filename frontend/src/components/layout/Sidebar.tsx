@@ -4,7 +4,7 @@ import { useUrlFilters } from '@/hooks/useUrlFilters'
 import { useFilters } from '@/contexts/FilterContext'
 import { ManageFiltersModal } from '@/components/filters/ManageFiltersModal'
 import { MigrationBanner } from '@/components/filters/MigrationBanner'
-import { Search, Settings, Settings2, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor, Filter as FilterIcon } from 'lucide-react'
+import { Search, Settings, Settings2, Download, MessageSquare, Terminal, RefreshCw, ArrowUpDown, FolderTree, Sun, Moon, Monitor, Filter as FilterIcon, Sparkles } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -81,6 +81,8 @@ export function Sidebar({ className }: SidebarProps) {
   const {
     showPhantomSessions,
     setShowPhantomSessions,
+    showArchivedSessions,
+    setShowArchivedSessions,
     sortField,
     setSortField,
     sortOrder,
@@ -195,7 +197,7 @@ export function Sidebar({ className }: SidebarProps) {
             if (isSourceFilter(v)) setSourceFilter(v)
           }}
         >
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="w-full" data-testid="source-filter-select">
             <SelectValue placeholder="Filter by source" />
           </SelectTrigger>
           <SelectContent>
@@ -214,6 +216,12 @@ export function Sidebar({ className }: SidebarProps) {
               <span className="flex items-center gap-2">
                 <Terminal className="h-3 w-3 text-green-500" />
                 Claude Code
+              </span>
+            </SelectItem>
+            <SelectItem value="CLAUDE_COWORK">
+              <span className="flex items-center gap-2">
+                <Sparkles className="h-3 w-3 text-purple-500" />
+                Claude Cowork
               </span>
             </SelectItem>
           </SelectContent>
@@ -280,8 +288,10 @@ export function Sidebar({ className }: SidebarProps) {
             to search messages
           </div>
           <div className="flex items-center gap-2">
-            {/* Group by project toggle - only show when Claude Code sessions are visible */}
-            {sourceFilter !== 'CLAUDE_AI' && (
+            {/* Group by project toggle - only show when Claude Code sessions are visible.
+                Cowork (autonomous decision #3) is excluded: its project_path is a VM
+                sandbox path like /sessions/<vm>, which doesn't group meaningfully. */}
+            {sourceFilter !== 'CLAUDE_AI' && sourceFilter !== 'CLAUDE_COWORK' && (
               <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Group sessions by project">
                 <input
                   type="checkbox"
@@ -303,6 +313,23 @@ export function Sidebar({ className }: SidebarProps) {
               />
               <span>Empty</span>
             </label>
+            {/* D8 (Cowork): Show archived toggle. Only meaningful under
+                the Cowork filter (CC/Desktop have no archived flag) and
+                under 'all' (where an archived Cowork session could be
+                hidden). Hidden under CLAUDE_AI / CLAUDE_CODE to avoid
+                a UI element with no effect. */}
+            {(sourceFilter === 'CLAUDE_COWORK' || sourceFilter === 'all') && (
+              <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Show archived Cowork sessions">
+                <input
+                  type="checkbox"
+                  checked={showArchivedSessions}
+                  onChange={(e) => setShowArchivedSessions(e.target.checked)}
+                  className="h-3 w-3 rounded border-zinc-300"
+                  data-testid="show-archived-sessions-toggle"
+                />
+                <span>Archived</span>
+              </label>
+            )}
           </div>
         </div>
       </div>
@@ -320,6 +347,7 @@ export function Sidebar({ className }: SidebarProps) {
           searchQuery={searchQuery}
           sourceFilter={sourceFilter}
           includePhantom={showPhantomSessions}
+          showArchived={showArchivedSessions}
           sortField={sortField}
           sortOrder={sortOrder}
           groupByProject={groupByProject}

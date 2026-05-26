@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { Sun, Moon, Monitor, Settings, Keyboard, Database, Info, ExternalLink, FileText } from 'lucide-react'
 import {
@@ -9,7 +8,7 @@ import {
   isMarkdownDialect,
 } from '@/contexts/SettingsContext'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { api } from '@/lib/api'
+import { useConfig, useConfigStats } from '@/hooks/useConversations'
 
 export function SettingsPage() {
   const {
@@ -22,6 +21,10 @@ export function SettingsPage() {
     markdownDialect,
     setMarkdownDialect,
   } = useSettings()
+  // V1 polish 2026-05-24 (Bug 2) — the previous
+  // `export.includeCompactContent` pref + checkbox was REMOVED. The
+  // conversation header's "Show Compactions" checkbox now drives BOTH
+  // viewer visibility AND export inclusion (single source of truth).
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -34,23 +37,26 @@ export function SettingsPage() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [navigate])
-  const { data: config } = useQuery({
-    queryKey: ['config'],
-    queryFn: () => api.getConfig(),
-  })
   // /config is fast (no directory walk) and used everywhere; the slow
   // /config/stats variant populates conversation_count and is fetched
   // only here on the Settings page where the user is willing to wait.
   //
+  // 2026-05-23 (perf — React Query duplicate-fetch fix): switched from
+  // inline `useQuery({ queryKey: ['config'] })` to the shared
+  // `useConfig()` / `useConfigStats()` hooks. The inline-vs-hook split
+  // meant SettingsPage AND ConfigCorruptionBanner each subscribed to
+  // ['config'] separately. React Query's queryKey-based dedup happens
+  // to handle this correctly (identical key shape → shared observer),
+  // but the inline form was brittle to any future rename of
+  // queryKeys.config. Single source of truth via the hook eliminates
+  // the foot-gun.
+  //
   // Hunt #5 (2026-05-18): dropped `staleTime: Infinity` to inherit the
-  // queryClient default (30s). The inline `Infinity` here used to OVERRIDE
-  // the useConfigStats hook's TTL per-observer, so even after fixing the
-  // hook to 60s, the Settings page mount would have kept showing the
-  // pre-fetch count indefinitely. Lockstep with useConversations.ts.
-  const { data: stats } = useQuery({
-    queryKey: ['config-stats'],
-    queryFn: () => api.getConfigStats(),
-  })
+  // queryClient default (30s). The previous inline `Infinity` used to
+  // OVERRIDE the useConfigStats hook's TTL per-observer; the hook form
+  // now ensures lockstep.
+  const { data: config } = useConfig()
+  const { data: stats } = useConfigStats()
 
   return (
     <div className="h-full overflow-y-auto">
@@ -177,11 +183,11 @@ export function SettingsPage() {
             </div>
           </section>
 
-          {/* Markdown Export Section (Issue #4) */}
+          {/* Export Section (Markdown + PDF) */}
           <section className="rounded-lg border border-zinc-200 p-5 dark:border-zinc-800" data-section="markdown-export">
             <h2 className="mb-4 flex items-center gap-2 text-lg font-medium text-zinc-900 dark:text-zinc-100">
               <FileText className="h-5 w-5" />
-              Markdown Export
+              Export
             </h2>
             <div className="space-y-4">
               <label className="flex cursor-pointer items-start gap-3">

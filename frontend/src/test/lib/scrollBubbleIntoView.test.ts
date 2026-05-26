@@ -114,6 +114,35 @@ describe('scrollBubbleIntoView — distance-gated scroll + supersession', () => 
     expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
   })
 
+  // forceInstant — bypasses smooth-scroll even on short hops. Used by
+  // the post-toggle re-center in ConversationPage where smooth motion
+  // would feel disconnected from the originating checkbox click. The
+  // multi-shot correction tail still runs (unchanged from the default).
+  it('forceInstant=true → behavior:auto even on a short hop', () => {
+    // viewport h=1000, center=500. Target top=1000 → center=1040.
+    // distance=540px = 0.54 viewports — short hop. Default behavior is
+    // 'smooth' (Rule 2); forceInstant must override to 'auto'.
+    const { target } = setupContainerAndTarget(1000)
+    scrollBubbleIntoView(target as HTMLElement, true)
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' })
+  })
+
+  // forceInstant pair — explicit false still picks the distance-based
+  // default (forceInstant defaults to false; tests the negative case).
+  it('forceInstant=false → distance-based default (short hop stays smooth)', () => {
+    const { target } = setupContainerAndTarget(1000)
+    scrollBubbleIntoView(target as HTMLElement, false)
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+  })
+
+  // forceInstant with the no-container fallback — also instant.
+  it('forceInstant=true with no container → fallback uses auto', () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    scrollBubbleIntoView(target as HTMLElement, true)
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({ behavior: 'auto', block: 'center' })
+  })
+
   // Rule 4a — correction fires when target ends up off-center by >100px.
   it('post-settle correction fires when target drifted >100px during animation', () => {
     const { container, target } = setupContainerAndTarget(1000)

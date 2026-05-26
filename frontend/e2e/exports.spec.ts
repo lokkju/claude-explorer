@@ -213,8 +213,9 @@ test.describe('Header export buttons pass showToolCalls through (B21 export half
     await page.evaluate(async (uuid) => {
       await fetch(`/api/conversations/${uuid}/export/markdown?include_tools=false`)
     }, EX)
-    // Now flip the Tools button (which sets showToolCalls=true).
-    await page.getByRole('button', { name: /^Tools$/ }).click()
+    // Now flip the Tools checkbox (which sets showToolCalls=true).
+    // 2026-05-25: Tools control is now a <input type="checkbox">.
+    await page.getByTestId('header-show-tools-checkbox').check()
     await page.evaluate(async (uuid) => {
       await fetch(`/api/conversations/${uuid}/export/markdown?include_tools=true`)
     }, EX)

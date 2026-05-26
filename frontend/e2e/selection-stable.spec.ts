@@ -114,8 +114,9 @@ test.describe('Selection follows message UUID across Tools toggle (Issue #2)', (
     // visible, growing the visible-message list by one between ss-h1
     // and ss-a1. With an index-based selection, the ring would jump
     // back to ss-tool. With a UUID-based selection it stays on ss-a1.
-    const toolsButton = page.getByRole('button', { name: /^Tools$/ })
-    await toolsButton.click()
+    // 2026-05-25: Tools control is now a <input type="checkbox">.
+    const toolsCheckbox = page.getByTestId('header-show-tools-checkbox')
+    await toolsCheckbox.check()
 
     // Confirm tool-only bubble is now in the DOM (sanity check that the toggle worked).
     await expect(page.locator('[data-message-uuid="ss-tool"]')).toBeVisible()
@@ -130,8 +131,9 @@ test.describe('Selection follows message UUID across Tools toggle (Issue #2)', (
     await expect(page.getByRole('heading', { level: 1, name: /Selection-stability/ })).toBeVisible()
 
     // Start with Tools ON so ss-tool is in the visible list.
-    const toolsButton = page.getByRole('button', { name: /^Tools$/ })
-    await toolsButton.click()
+    // 2026-05-25: Tools control is now a <input type="checkbox">.
+    const toolsCheckbox = page.getByTestId('header-show-tools-checkbox')
+    await toolsCheckbox.check()
     await expect(page.locator('[data-message-uuid="ss-tool"]')).toBeVisible()
 
     // Click "Answer B" — at the end of the list, so the index drift
@@ -141,7 +143,7 @@ test.describe('Selection follows message UUID across Tools toggle (Issue #2)', (
     await expect.poll(async () => await selectedUuid(page)).toBe('ss-a2')
 
     // Toggle Tools OFF.
-    await toolsButton.click()
+    await toolsCheckbox.uncheck()
     await expect(page.locator('[data-message-uuid="ss-tool"]')).toHaveCount(0)
 
     await expect.poll(async () => await selectedUuid(page)).toBe('ss-a2')

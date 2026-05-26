@@ -72,16 +72,15 @@ test.describe('Detail — Tools toggle hides tool blocks by default (B21 viewer)
     await page.goto(`/conversations/${CD}`)
 
     await expect(page.locator('[data-message-uuid="cd-m2"]')).toBeVisible()
-    const toolsButton = page.getByRole('button', { name: /^Tools$/ })
+    // 2026-05-25: Tools control converted from Button (variant flip) to
+    // <input type="checkbox">. The structural signal is the checkbox's
+    // own `checked` state, which `.isChecked()` reads directly.
+    const toolsCheckbox = page.getByTestId('header-show-tools-checkbox')
 
-    // Default: not pressed (variant='outline'). Clicking flips to pressed
-    // (variant='default'). The button's class set is the structural signal
-    // since the tool body lives behind a <details> in the bubble that may
-    // not match getByText reliably.
-    const initialClass = await toolsButton.getAttribute('class')
-    await toolsButton.click()
-    const afterClickClass = await toolsButton.getAttribute('class')
-    expect(initialClass).not.toBe(afterClickClass)
+    // Default: unchecked. Clicking the surrounding label flips it on.
+    await expect(toolsCheckbox).not.toBeChecked()
+    await toolsCheckbox.click()
+    await expect(toolsCheckbox).toBeChecked()
   })
 })
 
@@ -91,8 +90,8 @@ test.describe('Detail — Header "Expand / Collapse All Tools" (B19)', () => {
     await page.goto(`/conversations/${CD}`)
 
     // Enable tool visibility (Expand/Collapse only renders while tools shown).
-    const toolsButton = page.getByRole('button', { name: /^Tools$/ })
-    await toolsButton.click()
+    // 2026-05-25: Tools control is now a <input type="checkbox">.
+    await page.getByTestId('header-show-tools-checkbox').check()
 
     const m2 = page.locator('[data-message-uuid="cd-m2"]')
     await expect(m2).toBeVisible()

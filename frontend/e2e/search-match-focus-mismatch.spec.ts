@@ -218,10 +218,11 @@ test.describe('Search — include_tool_calls filter (architectural fix 2026-05-1
     await page.goto(`/conversations/${TM}`)
     await expect(page.locator('[data-message-uuid="tm-0"]')).toBeVisible()
 
-    // Enable Tools — the button toggles showToolCalls in SettingsContext,
+    // Enable Tools — the checkbox toggles showToolCalls in SettingsContext,
     // which the SearchPanelProvider threads into useSearch's queryKey,
     // which re-fires the network request with include_tool_calls=true.
-    await page.getByRole('button', { name: /^Tools$/ }).click()
+    // 2026-05-25: Tools control is now a <input type="checkbox">.
+    await page.getByTestId('header-show-tools-checkbox').check()
     // tm-tool should now be rendered (no longer filtered out).
     await expect(page.locator('[data-message-uuid="tm-tool"]')).toBeVisible()
 
@@ -307,7 +308,8 @@ test.describe('Search — include_tool_calls filter (architectural fix 2026-05-1
 
     // ── Inversion: flipping Tools ON re-fires the request with
     // include_tool_calls=true and the tool-only snippet reappears.
-    await page.getByRole('button', { name: /^Tools$/ }).click()
+    // 2026-05-25: Tools control is now a <input type="checkbox">.
+    await page.getByTestId('header-show-tools-checkbox').check()
 
     await expect(page.locator('text=/of\\s+2\\s+matches/')).toBeVisible({
       timeout: 10000,

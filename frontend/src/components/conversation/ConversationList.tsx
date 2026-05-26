@@ -26,6 +26,8 @@ interface ConversationListProps {
   searchQuery?: string
   sourceFilter?: SourceFilter
   includePhantom?: boolean
+  // D8 (Cowork, 2026-05-25): show archived sessions in sidebar.
+  showArchived?: boolean
   sortField?: SortField
   sortOrder?: SortOrder
   groupByProject?: boolean
@@ -86,6 +88,7 @@ export function ConversationList({
   searchQuery,
   sourceFilter,
   includePhantom,
+  showArchived,
   sortField = 'updated_at',
   sortOrder = 'desc',
   groupByProject = false,
@@ -114,6 +117,7 @@ export function ConversationList({
     ...(searchQuery && { search: searchQuery }),
     ...(sourceFilter && sourceFilter !== 'all' && { source: sourceFilter }),
     ...(includePhantom && { includePhantom: true }),
+    ...(showArchived && { showArchived: true }),
     ...(organizationId && { organization_id: organizationId }),
     sort: sortField,
     sortOrder: sortOrder,
@@ -474,21 +478,26 @@ function VirtualizedFlatList({
   // compiler optimization. That's a library-level constraint, not a fix
   // we can apply locally. The component still works correctly under
   // React 19's concurrent renderer; we just don't get auto-memoization.
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual API is not React Compiler compatible; see rationale above.
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollEl,
     estimateSize,
     overscan: OVERSCAN,
-    // Re-measure on actual DOM mount so the once-per-row height drift
-    // (e.g. wrapped 2-line titles, project-path subtitle on CC rows
-    // that add ~36 px) self-corrects rather than locking us into the
-    // ROW_HEIGHT estimate. Skip in jsdom (vitest) where
-    // getBoundingClientRect always returns zero and the auto-measure
-    // would push every row to 0 px and collapse the spacer.
+    // Provide a fixed measureElement fallback when ResizeObserver isn't
+    // available (SSR / very old browsers). jsdom (vitest) is handled
+    // separately below via the `isJsdom` non-virtualized early-return,
+    // so this branch is NOT about jsdom.
     measureElement:
       typeof window !== 'undefined' && typeof ResizeObserver !== 'undefined'
         ? undefined
         : () => ROW_HEIGHT,
+    // 2026-05-24: React 19 throws on flushSync-during-render. TanStack
+    // Virtual's default fires flushSync from its onChange callback
+    // (which runs from a ResizeObserver during render). See the same
+    // option on ConversationPage.tsx for the full rationale and the
+    // settings-flash-and-disappear regression that surfaced it.
+    useFlushSync: false,
   })
 
   // Keep mutable refs to `items` / `orderedConversations` so the

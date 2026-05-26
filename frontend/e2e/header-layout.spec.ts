@@ -83,11 +83,15 @@ test.describe('Header layout — actions must not occlude metadata (Issue #3)', 
       await expect(codeBadge).toBeVisible()
       await expect(modelBadge).toBeVisible()
 
-      // Pick a stable representative button from the right cluster.
-      const toolsButton = page.getByRole('button', { name: /^Tools$/ })
+      // Pick a stable representative control from the right cluster.
+      // 2026-05-25: Tools control converted from Button to
+      // <label><input type="checkbox"></label>. The label wraps the icon
+      // + visible "Show Tools" text and is the layout-meaningful unit,
+      // so we boundingBox the label, not the 16×16 input.
+      const toolsControl = page.getByTestId('header-show-tools-control')
       const markdownExportButton = page.getByRole('button', { name: 'Markdown', exact: true })
       const pdfExportButton = page.getByRole('button', { name: 'PDF', exact: true })
-      await expect(toolsButton).toBeVisible()
+      await expect(toolsControl).toBeVisible()
       await expect(markdownExportButton).toBeVisible()
       await expect(pdfExportButton).toBeVisible()
 
@@ -112,7 +116,7 @@ test.describe('Header layout — actions must not occlude metadata (Issue #3)', 
         filePathButton.boundingBox(),
       ])
       const buttonBoxes = await Promise.all([
-        toolsButton.boundingBox(),
+        toolsControl.boundingBox(),
         markdownExportButton.boundingBox(),
         pdfExportButton.boundingBox(),
       ])
