@@ -70,18 +70,72 @@ function writeScopeToUrl(scope: PinScope) {
   window.history.replaceState(window.history.state, '', url.toString())
 }
 
+/**
+ * Structural equality on PinScope. Two values match when their `kind`
+ * AND every kind-specific field (uuid/path/name) are identical.
+ *
+ * Used by `SearchPinProvider` to avoid emitting a NEW object reference
+ * for a scope that hasn't logically changed. Without this, every
+ * `location.search` mutation (the search-hit `?highlight=<msg>` URL
+ * land, the 2-second `scheduleHighlightClear` removal, the
+ * `?pin=conv:...` pin URL writes from other contexts) would set a
+ * fresh `{kind: 'none'}` reference here even when the URL contained
+ * no `pin=` param either before or after.
+ *
+ * Why identity stability matters: downstream consumers
+ * (SearchPanelContext at minimum) include `pinScope` in `useMemo` /
+ * `useEffect` dep lists. New references invalidate those memos and
+ * fire those effects, which cascade into Cmd+G / search-hit-click
+ * jump-back behavior (2026-05-24 user report). The root fix is here
+ * at the source of the churn; downstream memos add defense in depth.
+ */
+function scopesEqual(a: PinScope, b: PinScope): boolean {
+  if (a.kind !== b.kind) return false
+  if (a.kind === 'none' && b.kind === 'none') return true
+  if (a.kind === 'conversation' && b.kind === 'conversation') {
+    return a.uuid === b.uuid && a.name === b.name
+  }
+  if (a.kind === 'project' && b.kind === 'project') {
+    return a.path === b.path && a.name === b.name
+  }
+  return false
+}
+
 export function SearchPinProvider({ children }: { children: ReactNode }) {
   const [scope, setScope] = useState<PinScope>(() => readScopeFromUrl())
   const location = useLocation()
 
   // React to React Router navigation AND browser back/forward.
+  //
+  // 2026-05-24 (Cmd+G jump-back fix): functional `setScope((prev) =>
+  // ...)` so we return the SAME reference when the URL-derived scope
+  // is structurally identical to the prior value. Critical because:
+  //   1. `readScopeFromUrl()` always returns a NEW object (`{kind:
+  //      'none'}` literal, etc.) on every call.
+  //   2. This effect re-runs on EVERY `location.search` change.
+  //   3. Search-hit navigation (navigateToMatch URL fallback) appends
+  //      `?highlight=<msg>` to the URL; the 2s `scheduleHighlightClear`
+  //      removes it. Both trigger this effect.
+  //   4. Without the functional-set guard, every such URL mutation
+  //      churned `scope`'s identity, propagated through
+  //      SearchPanelContext's `scope` useMemo (which returns
+  //      `{organizationId: ...}` for real users with a workspace
+  //      selected — also identity-fresh on every recompute), and
+  //      fired the `activeMatchIndex` reset effect → auto-promote
+  //      → user yanked back to match 1 ("jumps then jumps back" bug).
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: derive scope from useLocation() directly. Today this is "sync to external state (URL) on change" — bounded cascade.
-    setScope(readScopeFromUrl())
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: derive scope from useLocation() directly. Today this is "sync to external state (URL) on change" — bounded cascade; the structural-equality guard ensures bail-out when the URL-derived scope is logically unchanged.
+    setScope((prev) => {
+      const next = readScopeFromUrl()
+      return scopesEqual(prev, next) ? prev : next
+    })
   }, [location.pathname, location.search])
 
   useEffect(() => {
-    const onPop = () => setScope(readScopeFromUrl())
+    const onPop = () => setScope((prev) => {
+      const next = readScopeFromUrl()
+      return scopesEqual(prev, next) ? prev : next
+    })
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])

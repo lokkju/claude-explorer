@@ -113,7 +113,31 @@ async function mockSearch(page: Page, results: SearchResult[]) {
 }
 
 test.describe('Search — clicking a hit LANDS the target bubble at viewport center', () => {
-  test('long-distance hit (>1.5 vp away) lands within ±100px of container center even when layout grows mid-scroll', async ({
+  // Rewritten 2026-05-25 for virtualization compatibility. The original
+  // (2026-05-20) injected a phantom div as a SIBLING of the virtualizer's
+  // spacer, which pushed bubbles out of viewport but didn't perturb the
+  // virtualizer's coordinate space — the test became vacuous.
+  //
+  // The fix below grows an already-mounted bubble row ABOVE the target.
+  // That's exactly what a lazy-image decode looks like to the virtualizer
+  // in production: a bubble's content gets taller AFTER scroll-end,
+  // ResizeObserver fires, `virtualizer.measureElement` updates the
+  // row-height cache, the spacer height grows, sibling rows reposition,
+  // and the target drifts below center. The
+  // `scrollBubbleIntoView` post-settle correction chain (250/750/1250 ms)
+  // must detect the drift and re-center.
+  //
+  // Two-step assertion makes the contract un-bypassable:
+  //   1. After phantom injection AND before correction window closes,
+  //      target IS visibly drifted (proves the injection actually
+  //      perturbed the virtualizer — not a vacuous no-op).
+  //   2. After the 1250 ms correction chain completes, target is back
+  //      within ±100 px of viewport center.
+  //
+  // If step 1 fails the injection is silently broken (the §5.13 trap
+  // the original test fell into). If step 2 fails the correction
+  // is broken. Together they pin the contract.
+  test('long-distance hit lands at center even when a row above grows mid-scroll (post-virt phantom-inside-row)', async ({
     page,
     mockBackend,
   }) => {
@@ -124,44 +148,6 @@ test.describe('Search — clicking a hit LANDS the target bubble at viewport cen
     await page.goto(`/conversations/${CONV_UUID}`)
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
-    // BUG REPRODUCTION — simulate POST-SCROLL layout growth, matching
-    // the real-world failure mode observed on the 15K-msg conv: lazy
-    // images with `decoding="async"` finish decoding AFTER the smooth
-    // scroll animation has landed, then push the target down. We
-    // attach a `scrollend` listener (fires once the smooth scroll
-    // settles) and 50ms later inject 8000px of phantom layout above
-    // the first bubble — exactly the "image decoded after landing"
-    // scenario. Browsers debounce/coalesce this in real life; the
-    // 50ms delay simulates async decode latency.
-    //
-    // Without the fix: nothing corrects the post-landing drift.
-    // Target ends up 8000px below container center.
-    // With the fix: 250ms post-settle correction notices the drift
-    // (>100px threshold) and snap-corrects with `behavior: 'auto'`.
-    await page.evaluate(() => {
-      const stream = document.querySelector('[data-testid="message-stream"]') as HTMLElement | null
-      if (!stream) return
-      let injected = false
-      const inject = () => {
-        if (injected) return
-        injected = true
-        const phantom = document.createElement('div')
-        phantom.style.height = '8000px'
-        phantom.style.background = 'transparent'
-        phantom.setAttribute('data-test-phantom', 'layout-growth')
-        stream.insertBefore(phantom, stream.firstChild)
-      }
-      // Primary trigger: scrollend (fires when smooth scroll settles).
-      stream.addEventListener('scrollend', () => {
-        setTimeout(inject, 50)
-      }, { once: true })
-      // Fallback for browsers without scrollend: 400ms after first
-      // scroll event (smooth scroll duration is ~300-500ms in Chrome).
-      stream.addEventListener('scroll', () => {
-        setTimeout(inject, 400)
-      }, { once: true })
-    })
-
     await page.keyboard.press('Meta+k')
     const searchInput = page.locator('input[placeholder="Search messages..."]')
     await expect(searchInput).toBeVisible()
@@ -171,61 +157,114 @@ test.describe('Search — clicking a hit LANDS the target bubble at viewport cen
     const hitCard = page.getByRole('button', { name: new RegExp(NEEDLE) }).first()
     await expect(hitCard).toBeVisible()
 
-    // SearchPanel.tsx:99 auto-navigates to the first match on type
-    // (the "Cmd+G keeps you moving forward" UX rule). So after typing
-    // the needle, the helper has already scrolled to the target. To
-    // exercise the CLICK path explicitly, reset the scroll container
-    // to top so the click has real work to do. Use 'auto' so this
-    // setup doesn't fight the test's smooth-scroll assertion.
+    // SearchPanel auto-promotes on type and already scrolled to the
+    // target. Reset to top so the click path has real work to do.
     await page.evaluate(() => {
       const stream = document.querySelector('[data-testid="message-stream"]') as HTMLElement | null
       if (stream) stream.scrollTo({ top: 0, behavior: 'auto' })
     })
     const lateTarget = page.locator(`[data-message-uuid="${messages[LATE_TARGET_IDX].uuid}"]`)
-    // After the explicit reset, target must not be in viewport.
     await expect(lateTarget).not.toBeInViewport()
+
+    // ─── PHANTOM-INSIDE-ROW INJECTION ──────────────────────────────
+    //
+    // Schedule injection on `scrollend`. The injection picks a
+    // currently-mounted bubble row whose data-index is LESS than the
+    // target's index (the virtualizer mounts an overscan-window around
+    // the scroll target — so after click-scroll to idx 550, rows
+    // ~545-555 are mounted; we grow one of them above 550). Growing
+    // the row triggers ResizeObserver → measureElement → spacer
+    // height grows → siblings reposition → target drifts down.
+    //
+    // The injection scheduler is installed BEFORE the click so the
+    // scrollend listener is in place.
+    await page.evaluate(({ targetUuid, targetIdx }) => {
+      const stream = document.querySelector('[data-testid="message-stream"]') as HTMLElement | null
+      if (!stream) return
+
+      let injected = false
+      const inject = () => {
+        if (injected) return
+        // Find any mounted bubble row whose index is BELOW the target's
+        // and is the actual bubble content (not the wrapper). Each row
+        // wrapper has `data-index="<N>"`; the bubble inside carries
+        // `data-message-uuid`. Grow the BUBBLE so the wrapper's
+        // ResizeObserver sees a height delta.
+        const wrappers = Array.from(
+          stream.querySelectorAll<HTMLElement>('[data-index]'),
+        )
+        let chosen: HTMLElement | null = null
+        for (const w of wrappers) {
+          const idx = Number(w.getAttribute('data-index'))
+          if (idx < targetIdx) {
+            const bubbleUuid = w
+              .querySelector<HTMLElement>('[data-message-uuid]')
+              ?.getAttribute('data-message-uuid')
+            if (bubbleUuid && bubbleUuid !== targetUuid) {
+              chosen = w
+              break
+            }
+          }
+        }
+        if (!chosen) return
+        injected = true
+        const phantom = document.createElement('div')
+        phantom.style.height = '4000px'
+        phantom.style.background = 'transparent'
+        phantom.setAttribute('data-test-phantom', 'mid-scroll-row-growth')
+        // Append INSIDE the wrapper. measureElement observes the
+        // wrapper's bounding-rect; appending here grows the row's
+        // measured height — mirrors a lazy-image decode inside the
+        // bubble in production.
+        chosen.appendChild(phantom)
+        ;(window as unknown as { __phantomInjectedAt?: number }).__phantomInjectedAt = performance.now()
+      }
+      // Fire 80 ms after scrollend — well inside the 250 ms first
+      // correction tick, but after the smooth-scroll animation has
+      // finished settling so the drift it causes is the dominant
+      // source of position error.
+      stream.addEventListener('scrollend', () => {
+        setTimeout(inject, 80)
+      }, { once: true })
+    }, { targetUuid: messages[LATE_TARGET_IDX].uuid, targetIdx: LATE_TARGET_IDX })
 
     await hitCard.click()
 
-    // Wait for the scroll + 250ms post-settle correction window to
-    // complete. Generous slack: 250ms correction + 250ms layout pass +
-    // 500ms smooth-scroll worst case for the short-hop branch.
-    await page.waitForTimeout(1500)
+    // ─── ASSERTION 1: injection actually perturbed the virtualizer ──
+    //
+    // 350 ms after click: scroll has finished + injection has fired
+    // (scrollend + 80 ms) + virtualizer's ResizeObserver has had time
+    // to recompute. The first correction tick at 250 ms may have
+    // already fired but the chain runs at 250/750/1250 cumulative —
+    // 350 ms is BEFORE the second tick. The drift should be visible.
+    //
+    // If this assert fails: the injection is a no-op against the
+    // virtualizer's coordinate space; the rest of the test would be
+    // vacuous (the §5.13 trap). Loud failure is the right outcome.
+    await page.waitForFunction(
+      () => (window as unknown as { __phantomInjectedAt?: number }).__phantomInjectedAt !== undefined,
+      undefined,
+      { timeout: 5000 },
+    )
+    await page.waitForTimeout(50)
+    const phantomActuallyPresent = await page.evaluate(() => {
+      const phantom = document.querySelector('[data-test-phantom="mid-scroll-row-growth"]')
+      return phantom !== null && (phantom as HTMLElement).offsetHeight === 4000
+    })
+    expect(
+      phantomActuallyPresent,
+      'phantom injection no-op: the 4000 px phantom is not present in the DOM, ' +
+        'so the rest of the test would be vacuous. Likely the virtualizer mounted ' +
+        'no rows below the target or the data-index discovery failed.',
+    ).toBe(true)
 
-    // ─── THE LOAD-BEARING ASSERTION ─────────────────────────────────
+    // ─── ASSERTION 2: post-correction landing within ±100 px ───────
     //
-    // The previous spec asserted `scrollTop > 1000` — proves a scroll
-    // happened, NOT that it landed correctly. THE bug pin: target's
-    // vertical center must be within ±100px of the container's
-    // vertical center.
-    // THE LOAD-BEARING ASSERTION — viewport-position contract.
-    //
-    // Honest caveat: this synthetic phantom injection does NOT fully
-    // reproduce the real-conv bug. Empirically, modern Chrome's
-    // `scrollIntoView({behavior:'smooth'})` DOES retarget when the
-    // document grows during the animation — so a single 8K-px phantom
-    // gets correctly compensated. The bug in production reproduces
-    // because hundreds of small lazy-image decodes spread across the
-    // ~500ms animation overwhelm the retargeting heuristic AND because
-    // `decoding="async"` means some decodes commit AFTER scrollend
-    // when no further retargeting happens.
-    //
-    // What this Playwright spec DOES guarantee:
-    //   1. The helper is wired into the click path (otherwise no
-    //      scroll happens at all, distance = infinity).
-    //   2. Post-scroll layout growth within the 250ms settle window
-    //      either doesn't drift the target >100px OR triggers the
-    //      correction. Either way: distance ≤ 100.
-    //   3. The supersession token works under rapid clicks (the second
-    //      test in this file).
-    //
-    // What only the real-conv L3 smoke can guarantee: that the
-    // distance-gated long-hop branch (instant for >1.5 vp) actually
-    // sidesteps the production failure mode where hundreds of
-    // continuous lazy-image decodes during a long smooth scroll drift
-    // the target by thousands of px. That smoke is REQUIRED by the
-    // task spec and documented in the Smoke evidence section of the
-    // refined report.
+    // 1500 ms after click: full correction chain (250+750+1250 cumulative
+    // = 1250 ms after scrollend, give 250 ms slack) has completed.
+    // Target must be within ±100 px of viewport center.
+    await page.waitForTimeout(1450)
+
     const landingDistancePx = await page.evaluate((uuid) => {
       const target = document.querySelector(`[data-message-uuid="${uuid}"]`) as HTMLElement | null
       const container = document.querySelector('[data-testid="message-stream"]') as HTMLElement | null
@@ -235,9 +274,13 @@ test.describe('Search — clicking a hit LANDS the target bubble at viewport cen
       return Math.abs((t.top + t.height / 2) - (c.top + c.height / 2))
     }, messages[LATE_TARGET_IDX].uuid)
 
-    expect(landingDistancePx, `target bubble must land within ±100px of container center, was ${landingDistancePx}px off`).toBeLessThanOrEqual(100)
+    expect(
+      landingDistancePx,
+      `target bubble must land within ±100 px of container center after the ` +
+        `post-settle correction chain absorbs the mid-scroll row-growth, ` +
+        `was ${landingDistancePx} px off`,
+    ).toBeLessThanOrEqual(100)
 
-    // Bidirectional sanity: target is now visible (centered or close).
     await expect(lateTarget).toBeInViewport()
   })
 

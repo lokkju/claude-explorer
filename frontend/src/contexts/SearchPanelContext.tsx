@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -100,6 +101,75 @@ export function narrowSearchResults(
   return filtered
 }
 
+/**
+ * Provenance for the most recent activeMatchIndex change.
+ *   - `'auto'`: set by the auto-promote effect when results arrive.
+ *     Downstream consumers (the SearchPanel activeMatchIndex effect)
+ *     navigate the conversation pane WITHOUT moving DOM focus, so the
+ *     user can keep typing in the search input (live-preview UX).
+ *   - `'user'`: set by Cmd+G / Cmd+Shift+G / Enter-in-input / click on
+ *     a result card. Downstream MOVES DOM focus to the matching bubble
+ *     so Cmd+C copies the message body.
+ *
+ * Two state cells (`activeMatchIndex` + `activeMatchSource`) are
+ * updated as a pair; React 18 batches both state updates so the
+ * downstream effect runs exactly once per change. See
+ * frontend/e2e/search-typing-focus.spec.ts for the user-observable
+ * contract.
+ */
+export type ActiveMatchSource = 'auto' | 'user'
+
+/**
+ * Shallow-structural equality on the `scope` object emitted from
+ * `SearchPanelProvider`. Returns true iff both sides are undefined,
+ * OR both are objects with the same conversationUuid + projectPath +
+ * organizationId + conversationUuids (array deep-equal).
+ *
+ * Used to bail out of the `scope` useMemo when its content hasn't
+ * changed, even if one of the inputs (pinScope, passingUuids) got a
+ * new object identity. Without this, the reset effect downstream
+ * (deps include `scope`) fires spuriously and triggers the Cmd+G
+ * jump-back race (2026-05-24 user report).
+ *
+ * Exported for unit testing — vitest covers identity-stability for
+ * the {undefined, undefined}, {empty obj, undefined}, and
+ * {same content, different ref} cases.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- safe: pure helper co-located with SearchPanelProvider. HMR fast refresh falls back to full reload; no runtime impact.
+export function scopeShapesEqual(
+  a:
+    | {
+        conversationUuid?: string
+        projectPath?: string
+        organizationId?: string | null
+        conversationUuids?: string[]
+      }
+    | undefined,
+  b:
+    | {
+        conversationUuid?: string
+        projectPath?: string
+        organizationId?: string | null
+        conversationUuids?: string[]
+      }
+    | undefined,
+): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined) return false
+  if (a.conversationUuid !== b.conversationUuid) return false
+  if (a.projectPath !== b.projectPath) return false
+  if (a.organizationId !== b.organizationId) return false
+  const ua = a.conversationUuids
+  const ub = b.conversationUuids
+  if (ua === ub) return true
+  if (ua === undefined || ub === undefined) return false
+  if (ua.length !== ub.length) return false
+  for (let i = 0; i < ua.length; i++) {
+    if (ua[i] !== ub[i]) return false
+  }
+  return true
+}
+
 interface SearchPanelContextType {
   isOpen: boolean
   query: string
@@ -107,6 +177,7 @@ interface SearchPanelContextType {
   sortField: SortField
   sortOrder: SortOrder
   activeMatchIndex: number // -1 = no active match
+  activeMatchSource: ActiveMatchSource
   flatMatches: SearchMatch[]
   results: SearchResult[] // Raw grouped results (for section headers w/ timestamps)
   // 2026-05-16 (plan §B): truncation envelope. Surfaced through the
@@ -134,7 +205,12 @@ interface SearchPanelContextType {
   setSortOrder: (o: SortOrder) => void
   nextMatch: () => void
   prevMatch: () => void
-  setActiveMatchIndex: (i: number) => void
+  /**
+   * Set the active match index. The optional `source` arg defaults to
+   * `'user'` because most callers (Cmd+G handlers, card clicks) are
+   * user-initiated; the auto-promote effect passes `'auto'` explicitly.
+   */
+  setActiveMatchIndex: (i: number, source?: ActiveMatchSource) => void
   // Bumped by callers (Cmd+F handler) that want the SearchPanel to
   // re-focus its input even if the panel is already open. SearchPanel
   // listens to this counter via a useEffect and refocuses the input
@@ -203,6 +279,13 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   )
   const [query, setQueryState] = useState<string>('')
   const [activeMatchIndex, setActiveMatchIndexState] = useState<number>(-1)
+  // Provenance flag for the most recent activeMatchIndex change. See
+  // ActiveMatchSource docs above. Default `'user'` is a safe initial
+  // value: when the index is -1 there's no downstream navigation, so
+  // the field is dormant; first real value comes from either the
+  // auto-promote effect ('auto') or a Cmd+G/click ('user').
+  const [activeMatchSource, setActiveMatchSourceState] =
+    useState<ActiveMatchSource>('user')
   // Cmd+F focus-request counter. Bumping it triggers SearchPanel's
   // focus-input useEffect even when isOpen hasn't changed.
   const [focusRequestSeq, setFocusRequestSeq] = useState(0)
@@ -246,6 +329,28 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // BACKEND side (search.py strips conversation_uuids when
   // conversation_uuid is set), so we still pass the workspace and the
   // filter set without breaking the precedence rule.
+  // 2026-05-24 (Cmd+G jump-back fix, defense-in-depth alongside the
+  // upstream `scopesEqual` stabilization in SearchPinContext):
+  // memoize across renders by SHALLOW-STRUCTURAL equality. Without
+  // this, every recompute of the factory (triggered by ANY of the
+  // deps' identity changing — pinScope, passingUuids, even the same-
+  // value organizationId on a usePreferences refetch) produces a NEW
+  // object literal. That fresh identity invalidates the activeMatch
+  // reset effect downstream (whose deps include `scope`), drops the
+  // index back to -1, fires auto-promote → user yanked back to match
+  // 1 ("jumps then jumps back" bug, user report 2026-05-24).
+  //
+  // We use a ref to retain the last STABLE value; the factory
+  // computes the candidate, structurally compares to the prior, and
+  // returns the prior reference when they match. `useMemo` alone
+  // doesn't help because its identity-equality check on the deps
+  // never sees them as equal when they're new objects on every call.
+  const lastScopeRef = useRef<{
+    conversationUuid?: string
+    projectPath?: string
+    organizationId?: string | null
+    conversationUuids?: string[]
+  } | undefined>(undefined)
   const scope = useMemo(() => {
     const out: {
       conversationUuid?: string
@@ -259,8 +364,13 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     if (passingUuids !== undefined) out.conversationUuids = passingUuids
     // Return undefined when there's truly no constraint, so the cache
     // key stays minimal for the common case.
-    if (Object.keys(out).length === 0) return undefined
-    return out
+    const candidate = Object.keys(out).length === 0 ? undefined : out
+    const prev = lastScopeRef.current
+    if (scopeShapesEqual(prev, candidate)) {
+      return prev
+    }
+    lastScopeRef.current = candidate
+    return candidate
   }, [pinScope, organizationId, passingUuids])
   void bookmarks
 
@@ -397,11 +507,29 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     return matches
   }, [results])
 
-  // Reset activeMatchIndex whenever the query changes
+  // Reset activeMatchIndex (back to -1, "no active match") whenever
+  // any input that invalidates the result set changes. The expanded
+  // dep list — `query`, `sortField`, `sortOrder`, `contextSize`,
+  // `scope`, `showToolCalls` — exactly mirrors useSearch's queryKey
+  // inputs, so we re-arm the auto-promote effect on the same edges
+  // that trigger a real backend re-fetch.
+  //
+  // The reset+auto-promote pair is load-bearing for the live-preview
+  // UX: when the user types "needle" → results land → auto-promote
+  // index 0; then the user changes sort order → results re-arrive →
+  // auto-promote index 0 again.
+  //
+  // It must NOT re-promote on incidental react-query refetches
+  // (refetchOnWindowFocus is `true` globally — see lib/queryClient.ts).
+  // Those refetches DON'T change the queryKey, so `scope` etc. are
+  // referentially stable, this effect doesn't re-fire, the reset to
+  // -1 doesn't happen, and the auto-promote effect's `=== -1` guard
+  // continues to suppress re-firing. Pinned by
+  // e2e/search-auto-focus.spec.ts:129 "does NOT yank the user back".
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: hoist activeMatchIndex alongside flatMatches as derived state. Today this resets a single int once per query change — bounded cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: hoist activeMatchIndex alongside flatMatches as derived state. Today this resets a single int once per query-equivalent change — bounded cascade.
     setActiveMatchIndexState(-1)
-  }, [query])
+  }, [query, sortField, sortOrder, contextSize, scope, showToolCalls])
 
   // V1 polish: auto-focus the first match when results land for a fresh
   // query. Without this, the user types "needle", sees results in the
@@ -418,12 +546,14 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   //     cycle; never overwrite the user's Cmd+G navigation when results
   //     refresh later (e.g., a new conversation arrives).
   //
-  // The existing SearchPanel.tsx:82-93 effect picks up this index
-  // change and calls navigateToMatch, which scrolls + ring-highlights
-  // (navigateToMatch.ts:46-54) for 2s.
+  // The existing SearchPanel.tsx effect picks up this index change AND
+  // the source flag, and calls navigateToMatch with `focus: false`
+  // for source='auto' so DOM focus stays in the search input while
+  // the conversation pane scrolls + flashes the yellow ring.
   useEffect(() => {
     if (!isSearching && flatMatches.length > 0 && activeMatchIndex === -1) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: "auto-promote first match once per stable-query cycle". Three-gate guard prevents infinite cascade; converting requires restructuring the navigateToMatch downstream effect too.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: "auto-promote first match once per stable-query cycle". Three-gate guard prevents infinite cascade; converting requires restructuring the navigateToMatch downstream effect too. Both setState calls (source + index) batch into a single render in React 18.
+      setActiveMatchSourceState('auto')
       setActiveMatchIndexState(0)
     }
   }, [isSearching, flatMatches.length, activeMatchIndex])
@@ -465,12 +595,23 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     [setSortOrderPref],
   )
 
-  const setActiveMatchIndex = useCallback((i: number) => {
-    setActiveMatchIndexState(i)
-  }, [])
+  const setActiveMatchIndex = useCallback(
+    (i: number, source: ActiveMatchSource = 'user') => {
+      // Order matters here: set the source BEFORE the index so that
+      // any synchronous downstream subscriber that observes the index
+      // change has already seen the new source on the same commit.
+      // React 18 batches both into one render.
+      setActiveMatchSourceState(source)
+      setActiveMatchIndexState(i)
+    },
+    [],
+  )
 
   const nextMatch = useCallback(() => {
     if (flatMatches.length === 0) return
+    // Cmd+G is always user-initiated; pin source='user' so the
+    // downstream effect moves DOM focus to the bubble (Cmd+C path).
+    setActiveMatchSourceState('user')
     setActiveMatchIndexState((prev) => {
       if (prev < 0) return 0
       return (prev + 1) % flatMatches.length
@@ -479,6 +620,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
 
   const prevMatch = useCallback(() => {
     if (flatMatches.length === 0) return
+    setActiveMatchSourceState('user')
     setActiveMatchIndexState((prev) => {
       if (prev < 0) return flatMatches.length - 1
       return (prev - 1 + flatMatches.length) % flatMatches.length
@@ -486,45 +628,95 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   }, [flatMatches.length])
 
   const requestFocus = useCallback(() => {
-    // Open the panel if it's closed (so the input is mounted) and bump
-    // the focus-request counter so SearchPanel's effect refocuses the
-    // input even when isOpen was already true.
+    // 2026-05-22 perf fix: the original implementation ALWAYS bumped
+    // focusRequestSeq, which triggered a Provider-wide re-render. On
+    // the 16K-message conversation that re-rendered ConversationPage
+    // and walked the reconciler through 20K message bubbles — even
+    // with React.memo, the walk cost ~7.5 s of main-thread time
+    // before the input could actually receive focus.
+    //
+    // Fast path: when the input is already mounted (panel open + tab
+    // is search), focus it DIRECTLY with no state change. No
+    // Provider re-render, no reconciliation, sub-millisecond focus.
+    //
+    // Slow path: the input isn't mounted yet → open the panel + bump
+    // the seq so SearchPanel's effect retries the focus after the
+    // mount paints.
+    // Target SPECIFICALLY the SearchPanel's input (not the sidebar's
+    // "Search titles and projects" input, which would match a generic
+    // placeholder-substring selector). The SearchPanel input carries
+    // `data-search-panel-input` (set in SearchPanel.tsx) for this
+    // unambiguous lookup.
+    const mountedInput = document.querySelector<HTMLInputElement>(
+      'input[data-search-panel-input]'
+    )
+    if (isOpen && mountedInput) {
+      mountedInput.focus()
+      mountedInput.select()
+      return
+    }
     if (!isOpen) {
       setIsOpenPref(true)
     }
     setFocusRequestSeq((n) => n + 1)
   }, [isOpen, setIsOpenPref])
 
+  // 2026-05-22 perf fix (mirror of the SettingsContext fix in
+  // commit e0cc917): memoize the context value object so its identity
+  // is stable across renders that don't change any of its fields.
+  // Without this, every `setQuery` keystroke rebuilt the value as a
+  // new inline literal, notifying every `useSearchPanel()` consumer
+  // (ConversationPage, useKeyboardShortcuts, Sidebar). ConversationPage
+  // re-rendering on every keystroke walks its 20K-MessageBubble .map()
+  // through the reconciler — even with memo'd bubbles, the walk costs
+  // ~600ms per keystroke and blocks the 200ms debounce timer for the
+  // /api/search fetch. Symptom: typing felt like 10s before any
+  // backend log line appeared, with the backend itself only taking
+  // 3-4s once the request actually landed.
+  //
+  // The deps list is explicit (not via `useMemo` with no deps) so a
+  // future addition to the value object catches at type-check time.
+  const value = useMemo(
+    () => ({
+      isOpen,
+      query,
+      contextSize,
+      sortField,
+      sortOrder,
+      activeMatchIndex,
+      activeMatchSource,
+      flatMatches,
+      results,
+      totalMatched,
+      returnedMatches,
+      truncated,
+      isLoading,
+      isSearching,
+      open,
+      close,
+      toggle,
+      setQuery,
+      setContextSize,
+      setSortField,
+      setSortOrder,
+      nextMatch,
+      prevMatch,
+      setActiveMatchIndex,
+      focusRequestSeq,
+      requestFocus,
+    }),
+    [
+      isOpen, query, contextSize, sortField, sortOrder,
+      activeMatchIndex, activeMatchSource, flatMatches, results, totalMatched,
+      returnedMatches, truncated, isLoading, isSearching,
+      open, close, toggle, setQuery, setContextSize, setSortField,
+      setSortOrder, nextMatch, prevMatch, setActiveMatchIndex,
+      focusRequestSeq, requestFocus,
+    ],
+  )
+
   return (
-    <SearchPanelContext.Provider
-      value={{
-        isOpen,
-        query,
-        contextSize,
-        sortField,
-        sortOrder,
-        activeMatchIndex,
-        flatMatches,
-        results,
-        totalMatched,
-        returnedMatches,
-        truncated,
-        isLoading,
-        isSearching,
-        open,
-        close,
-        toggle,
-        setQuery,
-        setContextSize,
-        setSortField,
-        setSortOrder,
-        nextMatch,
-        prevMatch,
-        setActiveMatchIndex,
-        focusRequestSeq,
-        requestFocus,
-      }}
-    >
+    <SearchPanelContext.Provider value={value}>
       {children}
     </SearchPanelContext.Provider>
   )
@@ -539,14 +731,3 @@ export function useSearchPanel() {
   return context
 }
 
-/** Optional variant: returns null when the provider is absent instead
- *  of throwing. Used by leaf components (MessageBubble) that want to
- *  consume the active query opportunistically — when rendered inside a
- *  conversation page they get the live search query; when rendered in
- *  isolation (vitest, snapshot tests, future Storybook), they degrade
- *  to "no active query" without forcing every test fixture to wrap in
- *  SearchPanelProvider. */
-// eslint-disable-next-line react-refresh/only-export-components -- same rationale as useSearchPanel above.
-export function useSearchPanelOptional() {
-  return useContext(SearchPanelContext)
-}

@@ -4,10 +4,14 @@ import type { Message } from '../src/lib/types'
 /**
  * Manual finding 2026-05-04: search focus model.
  *
- *   - Cmd+G / Cmd+Shift+G: scroll the conversation pane to the next /
- *     prev match BUT keep keyboard focus inside the SearchPanel input.
- *     An aria-live region in the panel header announces "Match N of M"
- *     so screen-reader users hear the change without focus moving.
+ *   - Cmd+G / Cmd+Shift+G: MOVE keyboard focus to the matching bubble in
+ *     the conversation pane, so the user can Cmd+C the message body.
+ *     (Updated 2026-05-23: prior contract pinned focus to the input,
+ *     which made Cmd+C silently fall to the browser default. The user-
+ *     observable contract is now "Cmd+G + Cmd+C copies the matched
+ *     message" — the bubble must own DOM focus for that to work.)
+ *     An aria-live region in the panel header still announces
+ *     "Match N of M" for screen-reader users.
  *   - Enter on the active result card: focus the corresponding message
  *     in the conversation pane; SearchPanel stays open.
  *   - Esc: close the SearchPanel and focus the message that
@@ -107,7 +111,15 @@ async function openPanelAndType(page: Page, q: string) {
 }
 
 test.describe('Search focus model (manual finding 2026-05-04)', () => {
-  test('Cmd+G keeps focus in SearchPanel input and scrolls conversation', async ({ page, mockBackend }) => {
+  test('Cmd+G moves focus to the matching bubble so Cmd+C copies the message', async ({ page, mockBackend, context }) => {
+    // 2026-05-23 contract change: prior behavior pinned focus on the
+    // input after Cmd+G. That pin ratified a bug — pressing Cmd+C
+    // immediately after Cmd+G silently fell to the browser default
+    // (copy nothing, because the input had no selection). The user-
+    // observable contract is "Cmd+G then Cmd+C copies the matched
+    // message". For that to work, the bubble must own DOM focus AFTER
+    // Cmd+G. (Search input stays available — Cmd+F brings focus back.)
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockSearchResults(page)
     await page.goto(`/conversations/${C}`)
@@ -117,11 +129,20 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
     await expect(input).toBeFocused()
 
     const isMac = process.platform === 'darwin'
+    // Cmd+G advances activeMatchIndex from 0 → 1 (msg-2). The new
+    // design's downstream effect calls navigateToMatch with focus:true
+    // for source='user' navigations.
     await page.keyboard.press(isMac ? 'Meta+g' : 'Control+g')
 
-    // Focus must remain on the search input — Cmd+G is "find again",
-    // not "jump to message".
-    await expect(input).toBeFocused({ timeout: 2000 })
+    // The matching bubble must be the focused element.
+    const bubble = page.locator('[data-message-uuid="msg-2"]')
+    await expect(bubble).toBeFocused({ timeout: 2000 })
+
+    // And Cmd+C must copy the bubble's content (proves the focus
+    // transfer enabled the previously-broken copy path).
+    await page.keyboard.press(isMac ? 'Meta+c' : 'Control+c')
+    const clipboard = await page.evaluate(() => navigator.clipboard.readText())
+    expect(clipboard).toContain('second needle line')
   })
 
   test('aria-live region announces "Match N of M"', async ({ page, mockBackend }) => {

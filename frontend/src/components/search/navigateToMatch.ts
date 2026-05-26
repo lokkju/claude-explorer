@@ -50,6 +50,29 @@ import type { SearchMatch } from '@/contexts/SearchPanelContext'
  * `search-focus-model` test; a follow-up should address it without
  * the focus-stealing side effect.
  */
+/**
+ * Options accepted by the navigateToMatch callback.
+ *
+ *   - `focus` (default `true`): whether to move DOM focus onto the
+ *     target message bubble. The auto-promote effect in
+ *     SearchPanelContext passes `false` so typing in the search input
+ *     isn't interrupted mid-keystroke (live-preview UX). Cmd+G / Enter
+ *     / card-click pass `true` so the bubble owns focus and Cmd+C
+ *     copies the message body.
+ *
+ * Implementation:
+ *   - Same-conv fast path: if `focus` is true, calls `element.focus()`
+ *     after the scroll + ring class.
+ *   - URL fallback: appends `&focus=0` to the URL when `focus` is
+ *     false. ConversationPage's highlight effect reads that param and
+ *     skips its own `element.focus()` call. (Default — no `focus`
+ *     param — preserves the pre-existing "always focus" behavior, so
+ *     deep-link URLs from outside the app still focus the bubble.)
+ */
+export interface NavigateToMatchOptions {
+  focus?: boolean
+}
+
 export function useNavigateToMatch() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -63,7 +86,8 @@ export function useNavigateToMatch() {
   }, [location.pathname])
 
   const navigateToMatch = useCallback(
-    (match: SearchMatch) => {
+    (match: SearchMatch, opts?: NavigateToMatchOptions) => {
+      const focus = opts?.focus ?? true
       const isSameConversation = match.conversationUuid === currentUuid
       const hasRealMessage = match.messageUuid && match.messageUuid !== 'title'
 
@@ -89,6 +113,16 @@ export function useNavigateToMatch() {
             // layout-shift bug this fixes.
             scrollBubbleIntoView(element)
             element.classList.add('ring-2', 'ring-yellow-400', 'ring-offset-2')
+            // 2026-05-23: when the caller asks for focus (user-initiated
+            // navigation — Cmd+G, Enter, card-click), move DOM focus
+            // onto the bubble so Cmd+C copies the message body. The
+            // bubble has tabIndex={-1} so .focus() works without
+            // joining the tab order. Auto-promote callers pass
+            // `focus: false` so typing in the search input is not
+            // interrupted mid-keystroke.
+            if (focus) {
+              element.focus()
+            }
             setTimeout(() => {
               element.classList.remove(
                 'ring-2',
@@ -96,6 +130,22 @@ export function useNavigateToMatch() {
                 'ring-offset-2'
               )
             }, 2000)
+            // 2026-05-22 (compact-marker auto-open fix): if the
+            // target is a /compact bubble, click the pill to expand
+            // its summary panel so the user can see the matched
+            // content. ConversationPage's URL-based `forceOpen`
+            // wiring doesn't fire here because the fast path never
+            // updates the URL. Skip the click when the pill is
+            // already open so we don't toggle a user-opened marker
+            // closed.
+            if (element.hasAttribute('data-compact-marker')) {
+              const pill = element.querySelector<HTMLButtonElement>(
+                '[data-compact-marker-pill]',
+              )
+              if (pill && pill.getAttribute('aria-expanded') !== 'true') {
+                pill.click()
+              }
+            }
             return
           }
           // Element not in DOM (e.g. React 19 concurrent render hasn't
@@ -124,9 +174,17 @@ export function useNavigateToMatch() {
         })
       }
 
+      // 2026-05-23: append `&focus=0` only when the caller opted out
+      // of focus. Omitting the param entirely (default) preserves the
+      // pre-existing behavior for deep-link URLs (someone pastes
+      // `/conversations/<uuid>?highlight=<msg>` into the address bar)
+      // — they still get focus on the bubble.
+      const focusSuffix = focus ? '' : '&focus=0'
       navigate(
         `/conversations/${match.conversationUuid}${
-          hasRealMessage ? `?highlight=${match.messageUuid}` : ''
+          hasRealMessage
+            ? `?highlight=${match.messageUuid}${focusSuffix}`
+            : ''
         }`
       )
     },

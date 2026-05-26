@@ -196,4 +196,68 @@ describe('scrollBubbleIntoView — distance-gated scroll + supersession', () => 
     vi.advanceTimersByTime(250)
     expect(scrollIntoViewSpy).toHaveBeenCalledTimes(2)
   })
+
+  // Rule 6 — bounded multi-shot correction. Real-world bug (2026-05-22):
+  // even after the 250ms one-shot correction lands the target, MORE
+  // images decode in the next ~1s and push the target out of view
+  // again. Fix: up to 3 corrections at 250ms / 750ms / 1250ms (or
+  // whatever schedule the implementation uses), each conditional on
+  // drift exceeding the threshold.
+  it('multi-shot: correction fires repeatedly while drift persists across the settle window', () => {
+    const { container, target } = setupContainerAndTarget(1000)
+    scrollBubbleIntoView(target as HTMLElement)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1)  // initial
+
+    // Persistent drift: each correction snaps to center, but lazy
+    // images keep pushing the target back off-center. We model this by
+    // re-stubbing the target as off-center after every advance.
+    const reapplyDrift = () => {
+      stubRect(target, { top: 600, height: 80 })  // off by 140 >100
+      stubRect(container, { top: 0, height: 1000 })
+    }
+
+    reapplyDrift()
+    vi.advanceTimersByTime(250)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(2)  // correction 1
+
+    reapplyDrift()
+    vi.advanceTimersByTime(500)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(3)  // correction 2
+
+    reapplyDrift()
+    vi.advanceTimersByTime(500)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(4)  // correction 3
+
+    // BOUNDED: a fourth attempt MUST NOT fire even if drift persists.
+    // Prevents infinite-correction loops if the page never settles.
+    reapplyDrift()
+    vi.advanceTimersByTime(2000)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(4)
+  })
+
+  // Rule 6 (pair) — multi-shot STOPS early once the target lands
+  // within the threshold. Prevents pointless extra scrolls and keeps
+  // the user's focus stable once we've settled.
+  it('multi-shot: stops as soon as drift drops within ±100px', () => {
+    const { container, target } = setupContainerAndTarget(1000)
+    scrollBubbleIntoView(target as HTMLElement)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1)  // initial
+
+    // First check: drifted → correction fires.
+    stubRect(target, { top: 600, height: 80 })
+    stubRect(container, { top: 0, height: 1000 })
+    vi.advanceTimersByTime(250)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(2)
+
+    // Second check: settled within threshold → no correction, and
+    // crucially no further followups scheduled either.
+    stubRect(target, { top: 460, height: 80 })  // center=500 = container center
+    stubRect(container, { top: 0, height: 1000 })
+    vi.advanceTimersByTime(500)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(2)
+
+    // Confirm no third correction ever fires (the chain stopped).
+    vi.advanceTimersByTime(2000)
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(2)
+  })
 })

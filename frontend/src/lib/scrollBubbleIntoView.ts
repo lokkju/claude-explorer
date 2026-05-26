@@ -25,12 +25,17 @@
  *     the motion cue. Drift is small because few unmounted images are
  *     swept.
  *
- *   Then ALWAYS a single 250ms post-settle correction: any image with
- *   `decoding="async"` that lands in viewport after the scroll can
- *   still push the target by up to ~384 px during the next few
- *   layout passes. The 250ms timeout covers decoding latency + one
- *   full layout commit. If the target is still off-center by >100 px,
- *   we issue a final `behavior: 'auto'` re-center (silent, snap-free).
+ *   Then a **bounded multi-shot** post-settle correction at 250ms,
+ *   750ms, and 1250ms. Any image with `decoding="async"` that lands
+ *   in viewport after the scroll can push the target by up to ~384 px
+ *   over the next few layout passes. The first 250ms tick covers the
+ *   common case (single image cascade); the two later ticks catch the
+ *   long-tail case (multi-image cascades on 15K+ message
+ *   conversations where many lazy images decode sequentially). Each
+ *   tick is conditional on drift > 100 px AND not superseded by a
+ *   newer call; once drift settles within the threshold the chain
+ *   stops early. Max 3 corrections — beyond that we stop yanking the
+ *   user even if the page is still settling (they're trying to read).
  *
  * Concurrency — supersession token:
  *   Rapid Cmd+G hits (cycling through search matches) can queue
@@ -69,7 +74,10 @@ export const __resetScrollToken = () => { scrollToken = 0 }
 
 const SCROLL_CONTAINER_SELECTOR = '[data-testid="message-stream"]'
 const LONG_HOP_VIEWPORT_MULTIPLE = 1.5
-const SETTLE_MS = 250
+// Cumulative ticks from the initial scroll: 250 / 750 / 1250 ms.
+// Three corrections covers the multi-image lazy-decode tail observed
+// on 15K+ message conversations without yanking the user mid-read.
+const CORRECTION_SCHEDULE_MS = [250, 500, 500] as const
 const CORRECTION_THRESHOLD_PX = 100
 
 /**
@@ -103,16 +111,38 @@ export function scrollBubbleIntoView(element: HTMLElement): void {
     block: 'center',
   })
 
-  // Single post-settle correction. Covers async image decoding +
-  // one re-layout commit. Bounded — one shot, not a loop.
+  scheduleCorrections(myToken, element, container, 0)
+}
+
+/**
+ * Walk the CORRECTION_SCHEDULE one step at a time. Each tick:
+ *   - bail if a newer scroll call superseded our token
+ *   - bail if the element is no longer in the DOM
+ *   - if drift exceeds threshold, snap-correct AND schedule the next
+ *     tick (if any remain)
+ *   - if drift is within threshold, STOP the chain — we've landed
+ *     cleanly and further corrections would be needless motion
+ *
+ * Implemented as a self-rescheduling timer rather than an array of
+ * pre-queued timers so early-exit on settle is the natural default
+ * (no orphaned no-op corrections lingering after we've landed).
+ */
+function scheduleCorrections(
+  token: number,
+  element: HTMLElement,
+  container: HTMLElement,
+  stepIdx: number,
+): void {
+  if (stepIdx >= CORRECTION_SCHEDULE_MS.length) return
   window.setTimeout(() => {
-    if (myToken !== scrollToken) return // superseded by newer call
+    if (token !== scrollToken) return
     if (!document.body.contains(element)) return
     const r = element.getBoundingClientRect()
     const c = container.getBoundingClientRect()
     const off = (r.top + r.height / 2) - (c.top + c.height / 2)
     if (Math.abs(off) > CORRECTION_THRESHOLD_PX) {
       element.scrollIntoView({ behavior: 'auto', block: 'center' })
+      scheduleCorrections(token, element, container, stepIdx + 1)
     }
-  }, SETTLE_MS)
+  }, CORRECTION_SCHEDULE_MS[stepIdx])
 }

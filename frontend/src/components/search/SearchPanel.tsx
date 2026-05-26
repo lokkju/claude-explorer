@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useLocation } from 'react-router'
 import { Search, X, User, Bot, FileText, ArrowUpDown, Bookmark as BookmarkIcon, Loader2, Pin, HelpCircle } from 'lucide-react'
 import { useSearchPanel, type SearchMatch } from '@/contexts/SearchPanelContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
@@ -29,6 +30,22 @@ const SORT_OPTIONS: { value: SortField; label: string }[] = [
   { value: 'project', label: 'Project' },
 ]
 
+// 2026-05-22 perf fix: hard caps on how many result cards we render.
+//
+// Each card runs HighlightedSnippet (regex-driven <mark> wrapping) on
+// its body text. Rendering 1000 full-mode cards (each 10K-100K chars)
+// blocked the main thread for ~10 s on a 16K-msg conversation; the
+// Snippet/Full toggle felt broken. Snippet mode's ~200-char cards
+// are cheaper individually but 500+ of them still cost seconds.
+//
+// Caps apply to DOM rendering only — flatMatches stays intact for
+// keyboard-nav (Cmd+G) and other logic. The footer below the list
+// surfaces the cap when it applies.
+//
+// Snippet cap is higher than Full because each card is ~50× smaller.
+const FULL_MODE_CARD_CAP = 50
+const SNIPPET_MODE_CARD_CAP = 100
+
 /**
  * Right-side search overlay panel. Always mounted; slides off-screen via
  * `translate-x-full` when closed so React Query state and input focus are
@@ -45,6 +62,7 @@ export function SearchPanel() {
     sortField,
     sortOrder,
     activeMatchIndex,
+    activeMatchSource,
     flatMatches,
     totalMatched,
     returnedMatches,
@@ -63,6 +81,7 @@ export function SearchPanel() {
   const navigateToMatch = useNavigateToMatch()
   const { rightPaneTab, setRightPaneTab } = useSettings()
   const { scope: pinScope, unpin } = useSearchPin()
+  const location = useLocation()
 
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -96,6 +115,25 @@ export function SearchPanel() {
   // and you keep moving forward." Cmd+G / Cmd+Shift+G change
   // activeMatchIndex; this effect makes them actually navigate to the
   // newly-active match, both in-conversation and cross-conversation.
+  //
+  // 2026-05-23: branches on `activeMatchSource`. The auto-promote
+  // path (source='auto', set by the results-arrival effect in
+  // SearchPanelContext) calls navigateToMatch with `focus: false` so
+  // typing in the search input is not interrupted mid-keystroke. The
+  // user path (source='user', set by Cmd+G / Cmd+Shift+G / Enter /
+  // card-click) calls navigateToMatch with default `focus: true` so
+  // the bubble owns DOM focus and Cmd+C copies the message body.
+  //
+  // 2026-05-24: gate AUTO-promote navigation on the user being on a
+  // /conversations/* route. Without this gate, a search result landing
+  // (e.g. the user typed a query then navigated to /settings before
+  // the debounce settled) yanks them back to a /conversations/<uuid>
+  // ?highlight=<msg> URL — the "Settings page flashes and disappears"
+  // regression captured in the screen recording on 2026-05-24. USER-
+  // initiated navigation (Cmd+G, Enter, card click) always wins — the
+  // gate applies only to source='auto'. Card-click on the search
+  // panel itself is a legitimate "take me there" intent and runs as
+  // 'user'.
   useEffect(() => {
     if (activeMatchIndex < 0) return
     const el = activeCardRef.current
@@ -103,11 +141,18 @@ export function SearchPanel() {
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
     const match = flatMatches[activeMatchIndex]
-    if (match) {
-      navigateToMatch(match)
+    if (!match) return
+    const onConversationRoute = location.pathname.startsWith('/conversations/')
+    if (activeMatchSource === 'auto' && !onConversationRoute) {
+      // Auto-promote landed while the user was on a non-conversation
+      // route (Settings, About, etc.). Update the sidebar visual but
+      // do NOT navigate — the user will see the active card highlighted
+      // when they return to a conversation page.
+      return
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeMatchIndex])
+    navigateToMatch(match, { focus: activeMatchSource === 'user' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- navigateToMatch + flatMatches + location identity churn on unrelated state; including them would re-fire this effect on every Tools click / route change. The behavior we want is "navigate exactly once per (index, source) pair, IF on a conversation route", which is what the body's runtime read of location.pathname captures while keeping the dep list to the discrete signals.
+  }, [activeMatchIndex, activeMatchSource])
 
   const flatIndexByKey = useMemo(() => {
     const map = new Map<string, number>()
@@ -120,8 +165,21 @@ export function SearchPanel() {
   const handleCardClick = (match: SearchMatch) => {
     const key = `${match.conversationUuid}:${match.messageUuid}:${match.matchStart}`
     const idx = flatIndexByKey.get(key) ?? -1
-    if (idx !== -1) setActiveMatchIndex(idx)
-    navigateToMatch(match)
+    // 2026-05-23: when the click would actually flip activeMatchIndex
+    // or activeMatchSource, let the navigation flow through the
+    // index-change effect above (single source of truth, fires
+    // exactly once per (index, source) pair). When the user clicks
+    // the SAME card that's already active under the same source,
+    // React would bail on the state update and the effect wouldn't
+    // re-fire — so we navigate manually in that branch.
+    if (
+      idx !== -1 &&
+      (idx !== activeMatchIndex || activeMatchSource !== 'user')
+    ) {
+      setActiveMatchIndex(idx, 'user')
+    } else {
+      navigateToMatch(match, { focus: true })
+    }
   }
 
   // Opens the currently active match (or the first one if none is active).
@@ -137,11 +195,16 @@ export function SearchPanel() {
     const idx = activeMatchIndex >= 0 ? activeMatchIndex : 0
     const match = flatMatches[idx]
     if (!match) return
-    if (activeMatchIndex < 0) setActiveMatchIndex(idx)
-    navigateToMatch(match)
-    // Move DOM focus to the target bubble so screen readers + keyboard users
-    // land on the message. The bubble has tabIndex={-1} so it can receive
-    // programmatic focus without joining the tab order.
+    // 2026-05-23: source='user' so the downstream navigation moves
+    // DOM focus to the bubble (matches Cmd+G / card-click behavior).
+    if (activeMatchIndex < 0) setActiveMatchIndex(idx, 'user')
+    navigateToMatch(match, { focus: true })
+    // Belt-and-suspenders: the URL fallback path's focus transfer
+    // happens after ConversationPage's highlight effect polls for the
+    // bubble. For same-conv same-index Enter where the index doesn't
+    // change (effect doesn't re-fire), the navigateToMatch call above
+    // already focuses via the fast path. This rAF block is the legacy
+    // path that still works for both.
     requestAnimationFrame(() => {
       const el = document.querySelector(
         `[data-message-uuid="${match.messageUuid}"]`
@@ -261,6 +324,7 @@ export function SearchPanel() {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
             <input
               ref={inputRef}
+              data-search-panel-input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -496,21 +560,54 @@ export function SearchPanel() {
 
         {showResults && (
           <div className="space-y-1.5">
-            {flatMatches.map((match, idx) => {
-              const isActive = idx === activeMatchIndex
-              const key = `${match.conversationUuid}:${match.messageUuid}:${match.matchStart}`
+            {/* 2026-05-22 perf fix: cap rendered cards in Full mode at
+                FULL_MODE_CARD_CAP. Each full-mode card contains an
+                entire message body (~10KB per card) with <mark> nodes
+                from HighlightedSnippet. On the 16K-msg conversation,
+                rendering 1000 such cards blocks the main thread for
+                ~10 s — the user-reported "toggle is slow" cost. The
+                cap keeps initial render bounded to ~50 cards; the
+                rest are accessible by refining the query OR by
+                cycling Cmd+G through the active-match index, which
+                operates on the full flatMatches array (the cap
+                applies to RENDERING only, not navigation logic).
+                Snippet mode is uncapped — its short ±150-char
+                snippets are cheap to render. */}
+            {(() => {
+              const cap =
+                contextSize === 'full' ? FULL_MODE_CARD_CAP : SNIPPET_MODE_CARD_CAP
+              const visibleMatches = flatMatches.slice(0, cap)
+              return visibleMatches.map((match, idx) => {
+                const isActive = idx === activeMatchIndex
+                const key = `${match.conversationUuid}:${match.messageUuid}:${match.matchStart}`
+                return (
+                  <ResultCard
+                    key={key}
+                    ref={isActive ? activeCardRef : undefined}
+                    match={match}
+                    isActive={isActive}
+                    contextSize={contextSize}
+                    query={query}
+                    onClick={() => handleCardClick(match)}
+                  />
+                )
+              })
+            })()}
+            {(() => {
+              const cap =
+                contextSize === 'full' ? FULL_MODE_CARD_CAP : SNIPPET_MODE_CARD_CAP
+              if (flatMatches.length <= cap) return null
               return (
-                <ResultCard
-                  key={key}
-                  ref={isActive ? activeCardRef : undefined}
-                  match={match}
-                  isActive={isActive}
-                  contextSize={contextSize}
-                  query={query}
-                  onClick={() => handleCardClick(match)}
-                />
+                <div
+                  data-testid="search-card-cap-footer"
+                  className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+                >
+                  Showing first {cap.toLocaleString()} of{' '}
+                  {flatMatches.length.toLocaleString()} cards. Refine your query
+                  to narrow the results.
+                </div>
               )
-            })}
+            })()}
             {/* Truncation footer (SEARCH_TOOL_AWARENESS_AND_LIMIT_DISCLOSURE
                 plan §B). When the FTS5 fast path returns more matches
                 than the route's LIMIT (1000 for /api/search), the backend
@@ -568,6 +665,7 @@ const ResultCard = ({
       ref={ref}
       type="button"
       data-result-card
+      data-testid="search-result-card"
       onClick={onClick}
       className={cn(
         'group block w-full rounded-md border border-zinc-200 bg-white p-2.5 text-left text-sm shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800',

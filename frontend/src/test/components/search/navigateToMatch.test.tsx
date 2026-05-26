@@ -258,4 +258,85 @@ describe('useNavigateToMatch — A1 two-tier with silent-bail bug fixed', () => 
     expect(locationSeen.current.search).toBe('')
     expect(scrollIntoViewSpy).not.toHaveBeenCalled()
   })
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Test 5 — Compact-marker target via fast path.
+  //
+  // User report (2026-05-22): search hit lands on a /compact bubble.
+  // My first fix wired `forceOpen` based on `?highlight=` URL param, but
+  // the FAST PATH (same conv, bubble mounted) doesn't change the URL.
+  // Result: the marker stayed collapsed despite the visible ring +
+  // scroll. The fast path must also trigger expansion when the
+  // target is a compact-marker.
+  //
+  // User-observable contract (per CLAUDE-TESTING §5.13):
+  //   - Click a search hit whose UUID is a compact marker AND the
+  //     marker is already in the DOM → the marker's panel must open
+  //     (aria-expanded transitions to "true").
+  //   - Regular MessageBubble targets (no data-compact-marker) must
+  //     NOT receive a click — that would re-trigger their onClick
+  //     selection logic spuriously.
+  // ─────────────────────────────────────────────────────────────────────
+  it('same-conv + compact-marker target → fast path opens the marker (pill clicked)', () => {
+    // Build a compact-marker shape: outer div with both
+    // data-message-uuid AND data-compact-marker, containing a pill
+    // button. The pill's onClick toggles aria-expanded — the same
+    // contract the real CompactMarker exposes.
+    const marker = document.createElement('div')
+    marker.setAttribute('data-message-uuid', MSG_X)
+    marker.setAttribute('data-compact-marker', MSG_X)
+    const pill = document.createElement('button')
+    pill.setAttribute('data-compact-marker-pill', '')
+    pill.setAttribute('aria-expanded', 'false')
+    pill.addEventListener('click', () => {
+      pill.setAttribute('aria-expanded', 'true')
+    })
+    marker.appendChild(pill)
+    document.body.appendChild(marker)
+
+    const { Wrapper } = makeWrapper(CONV_A, [
+      { uuid: MSG_X, sender: 'assistant' },
+    ])
+    const { result } = renderHook(() => useNavigateToMatch(), { wrapper: Wrapper })
+
+    const match = makeMatch({ conversationUuid: CONV_A, messageUuid: MSG_X })
+    act(() => {
+      result.current(match)
+    })
+
+    // POSITIVE: the marker pill must have been clicked → aria-expanded=true.
+    expect(pill.getAttribute('aria-expanded')).toBe('true')
+    // SANITY: scroll still happened (regression guard — we didn't
+    // break the existing fast-path behavior for this branch).
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1)
+
+    document.body.removeChild(marker)
+  })
+
+  it('same-conv + regular bubble (non-marker) → fast path does NOT dispatch a click', () => {
+    // Negative pair for the rule above: regular MessageBubble
+    // targets do not carry data-compact-marker. The fast path
+    // must NOT click them — it scrolls + flashes ring + returns.
+    const bubble = document.createElement('div')
+    bubble.setAttribute('data-message-uuid', MSG_X)
+    // No data-compact-marker attribute.
+    const clickSpy = vi.fn()
+    bubble.addEventListener('click', clickSpy)
+    document.body.appendChild(bubble)
+
+    const { Wrapper } = makeWrapper(CONV_A, [
+      { uuid: MSG_X, sender: 'assistant' },
+    ])
+    const { result } = renderHook(() => useNavigateToMatch(), { wrapper: Wrapper })
+
+    const match = makeMatch({ conversationUuid: CONV_A, messageUuid: MSG_X })
+    act(() => {
+      result.current(match)
+    })
+
+    expect(clickSpy).not.toHaveBeenCalled()
+    expect(scrollIntoViewSpy).toHaveBeenCalledTimes(1)
+
+    document.body.removeChild(bubble)
+  })
 })
