@@ -130,6 +130,10 @@ export function useSearch(
   // rather than silently inheriting an unfiltered default — which
   // would re-introduce the sidebar/conv-pane mismatch bug.
   includeToolCalls: boolean,
+  // 2026-05-26: REQUIRED, no default. Same mandatory-arg pattern as
+  // includeToolCalls. Maps `Show Compactions` checkbox via
+  // `includeCompactions = !useSettings().hideCompactMarkers`.
+  includeCompactions: boolean,
 ) {
   const [debouncedQuery, setDebouncedQuery] = useState(query)
   const queryClient = useQueryClient()
@@ -181,17 +185,17 @@ export function useSearch(
   }, [debouncedQuery, queryClient])
 
   const queryResult = useQuery({
-    // Include includeToolCalls in the key so toggling re-fires the network
-    // call and React Query doesn't return a stale cached payload that
-    // contains tool-block snippets.
-    queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls),
+    // Include includeToolCalls AND includeCompactions in the key so
+    // toggling either re-fires the network call and React Query doesn't
+    // return a stale cached payload that contains hidden-content snippets.
+    queryKey: queryKeys.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls, includeCompactions),
     // 2026-05-18 (Hunt #5): plumb queryFn's AbortSignal into api.search so
     // a queryKey change OR component unmount cancels the in-flight `/api/search`
     // request. Critical for the FTS-fallback slow path (multi-second) where
     // orphan searches were burning local-backend CPU after the user kept
     // typing past the 200ms debounce.
     queryFn: ({ signal }) =>
-      api.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls, signal),
+      api.search(debouncedQuery, source, contextSize, sort, sortOrder, scope, includeToolCalls, includeCompactions, signal),
     enabled: debouncedQuery.length >= 2,
     staleTime: 60 * 1000, // 1 minute
     // 2026-05-22 (per CLAUDE-TESTING §5.13): keep previous data only for

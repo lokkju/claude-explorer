@@ -231,7 +231,12 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // the sidebar only shows hits the user can actually navigate to in
   // the conversation pane. When the toggle flips, useSearch's queryKey
   // changes and the network call re-fires automatically.
-  const { showToolCalls } = useSettings()
+  //
+  // 2026-05-26: same plumbing for the "Show Compactions" toggle. The
+  // mapping `includeCompactions = !hideCompactMarkers` flips the
+  // semantic ("hide=true means don't include").
+  const { showToolCalls, hideCompactMarkers } = useSettings()
+  const includeCompactions = !hideCompactMarkers
   // 2026-05-14 sidebar-scope propagation: the active-filter graph lives
   // in FilterContext, the sidebar applies it client-side via
   // applyActiveFilter(). For search to honor the SAME predicate, we
@@ -388,6 +393,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     sortOrder,
     scope,
     showToolCalls,
+    includeCompactions,
   )
 
   const rawResults = rawResponse?.results
@@ -510,9 +516,9 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // Reset activeMatchIndex (back to -1, "no active match") whenever
   // any input that invalidates the result set changes. The expanded
   // dep list — `query`, `sortField`, `sortOrder`, `contextSize`,
-  // `scope`, `showToolCalls` — exactly mirrors useSearch's queryKey
-  // inputs, so we re-arm the auto-promote effect on the same edges
-  // that trigger a real backend re-fetch.
+  // `scope`, `showToolCalls`, `includeCompactions` — exactly mirrors
+  // useSearch's queryKey inputs, so we re-arm the auto-promote effect
+  // on the same edges that trigger a real backend re-fetch.
   //
   // The reset+auto-promote pair is load-bearing for the live-preview
   // UX: when the user types "needle" → results land → auto-promote
@@ -529,7 +535,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: hoist activeMatchIndex alongside flatMatches as derived state. Today this resets a single int once per query-equivalent change — bounded cascade.
     setActiveMatchIndexState(-1)
-  }, [query, sortField, sortOrder, contextSize, scope, showToolCalls])
+  }, [query, sortField, sortOrder, contextSize, scope, showToolCalls, includeCompactions])
 
   // V1 polish: auto-focus the first match when results land for a fresh
   // query. Without this, the user types "needle", sees results in the

@@ -290,6 +290,28 @@ export const test = base.extend<Fixtures>({
       })
 
       // -----------------------------------------------------------------
+      // Watcher health (RootLayout's WatcherMissingBanner consumes this
+      // on every page mount). The endpoint shipped after the e2e
+      // leakage-guard and the console-error assertion fixtures, so
+      // pre-fixture-update specs hit the catch-all 500 and the auto-
+      // assertion fired on every test. Default to ``installed: true``
+      // so the banner renders nothing — matches the production
+      // experience for users who have run ``install-watcher``. Specs
+      // that need to assert the banner can override via extraRoutes.
+      // -----------------------------------------------------------------
+      await page.route('**/api/health/watcher', (route: Route) => {
+        route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({
+            installed: true,
+            platform: 'darwin',
+            install_command: 'uv run claude-explorer install-watcher',
+            docs_url: '',
+          }),
+        })
+      })
+
+      // -----------------------------------------------------------------
       // Config
       // -----------------------------------------------------------------
       await page.route('**/api/config', (route: Route) => {

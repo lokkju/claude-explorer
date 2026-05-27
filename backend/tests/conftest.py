@@ -492,6 +492,47 @@ def _force_watcher_uninstalled(monkeypatch) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _block_real_search_index_path(monkeypatch) -> Iterator[None]:
+    """Defense-in-depth: refuse to construct a SearchIndex against the
+    real ``~/.claude-explorer/search-index.sqlite`` path during tests.
+
+    The ``isolate_search_index_singleton`` fixture below monkeypatches
+    ``default_index_path``, which protects code that calls
+    ``get_search_index()`` (the production path). But tests / helpers
+    that pass an explicit ``path`` to ``SearchIndex(path)`` bypass that
+    layer. If a path that resolves under the user's real
+    ``~/.claude-explorer/`` slips through, ``_init_schema`` will run
+    its migrations against the user's live data — a Class-A correctness
+    violation observed live on 2026-05-26 (uvicorn --reload picking up
+    a search_index.py edit fired the migration against the live DB).
+
+    This fixture wraps ``SearchIndex.__init__`` and raises if the
+    incoming path matches the live data dir. Set the
+    ``CLAUDE_EXPLORER_ALLOW_LIVE_INDEX`` env var to bypass (no test
+    should need this).
+    """
+    import os
+    from backend import search_index as si
+
+    live_dir = os.path.expanduser("~/.claude-explorer")
+    original_init = si.SearchIndex.__init__
+
+    def guarded_init(self, path, *args, **kwargs):
+        if os.environ.get("CLAUDE_EXPLORER_ALLOW_LIVE_INDEX") != "1":
+            resolved = os.path.abspath(os.path.expanduser(str(path)))
+            if resolved.startswith(os.path.abspath(live_dir) + os.sep):
+                raise RuntimeError(
+                    f"Test attempted to open SearchIndex at live path "
+                    f"{resolved!r}. Use a tmp_path. If genuinely required, "
+                    f"set CLAUDE_EXPLORER_ALLOW_LIVE_INDEX=1."
+                )
+        return original_init(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(si.SearchIndex, "__init__", guarded_init)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def isolate_search_index_singleton(tmp_path_factory, monkeypatch) -> Iterator[None]:
     """Prevent any test from accidentally instantiating or writing to the
     user's real ``~/.claude-explorer/search-index.sqlite``.

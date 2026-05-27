@@ -324,8 +324,19 @@ def test_v11_to_v12_fast_migration_purges_orphan_cowork_state(tmp_path: Path):
     conn.commit()
     conn.close()
 
-    # Now open the index with the CURRENT (post-bump) code. The
-    # v11→v12 migration should fire automatically in _init_schema.
+    # Now open the index with the CURRENT (post-bump) code.
+    #
+    # 2026-05-26 update: SCHEMA_VERSION bumped 12 → 13 to add the
+    # ``is_compaction_summary`` UNINDEXED column on the messages FTS5
+    # table. FTS5 does NOT support ALTER TABLE ADD COLUMN, so v12 →
+    # v13 has no fast migration path — it falls through to the full
+    # DROP+rebuild branch in ``_init_schema``. That branch also catches
+    # the v11 → v13 case (the v11→v12 fast-migration gate
+    # ``SCHEMA_VERSION == 12`` no longer fires). The user's CC rows are
+    # rebuilt from the on-disk JSONL files by the next drift scan;
+    # cowork orphans are purged by the DROP. End state is the same as
+    # the original fast-migration contract — this test now pins the
+    # full-rebuild path as a correctness baseline.
     index = SearchIndex(db_path)
 
     rconn = index._get_read_conn()
@@ -333,29 +344,28 @@ def test_v11_to_v12_fast_migration_purges_orphan_cowork_state(tmp_path: Path):
     sv = rconn.execute("SELECT version FROM schema_version").fetchone()[0]
     assert sv == SCHEMA_VERSION
 
-    # CC rows SURVIVED — this is the value-add of the fast migration vs
-    # a full DROP+rebuild.
+    # Under the full DROP+rebuild path (the fast migration gate doesn't
+    # fire for v11→v13), in-memory rows are wiped. The next drift scan
+    # re-indexes the CC rows from disk — that's the standard recovery
+    # contract pinned by ``test_cowork_token_searchable_after_v12_*``.
+    # Here we assert the rebuild semantics: messages and conversations
+    # are empty, indexed_files is empty, schema_version is current.
     assert rconn.execute(
-        "SELECT COUNT(*) FROM messages WHERE conv_uuid = ?", (cc_uuid,)
-    ).fetchone()[0] == 1, "CC messages MUST survive the fast migration"
-    assert rconn.execute(
-        "SELECT COUNT(*) FROM conversations WHERE conv_uuid = ?", (cc_uuid,)
-    ).fetchone()[0] == 1, "CC conversations projection MUST survive"
-    assert rconn.execute(
-        "SELECT COUNT(*) FROM indexed_files WHERE path = ?", (cc_path,)
-    ).fetchone()[0] == 1, "CC indexed_files MUST survive"
-
-    # Cowork orphan indexed_files row is PURGED — so the next drift pass
-    # will treat the live cowork path as "new" and re-upsert it cleanly
-    # (with real messages this time).
-    assert rconn.execute(
-        "SELECT COUNT(*) FROM indexed_files WHERE path LIKE '%audit.jsonl'"
+        "SELECT COUNT(*) FROM messages"
     ).fetchone()[0] == 0, (
-        "Orphan cowork indexed_files row must be purged so next drift "
-        "pass re-indexes from scratch"
+        "v11→current (full rebuild) must DROP all messages — they'll "
+        "be re-indexed from disk by the next drift scan"
+    )
+    assert rconn.execute(
+        "SELECT COUNT(*) FROM indexed_files"
+    ).fetchone()[0] == 0, (
+        "Full rebuild must DROP indexed_files so every on-disk path "
+        "looks new to the next drift scan"
     )
 
-    # Defensive: there were no CLAUDE_COWORK messages before, none after.
+    # Defensive: no orphan CLAUDE_COWORK rows survive (the originating
+    # bug — cowork indexed_files row with no messages — is impossible
+    # after the rebuild, since the rebuild wipes both tables).
     assert rconn.execute(
         "SELECT COUNT(*) FROM messages WHERE source = 'CLAUDE_COWORK'"
     ).fetchone()[0] == 0

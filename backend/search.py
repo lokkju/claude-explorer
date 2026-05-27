@@ -23,6 +23,7 @@ import re
 import sqlite3
 from typing import Any, Literal
 
+from .compact_prefixes import is_compaction_prefix_text
 from .models import SearchResponse, SearchResult, MessageSnippet, SnippetFragment
 from .search_text import (
     _TOOL_PLACEHOLDER_RE,
@@ -278,6 +279,7 @@ def search_conversations(
     project_path: str | None = None,
     bookmarks: set[str] | None = None,
     include_tool_calls: bool = True,
+    include_compactions: bool = True,
     organization_id: str | None = None,
     conversation_uuids: set[str] | None = None,
     limit: int = 1000,
@@ -324,6 +326,19 @@ def search_conversations(
     index itself is still built over the full text; the filter is applied
     at scatter/snippet time so toggling the setting doesn't require a
     rebuild.
+
+    ``include_compactions`` (2026-05-26): when False, search ignores
+    hits whose match falls inside an ``isCompactSummary`` row body. This
+    is the wire-side mirror of the "Show Compactions" checkbox in the
+    conversation header. Architecturally identical to
+    ``include_tool_calls=False`` but keyed on a per-row boolean column
+    (``is_compaction_summary``) populated at index time from
+    ``conv['compact_markers']``. The SQL ``WHERE is_compaction_summary
+    = 0`` clause applies BEFORE bm25 ranking and LIMIT, so the
+    truncation envelope's ``total_messages_matched`` is accurate
+    (Council 2026-05-26 chose this over scatter-time post-filter to
+    avoid empty-result-set under LIMIT when top-bm25 hits cluster in
+    compaction-summary bodies).
 
     Note on FTS5 ``LIMIT 5000`` and ``include_tool_calls=False``: if a
     user's corpus has more than 5000 messages whose only token-match is
@@ -384,6 +399,7 @@ def search_conversations(
                         project_path=project_path,
                         bookmarks=bookmarks,
                         include_tool_calls=include_tool_calls,
+                        include_compactions=include_compactions,
                         organization_id=organization_id,
                         conversation_uuids=conversation_uuids,
                         limit=limit,
@@ -400,6 +416,7 @@ def search_conversations(
                     project_path=project_path,
                     bookmarks=bookmarks,
                     include_tool_calls=include_tool_calls,
+                    include_compactions=include_compactions,
                     organization_id=organization_id,
                     conversation_uuids=conversation_uuids,
                     limit=limit,
@@ -421,6 +438,7 @@ def search_conversations(
         project_path=project_path,
         bookmarks=bookmarks,
         include_tool_calls=include_tool_calls,
+        include_compactions=include_compactions,
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
     )
@@ -570,6 +588,7 @@ def _search_via_index_fast(
     project_path: str | None,
     bookmarks: set[str] | None,
     include_tool_calls: bool = True,
+    include_compactions: bool = True,
     organization_id: str | None = None,
     conversation_uuids: set[str] | None = None,
     limit: int = 1000,
@@ -616,6 +635,7 @@ def _search_via_index_fast(
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
         include_tool_calls=include_tool_calls,
+        include_compactions=include_compactions,
         limit=limit,
     )
 
@@ -632,10 +652,16 @@ def _search_via_index_fast(
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
         include_tool_calls=include_tool_calls,
+        include_compactions=include_compactions,
     )
 
     # Step 2: title-substring sweep (catches mid-token matches FTS5
     # can't see via prefix tokenizer; e.g. "edul" in "scheduled").
+    # v14 (2026-05-26): pass include_compactions through so the sweep
+    # filters out conversations whose TITLE is the canonical compaction-
+    # summary prefix when Show Compactions is OFF. Closes the bug where
+    # a CC session whose title was fallback-derived from the compaction
+    # body still surfaced as a title-only hit even with the toggle off.
     title_hits = idx.title_match_snippets(
         query,
         source=source,
@@ -644,6 +670,7 @@ def _search_via_index_fast(
         bookmarks=bookmarks,
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
+        include_compactions=include_compactions,
     )
 
     # Group body matches by conv_uuid. We also stash the per-conv
@@ -776,6 +803,7 @@ def _search_via_index_fast_full(
     project_path: str | None,
     bookmarks: set[str] | None,
     include_tool_calls: bool = True,
+    include_compactions: bool = True,
     organization_id: str | None = None,
     conversation_uuids: set[str] | None = None,
     limit: int = 1000,
@@ -817,6 +845,7 @@ def _search_via_index_fast_full(
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
         include_tool_calls=include_tool_calls,
+        include_compactions=include_compactions,
         limit=limit,
     )
 
@@ -829,8 +858,12 @@ def _search_via_index_fast_full(
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
         include_tool_calls=include_tool_calls,
+        include_compactions=include_compactions,
     )
 
+    # v14 (2026-05-26): plumb include_compactions into the title sweep
+    # so the full-mode fast path applies the same filter as
+    # _search_via_index_fast above.
     title_hits = idx.title_match_snippets(
         query,
         source=source,
@@ -839,6 +872,7 @@ def _search_via_index_fast_full(
         bookmarks=bookmarks,
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
+        include_compactions=include_compactions,
     )
 
     # Parse query once for regex-based highlight placement on bodies.
@@ -973,6 +1007,7 @@ def _search_via_linear_scan(
     project_path: str | None = None,
     bookmarks: set[str] | None = None,
     include_tool_calls: bool = True,
+    include_compactions: bool = True,
     organization_id: str | None = None,
     conversation_uuids: set[str] | None = None,
 ) -> list[SearchResult]:
@@ -1047,6 +1082,20 @@ def _search_via_linear_scan(
         trigger_to_marker = _build_compact_trigger_uuid_map(conv)
         emitted_seen: set[str] = set()
 
+        # v13 (2026-05-26): compaction-aware filter, linear-scan branch.
+        # Build the set of UUIDs that ARE compaction-summary rows so we
+        # can drop any emitted hit whose UUID matches. Empty when the
+        # conv has no compactions OR when include_compactions=True
+        # (the gate below short-circuits in that case). Mirrors the SQL
+        # ``WHERE is_compaction_summary = 0`` clause on the FTS5 path.
+        compact_marker_uuids: set[str] = set()
+        if not include_compactions:
+            compact_marker_uuids = {
+                m.get("message_uuid", "")
+                for m in (conv.get("compact_markers") or [])
+                if isinstance(m, dict) and m.get("message_uuid")
+            }
+
         # Search in conversation name. Title-match policy:
         #   * Phrase mode → literal substring (the whole phrase appears).
         #   * Token mode  → CURRENT behavior preserved: substring match on
@@ -1062,7 +1111,19 @@ def _search_via_linear_scan(
         name = conv.get("name") or ""
         name_lower = name.lower()
         title_needle = (phrase if phrase is not None else query).lower()
-        if title_needle and title_needle in name_lower:
+        # v14 (2026-05-26): compaction-titled gate, linear-scan branch.
+        # When Show Compactions is OFF, suppress title pseudo-messages
+        # whose conversation TITLE is the canonical compaction-summary
+        # prefix. Mirrors the SQL-side gate the FTS5 title-sweep helpers
+        # apply via the ``is_compaction_titled`` column. The shared
+        # ``is_compaction_prefix_text`` helper is the single source of
+        # truth for the predicate — keeps linear and FTS paths from
+        # drifting (Council 2026-05-26).
+        if (
+            title_needle
+            and title_needle in name_lower
+            and (include_compactions or not is_compaction_prefix_text(name))
+        ):
             # Add a pseudo-message for title match. Titles are short, so we
             # always use the snippet helper here regardless of context_size.
             match = pattern.search(name)
@@ -1161,6 +1222,13 @@ def _search_via_linear_scan(
             # conceptual row collapses to ONE MessageSnippet.
             raw_uuid = msg.get("uuid", "")
             emitted_uuid = trigger_to_marker.get(raw_uuid, raw_uuid)
+            # v13 (2026-05-26): compaction-aware drop. Apply AFTER the
+            # trigger→marker rewrite so a hit on a stale trigger row
+            # (which the rewrite redirects to the marker UUID) is ALSO
+            # caught here — otherwise pre-v11 stale-index trigger hits
+            # would slip past the filter under include_compactions=False.
+            if emitted_uuid in compact_marker_uuids:
+                continue
             if emitted_uuid in emitted_seen:
                 continue
             emitted_seen.add(emitted_uuid)
@@ -1203,6 +1271,7 @@ def _search_via_index(
     project_path: str | None,
     bookmarks: set[str] | None,
     include_tool_calls: bool = True,
+    include_compactions: bool = True,
     organization_id: str | None = None,
     conversation_uuids: set[str] | None = None,
 ) -> list[SearchResult]:
@@ -1228,6 +1297,10 @@ def _search_via_index(
     """
     # Step 1: ask FTS5 for body+title MATCH hits (subject to scope at
     # the SQL layer).
+    # v14 (2026-05-26): plumb include_compactions so the legacy slow
+    # path also drops compaction-summary message-body hits at SQL time
+    # (same vector v13 closed on the fast paths via
+    # _build_match_where_clause).
     matches = idx.query(
         query,
         source=source,
@@ -1236,6 +1309,7 @@ def _search_via_index(
         bookmarks=bookmarks,
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
+        include_compactions=include_compactions,
     )
     body_matched_uuids: set[str] = {m["conv_uuid"] for m in matches}
 
@@ -1268,6 +1342,9 @@ def _search_via_index(
     # per-connection allowed_conv TEMP table). Byte-for-byte equivalence
     # is pinned by
     # ``test_title_match_uuids_byte_for_byte_matches_legacy_reach_through``.
+    # v14 (2026-05-26): plumb include_compactions so the slow-path
+    # title-sweep helper also gates compaction-titled conversations
+    # when Show Compactions is OFF. Matches the fast-path treatment.
     title_matched_uuids = idx.title_match_uuids(
         title_needle,
         source=source,
@@ -1276,6 +1353,7 @@ def _search_via_index(
         bookmarks=bookmarks,
         organization_id=organization_id,
         conversation_uuids=conversation_uuids,
+        include_compactions=include_compactions,
     )
     # ``query_lower`` is consumed below by the per-conversation walk to
     # decide whether to emit a "title" pseudo-message (mirroring the
@@ -1378,9 +1456,38 @@ def _search_via_index(
         trigger_to_marker = _build_compact_trigger_uuid_map(conv)
         emitted_seen: set[str] = set()
 
+        # v14 (2026-05-26): mirror the linear-scan compaction-aware
+        # filter (search.py: _search_via_linear_scan). The SQL gate in
+        # idx.query() above already drops compaction-summary rows when
+        # include_compactions=False, but this per-conv set provides
+        # belt-and-suspenders for the case where (a) the SQL gate
+        # silently no-op'd (stale index missing the v13 column —
+        # shouldn't happen post-rebuild, but defensive) OR
+        # (b) the trigger→marker rewrite below redirects a body uuid
+        # to a compaction-marker uuid that the SQL gate didn't see.
+        compact_marker_uuids: set[str] = set()
+        if not include_compactions:
+            compact_marker_uuids = {
+                m.get("message_uuid", "")
+                for m in (conv.get("compact_markers") or [])
+                if isinstance(m, dict) and m.get("message_uuid")
+            }
+
         # Title pseudo-message — emitted only when the conv NAME contains
         # the query (mirrors the linear-scan emit at search.py:264).
-        if query_lower in name.lower():
+        # v14 (2026-05-26): also gate on the compaction-titled predicate
+        # when Show Compactions is OFF. The title-sweep SQL helpers
+        # (title_match_snippets / title_match_uuids) filter by the
+        # stored is_compaction_titled column, but this Python-side
+        # emit is independent — it walks every candidate conv and
+        # re-checks the NAME at snippet-build time, so it would leak
+        # the compaction-titled hit even if the title sweep dropped
+        # the uuid. The shared helper applies the same anchored
+        # ``.lstrip().startswith()`` predicate that powers the stored
+        # column, so the two layers never drift.
+        if query_lower in name.lower() and (
+            include_compactions or not is_compaction_prefix_text(name)
+        ):
             tmatch = pattern.search(name)
             if tmatch:
                 snippet, start, end = create_snippet(name, tmatch.start(), tmatch.end())
@@ -1464,6 +1571,13 @@ def _search_via_index(
             # ``dict.get(uuid, uuid)`` is a no-op when no mapping exists.
             raw_uuid = msg.get("uuid", "")
             emitted_uuid = trigger_to_marker.get(raw_uuid, raw_uuid)
+            # v14 (2026-05-26): defense-in-depth compaction filter.
+            # Apply AFTER the trigger→marker rewrite so a hit on a
+            # stale trigger row redirected to a compaction marker uuid
+            # is also caught — matches the linear-scan pattern at
+            # search.py:1207.
+            if emitted_uuid in compact_marker_uuids:
+                continue
             if emitted_uuid in emitted_seen:
                 continue
             emitted_seen.add(emitted_uuid)

@@ -48,6 +48,7 @@ from .agent_session_io import (
     normalize_session_fields,
     parse_jsonl_file,
 )
+from .compact_prefixes import is_compaction_prefix_text
 
 
 log = logging.getLogger(__name__)
@@ -153,9 +154,14 @@ def read_cowork_conversation(session_dir: Path) -> dict | None:
         "source": "CLAUDE_COWORK",
         "chat_messages": messages,
         "current_leaf_message_uuid": messages[-1]["uuid"] if messages else "",
-        # CC-parity scaffolding the renderer expects but Cowork doesn't
-        # generate.
-        "compact_markers": [],
+        # Cowork compaction markers (2026-05-26 fix). Cowork's
+        # audit.jsonl does NOT have CC's ``isCompactSummary: true``
+        # field, so we detect by text-prefix matching on the canonical
+        # Claude compaction prompt (the runtime itself injects this
+        # exact string after a context-overflow). Mirrors the FTS
+        # ``is_compaction_summary`` tagging path through
+        # ``upsert_conversation``.
+        "compact_markers": _extract_cowork_compact_markers(messages),
         "prelude_hidden_count": 0,
         # D8: archived flag drives the "Show archived" toggle.
         "is_archived": bool(sidecar.get("isArchived", False)),
@@ -170,6 +176,45 @@ def read_cowork_conversation(session_dir: Path) -> dict | None:
         # workspace fields unset.
         "organization_id": None,
     }
+
+
+# Canonical Claude compaction-prompt prefix the runtime injects after a
+# context-overflow lives in ``backend.compact_prefixes`` (leaf module,
+# zero internal imports) so the same constant is shared with the search-
+# index title-leak gate (2026-05-26 bug fix). Cowork's audit.jsonl does
+# NOT carry CC's ``isCompactSummary: true`` field, so text-prefix
+# matching is the only reliable detector. The gate is anchored
+# (``.lstrip().startswith``) so a regular user message that quotes the
+# prefix mid-text does not false-positive.
+
+
+def _extract_cowork_compact_markers(messages: list[dict]) -> list[dict]:
+    """Scan post-merge Cowork messages for compaction-summary turns.
+
+    Returns marker dicts mirroring CC's ``extract_compact_markers``
+    shape so downstream consumers (``search_index.upsert_conversation``,
+    the viewer's ``hasCompactMarkers`` gate, the export render path)
+    work unchanged. ``kind`` is always ``"auto"`` for Cowork — the
+    runtime injects these after context-overflow with no equivalent of
+    CC's manual ``/compact`` command replay.
+    """
+    markers: list[dict] = []
+    for msg in messages:
+        if msg.get("sender") != "human":
+            continue
+        text = msg.get("text") or ""
+        # The shared helper handles the non-string defensive case AND the
+        # ``.lstrip()`` whitespace tolerance the original code had.
+        if not is_compaction_prefix_text(text):
+            continue
+        markers.append({
+            "message_uuid": msg.get("uuid", ""),
+            "summary_text": text,
+            "timestamp": msg.get("created_at", ""),
+            "kind": "auto",
+            "user_prompt": None,
+        })
+    return markers
 
 
 def list_cowork_conversations(cowork_root: Path) -> list[dict]:

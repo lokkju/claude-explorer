@@ -62,6 +62,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Literal
 
+from .compact_prefixes import (
+    COMPACTION_TITLE_PREFIX,
+    is_compaction_prefix_text,
+)
 from .config import get_settings
 from .search_text import _extract_searchable_text
 
@@ -215,7 +219,49 @@ logger = logging.getLogger(__name__)
 #     uuid by construction). Total work: ~ms on any plausible corpus.
 #     Pinned by ``test_cowork_search_bug_2026_05_25.py::
 #     test_v11_to_v12_fast_migration_purges_orphan_cowork_state``.
-SCHEMA_VERSION = 12
+#   * v13 (2026-05-26): added the ``is_compaction_summary`` UNINDEXED
+#     column on the ``messages`` FTS5 table. Populated by
+#     :meth:`upsert_conversation` from ``conv['compact_markers']`` (the
+#     synthetic ``isCompactSummary: true`` row UUIDs). Drives the
+#     ``include_compactions=False`` query path that mirrors the existing
+#     ``include_tool_calls`` architecture: ``_build_match_where_clause``
+#     adds ``AND is_compaction_summary = 0`` so the filter applies BEFORE
+#     bm25 ranking + LIMIT — same correctness contract that drove the
+#     ``body_text`` column for the Tools toggle.
+#
+#     Migration shape: full DROP+rebuild. Adding an UNINDEXED column to
+#     an existing FTS5 virtual table requires a recreate; no FAST
+#     migration path exists for FTS5 schema additions. The user's first
+#     post-deploy run pays the rebuild cost (~5-15 s for a typical
+#     corpus, ~mins for the ~250K-row power user). Council accepted
+#     this trade-off vs the alternative (scatter-time post-filter) which
+#     would have caused empty result sets when top-bm25 hits cluster in
+#     compaction summaries. See PLANS / Decision Records 2026-05-26.
+#   * v14 (2026-05-26, same-day follow-up): added the
+#     ``is_compaction_titled`` column on the ``conversations``
+#     projection table (NOT the FTS5 ``messages`` table). Closes the
+#     v13 title-leak bug: when a CC session starts with a compaction-
+#     summary message and has no ``summary``/``custom-title``/
+#     ``agent-name`` row, the title falls back to the first 100 chars
+#     of the compaction-summary text (see
+#     ``cc_message_transforms._extract_conversation_metadata``), and
+#     the title-substring sweep would surface the conv as a title-only
+#     "ran out of context" hit even with Show Compactions OFF.
+#     Populated by :meth:`upsert_conversation` from the canonical
+#     ``COMPACTION_TITLE_PREFIX`` in :mod:`backend.compact_prefixes`
+#     (single source of truth shared with ``cowork_reader``). The
+#     title-sweep helpers add ``AND is_compaction_titled = 0`` when
+#     ``include_compactions=False``. Linear-scan + slow FTS index path
+#     gate their Python-side title pseudo-message emission on the same
+#     predicate.
+#
+#     Migration shape: FAST migration. The column lives on a regular
+#     SQLite table (not the FTS5 virtual table), so ``ALTER TABLE
+#     conversations ADD COLUMN`` is constant-time and the backfill is
+#     a single UPDATE over ~hundreds of rows. Total work: ~ms on any
+#     plausible corpus. No reindex pain — the v13 messages table is
+#     left intact. Mirrors the v11→v12 fast-migration pattern.
+SCHEMA_VERSION = 14
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata
@@ -252,6 +298,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     organization_id UNINDEXED,
     conv_created_at UNINDEXED,
     conv_updated_at UNINDEXED,
+    is_compaction_summary UNINDEXED,
     title,
     body,
     body_text,
@@ -301,6 +348,16 @@ CREATE TABLE IF NOT EXISTS conversation_summaries_meta (
 -- the only change is the row set it scans. Maintained in the same
 -- transaction as the matching messages-table writes so a crash mid-
 -- upsert rolls back both or neither.
+--
+-- v14 (2026-05-26): added ``is_compaction_titled`` so the title-sweep
+-- helpers (``title_match_snippets`` / ``title_match_uuids``) can
+-- filter out conversations whose title text is the canonical
+-- compaction-summary prefix when the user has Show Compactions OFF.
+-- Populated in :meth:`upsert_conversation` from the canonical
+-- ``COMPACTION_TITLE_PREFIX`` in :mod:`backend.compact_prefixes`.
+-- INTEGER NOT NULL DEFAULT 0 so existing rows get the safe default
+-- (visible) during fast migration; backfill UPDATE flips
+-- compaction-titled rows to 1.
 CREATE TABLE IF NOT EXISTS conversations (
     conv_uuid TEXT PRIMARY KEY,
     title TEXT,
@@ -308,7 +365,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     conv_updated_at TEXT,
     project_path TEXT,
     source TEXT,
-    organization_id TEXT
+    organization_id TEXT,
+    is_compaction_titled INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -500,6 +558,7 @@ class SearchIndex:
         "conv_uuid", "message_uuid", "sender", "created_at",
         "source", "project_path", "organization_id",
         "conv_created_at", "conv_updated_at",
+        "is_compaction_summary",
         "title", "body", "body_text",
     })
 
@@ -551,7 +610,49 @@ class SearchIndex:
             cols_ok = (not existing_cols) or existing_cols == self._EXPECTED_MESSAGES_COLS
             version_ok = row is not None and row[0] == SCHEMA_VERSION
 
-            if cols_ok and version_ok:
+            # v14 self-repair (2026-05-26): trust schema_version ONLY when
+            # the conversations projection also has the v14 column set.
+            # Observed live: uvicorn --reload race with the supervised
+            # watcher stamped schema_version=14 against a v13-shaped
+            # conversations table (no is_compaction_titled column). Pre-
+            # v14, the early-return below skipped the ALTER → every
+            # subsequent upsert crashed on INSERT into the missing
+            # column. We re-add the column + backfill here when the
+            # state is detected.
+            conv_table_exists = cur.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='conversations'"
+            ).fetchone() is not None
+            conv_cols_ok = True
+            if version_ok and conv_table_exists:
+                conv_cols = {
+                    r[1] for r in cur.execute(
+                        "PRAGMA table_info(conversations)"
+                    ).fetchall()
+                }
+                conv_cols_ok = "is_compaction_titled" in conv_cols
+                if not conv_cols_ok:
+                    logger.warning(
+                        "search_index: v14 self-repair — schema_version=14 "
+                        "but conversations.is_compaction_titled missing; "
+                        "adding column + backfilling (silent prior failure "
+                        "recovery)"
+                    )
+                    cur.execute(
+                        "ALTER TABLE conversations "
+                        "ADD COLUMN is_compaction_titled "
+                        "INTEGER NOT NULL DEFAULT 0"
+                    )
+                    cur.execute(
+                        "UPDATE conversations "
+                        "SET is_compaction_titled = 1 "
+                        "WHERE ltrim(title) LIKE ? || '%'",
+                        (COMPACTION_TITLE_PREFIX,),
+                    )
+                    self._write_conn.commit()
+                    conv_cols_ok = True
+
+            if cols_ok and version_ok and conv_cols_ok:
                 # On-disk schema matches; ensure all tables exist (no-op if
                 # already there) and we're done.
                 cur.executescript(SCHEMA_SQL)
@@ -585,16 +686,26 @@ class SearchIndex:
                         "backfilling",
                         conv_count, msg_conv_count,
                     )
+                    # v14 (2026-05-26): populate ``is_compaction_titled``
+                    # from the title text via SQL ``ltrim()`` + ``LIKE``
+                    # so the backfilled rows respect the Show Compactions
+                    # filter immediately. Predicate is anchored after
+                    # leading whitespace (matches the Python
+                    # ``is_compaction_prefix_text`` helper). Using SQL
+                    # CASE here avoids a Python round-trip per row.
                     cur.execute(
                         "INSERT OR IGNORE INTO conversations "
                         "(conv_uuid, title, conv_created_at, "
                         " conv_updated_at, project_path, source, "
-                        " organization_id) "
+                        " organization_id, is_compaction_titled) "
                         "SELECT conv_uuid, title, conv_created_at, "
                         "       conv_updated_at, project_path, source, "
-                        "       organization_id "
+                        "       organization_id, "
+                        "       CASE WHEN ltrim(title) LIKE ? || '%' "
+                        "            THEN 1 ELSE 0 END "
                         "FROM messages WHERE conv_uuid != '' "
-                        "GROUP BY conv_uuid"
+                        "GROUP BY conv_uuid",
+                        (COMPACTION_TITLE_PREFIX,),
                     )
                 self._write_conn.commit()
                 return
@@ -753,6 +864,78 @@ class SearchIndex:
                     self._schema_ok = True
                 return
 
+            # v13 → v14 fast migration (2026-05-26): add
+            # ``is_compaction_titled`` column to the ``conversations``
+            # projection table and backfill it from the title text.
+            # The column lives on a regular SQLite table (NOT the FTS5
+            # virtual table), so ALTER TABLE ADD COLUMN is constant-
+            # time and the backfill is a single UPDATE over ~hundreds
+            # of rows — total ~ms. CRITICAL: without this fast path
+            # the v13→v14 transition would fall through to the full
+            # DROP+rebuild branch below and the user would pay another
+            # ~5-15 min reindex on the same day they paid for v12→v13.
+            #
+            # Gating condition: v13 stamped + messages cols match the
+            # current code (the v13 FTS5 schema is unchanged in v14).
+            # Both checks must pass — if messages cols drifted the safer
+            # move is the full rebuild below.
+            if (
+                on_disk_version == 13
+                and SCHEMA_VERSION == 14
+                and existing_cols == self._EXPECTED_MESSAGES_COLS
+            ):
+                logger.info(
+                    "search_index: fast-migrating v13 → v14 "
+                    "(adding is_compaction_titled to conversations + "
+                    "backfilling from title text)"
+                )
+                self._schema_ok = False
+                try:
+                    # Step 1: idempotent column add. ALTER TABLE ADD
+                    # COLUMN is constant-time in SQLite. Gate on
+                    # PRAGMA table_info to survive partial prior
+                    # migrations (column added but schema_version not
+                    # stamped) — same idempotency pattern v11→v12 uses
+                    # for the indexed_files.conv_uuid column.
+                    existing_conv_cols = {
+                        r[1] for r in cur.execute(
+                            "PRAGMA table_info(conversations)"
+                        ).fetchall()
+                    }
+                    if "is_compaction_titled" not in existing_conv_cols:
+                        # NOT NULL DEFAULT 0 is safe: every existing row
+                        # gets 0 (visible) until the backfill UPDATE
+                        # flips compaction-titled rows to 1.
+                        cur.execute(
+                            "ALTER TABLE conversations "
+                            "ADD COLUMN is_compaction_titled "
+                            "INTEGER NOT NULL DEFAULT 0"
+                        )
+
+                    # Step 2: backfill in pure SQL. ``ltrim(title)``
+                    # mirrors the Python ``.lstrip()`` whitespace
+                    # tolerance in :func:`is_compaction_prefix_text`.
+                    # The ``? || '%'`` parameter pattern is the safe
+                    # way to bind a LIKE-prefix in SQLite (parameter
+                    # binding doesn't substitute inside the LIKE
+                    # literal directly).
+                    cur.execute(
+                        "UPDATE conversations "
+                        "SET is_compaction_titled = 1 "
+                        "WHERE ltrim(title) LIKE ? || '%'",
+                        (COMPACTION_TITLE_PREFIX,),
+                    )
+
+                    cur.execute("DELETE FROM schema_version")
+                    cur.execute(
+                        "INSERT INTO schema_version (version) VALUES (?)",
+                        (SCHEMA_VERSION,),
+                    )
+                    self._write_conn.commit()
+                finally:
+                    self._schema_ok = True
+                return
+
             logger.info(
                 "search_index: rebuilding (version on-disk=%s code=%s; messages cols match=%s)",
                 on_disk_version, SCHEMA_VERSION, existing_cols == self._EXPECTED_MESSAGES_COLS,
@@ -837,7 +1020,21 @@ class SearchIndex:
         conv_created_at = conv.get("created_at", "") or ""
         conv_updated_at = conv.get("updated_at", "") or ""
 
-        rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str, str]] = []
+        # v13 (2026-05-26): build the set of UUIDs that are compaction-
+        # summary rows (the synthetic ``isCompactSummary: true`` messages
+        # backend.cc_image_markers.extract_compact_markers emits). Read
+        # from ``conv['compact_markers']`` — the post-parse projection
+        # the exporters also consume (backend/exporters/_shared.py:
+        # _is_compact_summary_message). Same source of truth → no drift.
+        # Empty for the common case (Desktop convs, CC sessions without
+        # compactions); cheap dict.get + comprehension.
+        compaction_uuids: set[str] = {
+            m.get("message_uuid", "")
+            for m in (conv.get("compact_markers") or [])
+            if isinstance(m, dict) and m.get("message_uuid")
+        }
+
+        rows: list[tuple[str, str, str, str, str, str, str, str, str, int, str, str, str]] = []
         for msg in conv.get("chat_messages", []) or []:
             # 2026-05-16 (v7): two parallel projections from the SAME
             # source message via the existing linear-scan helper.
@@ -850,13 +1047,21 @@ class SearchIndex:
             # visible regardless of the Tools toggle.
             body = _extract_searchable_text(msg, include_tool_calls=True)
             body_text = _extract_searchable_text(msg, include_tool_calls=False)
+            msg_uuid = msg.get("uuid", "") or ""
+            # v13 (2026-05-26): 1 iff this is a compaction-summary row
+            # by UUID; 0 otherwise. The exporters' identity predicate
+            # (``_is_compact_summary_message``) keys on the same set,
+            # so search + export agree on what counts as compaction
+            # content. Stored as INTEGER (FTS5 has no native bool) so
+            # the WHERE filter is ``is_compaction_summary = 0``.
+            is_compact = 1 if msg_uuid in compaction_uuids else 0
             # We index even messages with empty body so the title-only
             # match still has a stable ``conv_uuid`` to anchor against.
             # Title-only matches are produced by the title column.
             rows.append(
                 (
                     conv_uuid,
-                    msg.get("uuid", "") or "",
+                    msg_uuid,
                     msg.get("sender", "") or "",
                     msg.get("created_at", "") or "",
                     source,
@@ -864,6 +1069,7 @@ class SearchIndex:
                     organization_id,
                     conv_created_at,
                     conv_updated_at,
+                    is_compact,
                     title,
                     body,
                     body_text,
@@ -872,12 +1078,15 @@ class SearchIndex:
 
         # If a conversation has no messages we still want a row so a
         # title-only query hits something. Use a sentinel message_uuid.
+        # is_compaction_summary=0 — title-only sentinel is never a
+        # compaction row.
         if not rows:
             rows.append(
                 (
                     conv_uuid, "title", "title", "",
                     source, project_path, organization_id,
                     conv_created_at, conv_updated_at,
+                    0,
                     title, "", "",
                 )
             )
@@ -891,8 +1100,9 @@ class SearchIndex:
                     "INSERT INTO messages "
                     "(conv_uuid, message_uuid, sender, created_at, source, "
                     " project_path, organization_id, conv_created_at, "
-                    " conv_updated_at, title, body, body_text) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " conv_updated_at, is_compaction_summary, "
+                    " title, body, body_text) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 # v10 title projection (2026-05-23). INSERT OR REPLACE
@@ -900,11 +1110,25 @@ class SearchIndex:
                 # re-upserts. Same transaction as the messages writes
                 # so a crash mid-upsert rolls both back — no split-brain
                 # "projection updated, messages stale" state.
+                #
+                # v14 (2026-05-26): also write ``is_compaction_titled``
+                # so the title-sweep helpers can filter out compaction-
+                # derived titles when Show Compactions is OFF. The
+                # ``is_compaction_prefix_text`` shared helper applies
+                # the canonical anchored ``.lstrip().startswith()``
+                # check — same predicate as
+                # ``cowork_reader._extract_cowork_compact_markers``.
+                # User-renamed sessions (``/rename`` writes a
+                # ``custom-title`` row that WINS over the fallback in
+                # ``cc_message_transforms``) get the new title here, so
+                # this flag re-evaluates correctly on the next upsert.
+                is_compaction_titled = 1 if is_compaction_prefix_text(title) else 0
                 self._write_conn.execute(
                     "INSERT OR REPLACE INTO conversations "
                     "(conv_uuid, title, conv_created_at, conv_updated_at, "
-                    " project_path, source, organization_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    " project_path, source, organization_id, "
+                    " is_compaction_titled) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         conv_uuid,
                         title,
@@ -913,6 +1137,7 @@ class SearchIndex:
                         project_path,
                         source,
                         organization_id,
+                        is_compaction_titled,
                     ),
                 )
                 # v12 (2026-05-25): also persist the conv_uuid so
@@ -1080,6 +1305,7 @@ class SearchIndex:
         bookmarks: set[str] | None = None,
         organization_id: str | None = None,
         conversation_uuids: set[str] | None = None,
+        include_compactions: bool = True,
         limit: int = 5000,
     ) -> list[dict[str, Any]]:
         """Run an FTS5 MATCH query and return matched message metadata.
@@ -1152,6 +1378,15 @@ class SearchIndex:
         if organization_id is not None:
             clauses.append("organization_id = ?")
             params.append(organization_id)
+        # v14 (2026-05-26): same is_compaction_summary gate the
+        # ``_build_match_where_clause`` helper applies on the snippet
+        # path. The legacy ``query()`` predates the helper, so we
+        # mirror the clause here. Without this, the slow
+        # ``_search_via_index`` path would still surface compaction-
+        # summary message-body hits even with Show Compactions OFF
+        # (the same vector v13 closed on the fast paths).
+        if not include_compactions:
+            clauses.append("is_compaction_summary = 0")
 
         sql = (
             "SELECT conv_uuid, message_uuid, sender, created_at "
@@ -1195,13 +1430,14 @@ class SearchIndex:
     # ellipsis, max_tokens). column_index is the position in the
     # messages FTS5 schema (0-indexed). Sweep is bm25-driven so we
     # get the densest match cluster across multi-token queries.
-    # v7 schema column order: conv_uuid(0), message_uuid(1), sender(2),
+    # v13 schema column order: conv_uuid(0), message_uuid(1), sender(2),
     # created_at(3), source(4), project_path(5), organization_id(6),
-    # conv_created_at(7), conv_updated_at(8), title(9), body(10),
-    # body_text(11).
-    _SNIPPET_BODY_COL_IDX = 10
-    _SNIPPET_BODY_TEXT_COL_IDX = 11
-    _SNIPPET_TITLE_COL_IDX = 9
+    # conv_created_at(7), conv_updated_at(8), is_compaction_summary(9),
+    # title(10), body(11), body_text(12). The indices shifted by +1 vs
+    # v12 when is_compaction_summary was inserted before title.
+    _SNIPPET_BODY_COL_IDX = 11
+    _SNIPPET_BODY_TEXT_COL_IDX = 12
+    _SNIPPET_TITLE_COL_IDX = 10
     _SNIPPET_ELLIPSIS = "..."
     _SNIPPET_MAX_TOKENS = 30  # ~150 chars for English prose
 
@@ -1216,6 +1452,7 @@ class SearchIndex:
         organization_id: str | None = None,
         conversation_uuids: set[str] | None = None,
         include_tool_calls: bool = True,
+        include_compactions: bool = True,
     ) -> tuple[str, list[Any], bool] | None:
         """Shared WHERE-clause builder for FTS5 MATCH queries.
 
@@ -1278,6 +1515,17 @@ class SearchIndex:
         if organization_id is not None:
             clauses.append("organization_id = ?")
             params.append(organization_id)
+        # v13 (2026-05-26): compaction-aware filter. When the user has
+        # "Show Compactions" OFF in the conversation header, the wire
+        # carries ``include_compactions=False``. Filtering at SQL —
+        # BEFORE bm25 ranking and LIMIT — mirrors the include_tool_calls
+        # treatment of body_text. Council rejected the alternative
+        # (post-filter at scatter time) because top-bm25 hits can
+        # cluster in compaction summaries (they're long, prose-heavy
+        # bodies), which would empty the result set under LIMIT.
+        # See PLANS / Decision Records 2026-05-26.
+        if not include_compactions:
+            clauses.append("is_compaction_summary = 0")
 
         return " AND ".join(clauses), params, use_allowed_join
 
@@ -1292,6 +1540,7 @@ class SearchIndex:
         organization_id: str | None = None,
         conversation_uuids: set[str] | None = None,
         include_tool_calls: bool = True,
+        include_compactions: bool = True,
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
         """FTS5 fast path with body snippets in-band.
@@ -1350,6 +1599,7 @@ class SearchIndex:
             organization_id=organization_id,
             conversation_uuids=conversation_uuids,
             include_tool_calls=include_tool_calls,
+            include_compactions=include_compactions,
         )
         if built is None:
             return []
@@ -1416,6 +1666,7 @@ class SearchIndex:
         organization_id: str | None = None,
         conversation_uuids: set[str] | None = None,
         include_tool_calls: bool = True,
+        include_compactions: bool = True,
         limit: int = 1000,
     ) -> list[dict[str, Any]]:
         """FTS5 fast path that returns the FULL body text in-band.
@@ -1447,6 +1698,7 @@ class SearchIndex:
             organization_id=organization_id,
             conversation_uuids=conversation_uuids,
             include_tool_calls=include_tool_calls,
+            include_compactions=include_compactions,
         )
         if built is None:
             return []
@@ -1500,6 +1752,7 @@ class SearchIndex:
         organization_id: str | None = None,
         conversation_uuids: set[str] | None = None,
         include_tool_calls: bool = True,
+        include_compactions: bool = True,
     ) -> int:
         """COUNT(*) of FTS5 MATCH rows under the same WHERE clauses as
         ``query_with_snippets``.
@@ -1524,6 +1777,7 @@ class SearchIndex:
             organization_id=organization_id,
             conversation_uuids=conversation_uuids,
             include_tool_calls=include_tool_calls,
+            include_compactions=include_compactions,
         )
         if built is None:
             return 0
@@ -1549,6 +1803,7 @@ class SearchIndex:
         bookmarks: set[str] | None = None,
         organization_id: str | None = None,
         conversation_uuids: set[str] | None = None,
+        include_compactions: bool = True,
     ) -> dict[str, str]:
         """Return ``{conv_uuid: title_snippet}`` for conversations whose
         TITLE matched the query as a LIKE substring.
@@ -1610,6 +1865,20 @@ class SearchIndex:
         if organization_id is not None:
             title_clauses.append("organization_id = ?")
             title_params.append(organization_id)
+        # v14 (2026-05-26): compaction-titled gate. When the user has
+        # Show Compactions OFF (``include_compactions=False``), suppress
+        # title-only hits whose conversation TITLE is the canonical
+        # compaction-summary prefix (fallback-derived from the first
+        # 100 chars of an isCompactSummary row body when no
+        # summary/custom-title/agent-name row was emitted). The flag
+        # is per-conversation, populated in :meth:`upsert_conversation`
+        # via :func:`is_compaction_prefix_text` and backfilled by the
+        # v13→v14 fast migration. The conv's BODY matches still surface
+        # via the separate body-MATCH path (see
+        # ``_build_match_where_clause``'s ``is_compaction_summary = 0``
+        # gate) — this filter only suppresses the title pseudo-message.
+        if not include_compactions:
+            title_clauses.append("is_compaction_titled = 0")
 
         # Per-conv metadata (timestamps, project_path) returned alongside
         # the marked title so the caller can build SearchResult objects
@@ -1674,6 +1943,7 @@ class SearchIndex:
         bookmarks: set[str] | None = None,
         organization_id: str | None = None,
         conversation_uuids: set[str] | None = None,
+        include_compactions: bool = True,
     ) -> set[str]:
         """Return the set of ``conv_uuid`` whose ``title`` contains
         ``needle`` as a case-insensitive LIKE substring, honoring all
@@ -1735,6 +2005,10 @@ class SearchIndex:
         if organization_id is not None:
             title_sql_clauses.append("organization_id = ?")
             title_sql_params.append(organization_id)
+        # v14 (2026-05-26): mirror of the gate in
+        # :meth:`title_match_snippets`. See that method for rationale.
+        if not include_compactions:
+            title_sql_clauses.append("is_compaction_titled = 0")
 
         try:
             conn = self._get_read_conn()

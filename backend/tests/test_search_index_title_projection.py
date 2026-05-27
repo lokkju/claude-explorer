@@ -122,6 +122,11 @@ def test_conversations_projection_table_exists(fresh_index):
         "project_path",
         "source",
         "organization_id",
+        # v14 (2026-05-26): per-conversation gate for the title-sweep
+        # compaction filter. Populated by upsert_conversation from the
+        # canonical COMPACTION_TITLE_PREFIX. See SCHEMA_VERSION docstring
+        # in backend/search_index.py.
+        "is_compaction_titled",
     }, f"conversations projection has unexpected columns: {cols}"
 
 

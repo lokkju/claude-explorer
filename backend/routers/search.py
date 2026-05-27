@@ -179,6 +179,17 @@ async def search(
             "compat for external scripts hitting /api/search directly."
         ),
     ),
+    include_compactions: bool = Query(
+        True,
+        description=(
+            "When False, search ignores hits inside compaction-summary "
+            "rows (isCompactSummary) so the sidebar only shows results "
+            "whose owning message is rendered in the conversation pane "
+            "(mirrors the UI's 'Show Compactions' toggle in the "
+            "conversation header). Default True preserves backward "
+            "compat for external scripts hitting /api/search directly."
+        ),
+    ),
     store: ConversationStore = Depends(get_store),
 ) -> SearchResponse:
     """Search across all conversations (GET form)."""
@@ -197,6 +208,7 @@ async def search(
             project_path=project_path,
             bookmarks=bookmark_set,
             include_tool_calls=include_tool_calls,
+            include_compactions=include_compactions,
             organization_id=organization_id,
             conversation_uuids=conversation_uuids_set,
             limit=HTTP_SEARCH_LIMIT,
@@ -243,6 +255,10 @@ class SearchRequest(BaseModel):
     # a 100k-UUID POST takes ~21s.
     conversation_uuids: list[str] | None = Field(None, max_length=5000)
     include_tool_calls: bool = True
+    # 2026-05-26 (v13): "Show Compactions" toggle plumbed via the same
+    # mechanism as ``include_tool_calls``. Default True for backward
+    # compat. See backend.search.search_conversations docstring.
+    include_compactions: bool = True
 
 
 @router.post(
@@ -278,6 +294,7 @@ async def search_post(
             project_path=body.project_path,
             bookmarks=set(body.bookmarks) if body.bookmarks is not None else None,
             include_tool_calls=body.include_tool_calls,
+            include_compactions=body.include_compactions,
             organization_id=body.organization_id,
             conversation_uuids=(
                 set(body.conversation_uuids)

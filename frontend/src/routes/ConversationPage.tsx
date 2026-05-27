@@ -343,7 +343,6 @@ export function ConversationPage() {
     return map
   }, [compactMarkers])
 
-  const isCC = conversation?.source === 'CLAUDE_CODE'
   const hasCompactMarkers = (conversation?.compact_markers ?? []).length > 0
 
   // V1 polish (2026-05-12, council round 2): prelude markers (leading
@@ -1132,7 +1131,7 @@ export function ConversationPage() {
               <Download className={cn('h-4 w-4', isRefetching && 'animate-pulse')} />
             </Button>
           )}
-          {isCC && hasCompactMarkers && (
+          {hasCompactMarkers && (
             // 2026-05-24 UX fix: same rationale as Show Tools — the
             // variant-toggle Button hid the enabled state and the
             // semantic inversion ("Show compact markers" label appearing

@@ -122,6 +122,12 @@ export const api = {
     // Making this mandatory means TypeScript catches any new call site
     // that forgets to wire useSettings().showToolCalls.
     includeToolCalls: boolean,
+    // 2026-05-26: REQUIRED, no default. Mirrors include_tool_calls — same
+    // mandatory-arg pattern means TypeScript catches any new call site
+    // that forgets to wire `!useSettings().hideCompactMarkers` (the
+    // mapping: `Show Compactions` checkbox checked → includeCompactions
+    // = !hideCompactMarkers = !false = true).
+    includeCompactions: boolean,
     // 2026-05-18 (Hunt #5): optional AbortSignal. Wired from useSearch's
     // queryFn `({ signal }) => api.search(..., signal)` so a queryKey
     // change (user keeps typing past the 200ms debounce) or an unmount
@@ -148,6 +154,7 @@ export const api = {
         sort,
         sort_order: sortOrder,
         include_tool_calls: includeToolCalls,
+        include_compactions: includeCompactions,
       }
       if (scope?.conversationUuid) body.conversation_uuid = scope.conversationUuid
       if (scope?.projectPath) body.project_path = scope.projectPath
@@ -188,6 +195,10 @@ export const api = {
     // Only append the query param when filtering — keeps URLs short
     // for the common-case (tool calls visible) request.
     if (!includeToolCalls) params.set('include_tool_calls', 'false')
+    // 2026-05-26: same pattern for compactions — only set the param when
+    // the user has hidden them, so the URL stays short for the default
+    // "show everything" case.
+    if (!includeCompactions) params.set('include_compactions', 'false')
     // GET branch — signal threaded through fetchJson so a queryKey change
     // (user keeps typing) aborts the in-flight request mirror-image of the
     // POST branch above. Without this the React Query queryKey-change path

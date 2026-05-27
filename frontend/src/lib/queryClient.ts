@@ -84,6 +84,9 @@ export const queryKeys = {
     // of the key so toggling the UI's "Show tool calls" pref re-fires
     // the network request and the cache doesn't return stale results.
     includeToolCalls?: boolean,
-  ) => ['search', query, source, contextSize, sort, sortOrder, scope, includeToolCalls] as const,
+    // 2026-05-26: include_compactions mirrors include_tool_calls — same
+    // queryKey-membership rationale.
+    includeCompactions?: boolean,
+  ) => ['search', query, source, contextSize, sort, sortOrder, scope, includeToolCalls, includeCompactions] as const,
   config: ['config'] as const,
 }
