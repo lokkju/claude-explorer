@@ -465,6 +465,33 @@ def disable_data_dir_migration_in_tests(monkeypatch: pytest.MonkeyPatch) -> Iter
 
 
 @pytest.fixture(autouse=True)
+def _force_watcher_uninstalled(monkeypatch) -> Iterator[None]:
+    """Pin :func:`backend.watcher_status.is_watcher_installed` to False
+    by default so the dev-machine state can't leak into the suite.
+
+    Pre-existing tests in ``test_cc_image_permanent_cache.py`` pin
+    that missing-image references fire at WARNING level; those
+    contracts assume the watcher is NOT installed. On a dev machine
+    where ``claude-explorer install-watcher`` has been run, the level
+    would flip to INFO and break those tests for reasons unrelated to
+    the code under test.
+
+    Tests that want to exercise the watcher-installed branch (e.g.
+    :file:`test_cc_image_warning_dedupe.py::test_watcher_installed_logs_at_info`)
+    explicitly ``monkeypatch.setenv("CLAUDE_EXPLORER_WATCHER_INSTALLED", "1")``
+    plus ``watcher_status.invalidate_cache()`` — that local override wins.
+    """
+    from backend import watcher_status
+
+    monkeypatch.setenv("CLAUDE_EXPLORER_WATCHER_INSTALLED", "0")
+    watcher_status.invalidate_cache()
+    try:
+        yield
+    finally:
+        watcher_status.invalidate_cache()
+
+
+@pytest.fixture(autouse=True)
 def isolate_search_index_singleton(tmp_path_factory, monkeypatch) -> Iterator[None]:
     """Prevent any test from accidentally instantiating or writing to the
     user's real ``~/.claude-explorer/search-index.sqlite``.

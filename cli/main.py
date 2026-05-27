@@ -395,6 +395,26 @@ def serve(host: str, port: int, reload: bool) -> None:
     """
     import uvicorn
 
+    # Terminal warning when the supervised CC image-cache watcher
+    # isn't installed. The lifespan log inside backend/main.py also
+    # logs this for supervised-job tails, but the user running
+    # `claude-explorer serve` directly in their shell sees uvicorn
+    # output, not the structured logs — echo to stderr so a
+    # human-readable hint surfaces above the request log.
+    # See PLANS/2026.05.26-watcher-install-detection.md.
+    try:
+        from backend.watcher_status import is_watcher_installed
+        if not is_watcher_installed():
+            click.echo(
+                "\nWARNING: CC image-cache watcher not installed.\n"
+                "  Run 'uv run claude-explorer install-watcher' to prevent\n"
+                "  permanent image-cache data loss during backend downtime.\n",
+                err=True,
+            )
+    except Exception:  # noqa: BLE001
+        # Detection is best-effort; never fail `serve` over the hint.
+        pass
+
     click.echo(f"Starting server on http://{host}:{port}")
     click.echo("Press Ctrl+C to stop.")
 

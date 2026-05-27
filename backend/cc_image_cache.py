@@ -59,7 +59,12 @@ def cache_path_for(
     return cache_dir() / conv_uuid / f"{sess}--{n}.{sha8}.{ext}"
 
 
-def copy_marker_image_to_cache(abs_path: str, conv_uuid: str) -> Path | None:
+def copy_marker_image_to_cache(
+    abs_path: str,
+    conv_uuid: str,
+    *,
+    _seen_missing: set[str] | None = None,
+) -> Path | None:
     """Read bytes from ``abs_path``, hash, copy into permanent cache.
 
     Returns the destination path, or ``None`` if ``abs_path`` is missing
@@ -71,8 +76,20 @@ def copy_marker_image_to_cache(abs_path: str, conv_uuid: str) -> Path | None:
       already copied it. This is the *normal* steady state and is logged
       at DEBUG only.
     * **Permanent data loss** — missing in both the live cache *and* the
-      permanent cache. This is the user-visible signal that pre-watcher
-      images are gone forever; logged at WARNING.
+      permanent cache. The log level depends on whether the supervised
+      CC watcher is installed (see :mod:`backend.watcher_status`):
+
+      * Watcher installed → INFO. The loss is historical; future losses
+        are prevented. Shouting at WARNING forever would be log noise.
+      * Watcher missing → WARNING. The loss is ongoing; the user must
+        run ``claude-explorer install-watcher`` to stop the bleeding.
+
+    The optional ``_seen_missing`` set deduplicates per-walk: when a
+    conversation references the same missing slot from multiple
+    messages (very common — a single screenshot often gets pasted into
+    several follow-up turns), :func:`cache_all_markers` passes a fresh
+    set so each unique ``abs_path`` produces at most one log record per
+    walk.
 
     Never raises on missing live files.
     """
@@ -94,8 +111,21 @@ def copy_marker_image_to_cache(abs_path: str, conv_uuid: str) -> Path | None:
                 conv_uuid,
             )
             return None
-        log.warning(
-            "CC image referenced by conv %s not on disk: %s", conv_uuid, abs_path
+        if _seen_missing is not None:
+            if abs_path in _seen_missing:
+                return None
+            _seen_missing.add(abs_path)
+        # Import here (not at module top) to avoid a circular import via
+        # main → cc_image_cache → watcher_status → ... if watcher_status
+        # ever grows a dependency on a backend module that itself imports
+        # cc_image_cache. The lookup is cached so per-call cost is nil.
+        from .watcher_status import is_watcher_installed
+        level = logging.INFO if is_watcher_installed() else logging.WARNING
+        log.log(
+            level,
+            "CC image referenced by conv %s not on disk: %s",
+            conv_uuid,
+            abs_path,
         )
         return None
     try:
@@ -133,6 +163,12 @@ def cache_all_markers(conversation_json: dict) -> list[Path]:
         return []
 
     out: list[Path] = []
+    # Per-walk dedupe set so a conversation that references the same
+    # missing image from N messages emits at most one permanent-loss
+    # log record per unique abs_path. Fresh set per walk — see
+    # `copy_marker_image_to_cache` and the bidirectional pair in
+    # `test_cc_image_warning_dedupe.py::test_dedupe_state_does_not_leak_between_walks`.
+    seen_missing: set[str] = set()
     for msg in conversation_json.get("chat_messages", []):
         for block in msg.get("content", []) or []:
             if not isinstance(block, dict):
@@ -141,7 +177,11 @@ def cache_all_markers(conversation_json: dict) -> list[Path]:
                 continue
             text = block.get("text") or ""
             for m in _MARKER_RE.finditer(text):
-                dst = copy_marker_image_to_cache(m.group(1).strip(), conv_uuid)
+                dst = copy_marker_image_to_cache(
+                    m.group(1).strip(),
+                    conv_uuid,
+                    _seen_missing=seen_missing,
+                )
                 if dst is not None:
                     out.append(dst)
     return out

@@ -424,6 +424,16 @@ export interface AppConfigStats extends AppConfig {
   conversation_count: number
 }
 
+// PLANS/2026.05.26-watcher-install-detection.md Phase 3:
+// Shape of /api/health/watcher. The WatcherMissingBanner reads this
+// and renders preventatively when `installed: false`.
+export interface WatcherHealth {
+  installed: boolean
+  platform: string
+  install_command: string
+  docs_url: string
+}
+
 // API Error
 
 export class ApiError extends Error {

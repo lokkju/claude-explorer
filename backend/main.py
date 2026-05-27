@@ -56,7 +56,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 
 from .config import get_settings, migrate_legacy_data_dir, read_env  # noqa: E402
-from .routers import conversations, search, export, config, fetch, bookmarks, orgs, files, preferences  # noqa: E402
+from .routers import conversations, search, export, config, fetch, bookmarks, orgs, files, preferences, watcher_health  # noqa: E402
 
 
 # Exact-match pattern for the conversation-detail route.
@@ -298,15 +298,46 @@ async def lifespan(app: FastAPI):
                 _migration_state["status"] = "stuck"
                 _migration_state["last_error"] = str(e)
 
+    # Surface the supervised-watcher install state to supervised-job
+    # logs once per startup. See watcher_logging + the frontend
+    # WatcherMissingBanner for the user-facing surfaces.
+    try:
+        from .watcher_logging import log_watcher_status
+        log_watcher_status()
+    except Exception:  # noqa: BLE001
+        log.debug("log_watcher_status failed; ignoring", exc_info=True)
+
     # Spawn the CC image-cache watcher. Polls ~/.claude/image-cache/
     # every few seconds and copies new files to the permanent cache
     # before Claude Code rotates them. Best-effort: any internal error
     # is logged and swallowed.
+    #
+    # 2026-05-26: skip the in-process watcher when the SUPERVISED
+    # watcher is already running (launchd/systemd/Task Scheduler).
+    # Two processes writing to ``search-index.sqlite`` race on every
+    # drift pass — observed as ``sqlite3.OperationalError: database is
+    # locked`` during ``update_drifted_files`` upserts. The supervised
+    # watcher does the same work; running both is redundant AND
+    # harmful. The explicit ``CLAUDE_EXPLORER_DISABLE_CC_WATCHER=1``
+    # env var still wins for users who want full manual control.
     watcher_stop = asyncio.Event()
     watcher_task: asyncio.Task | None = None
-    if read_env(
+    disabled_by_env = read_env(
         "CLAUDE_EXPLORER_DISABLE_CC_WATCHER", "CLAUDE_EXPORTER_DISABLE_CC_WATCHER"
-    ) != "1":
+    ) == "1"
+    try:
+        from .watcher_status import is_watcher_installed
+        supervised = is_watcher_installed()
+    except Exception:  # noqa: BLE001
+        supervised = False
+    if disabled_by_env:
+        log.info("In-process CC watcher disabled by env var.")
+    elif supervised:
+        log.info(
+            "In-process CC watcher skipped (supervised watcher already running). "
+            "Avoids search-index write contention."
+        )
+    else:
         from backend.cc_watcher import run_watcher
 
         watcher_task = asyncio.create_task(
@@ -946,6 +977,8 @@ app.include_router(bookmarks.router, prefix="/api")
 app.include_router(preferences.router, prefix="/api")
 app.include_router(orgs.router, prefix="/api")
 app.include_router(files.router, prefix="/api")
+# watcher_health endpoint paths already include the /api prefix.
+app.include_router(watcher_health.router)
 
 
 @app.get(

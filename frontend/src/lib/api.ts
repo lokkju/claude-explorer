@@ -9,6 +9,7 @@ import type {
   SortOrder,
   AppConfig,
   AppConfigStats,
+  WatcherHealth,
   Bookmark,
   ApiError as ApiErrorType,
 } from './types'
@@ -208,6 +209,10 @@ export const api = {
 
   getConfigStats: (signal?: AbortSignal): Promise<AppConfigStats> =>
     fetchJson<AppConfigStats>('/config/stats', signal),
+
+  // PLANS/2026.05.26-watcher-install-detection.md Phase 3.
+  getWatcherHealth: (signal?: AbortSignal): Promise<WatcherHealth> =>
+    fetchJson<WatcherHealth>('/health/watcher', signal),
 
   exportMarkdown: (
     uuid: string,

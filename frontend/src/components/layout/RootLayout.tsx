@@ -4,6 +4,7 @@ import { Menu, X } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { SearchPanel } from '@/components/search/SearchPanel'
 import { ConfigCorruptionBanner } from '@/components/ConfigCorruptionBanner'
+import { WatcherMissingBanner } from '@/components/WatcherMissingBanner'
 import { Button } from '@/components/ui/button'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
@@ -26,6 +27,14 @@ export function RootLayout() {
           when config.json parses cleanly — flex container shrinks
           accordingly with no layout jump. */}
       <ConfigCorruptionBanner />
+      {/* PLANS/2026.05.26-watcher-install-detection.md Phase 3.
+          Renders nothing when the supervised watcher is installed
+          (the common case) — flex container shrinks accordingly, no
+          layout jump. Stacks below the corruption banner because the
+          corruption case is more urgent (writes are 503'd) than a
+          missing-watcher case (only future image-cache rotations are
+          at risk). */}
+      <WatcherMissingBanner />
       <div className="flex flex-1 min-h-0">
       {!isMobile && <Sidebar />}
 
