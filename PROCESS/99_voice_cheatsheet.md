@@ -50,6 +50,19 @@ One sentence, italic-bold, summarizing *this part's* scope. Example (from Part 2
 
 > ***In this part of the series, we learn about best practices for our API documentation and endpoint definitions, including `async` and clean and correct database session management.***
 
+## Motivate technical detail from the user's perspective first
+
+**This is a top-priority structural rule, on par with active voice.** Whenever a paragraph (or H4, or sub-section) is about to describe HOW something works internally, lead with WHY it matters from the user's perspective. A reader who doesn't yet care about the mechanism won't slow down to absorb it; a reader who's been told what problem the mechanism solves will lean in.
+
+The lead-in doesn't have to be long. One sentence is usually enough, and two is the ceiling. The shape is: *(user-visible problem or user-visible payoff) ... (and here's how it works)*.
+
+- ❌ Cold open into the technical paragraph: *"The implementation tracks one piece of state: the UUID of the message you last clicked or scrolled to. The viewer keeps it in a React ref..."* (the reader has no reason to care yet)
+- ✅ Motivation-led: *"Modern apps love to scroll themselves around in the background; a refetch lands, a checkbox flip rebuilds the list, and suddenly you've lost the bubble you were reading. The viewer tracks where you're reading and stays put unless you tell it otherwise. **The implementation tracks one piece of state: the UUID of the message you last clicked or scrolled to...**"* (now the technical detail has a stake)
+
+For the userdoc twin, motivation IS the explanation; the technical detail stays in the long-form twin. The userdoc paragraph should describe the user-visible behavior in plain English and stop. For the long-form twin, motivation leads INTO the technical detail, not instead of it.
+
+Applies equally to code blocks, benchmark tables, and prose deep-dives. A `make bench` table is more interesting with one sentence on what it's good for; a `useEffect` excerpt is more interesting with one sentence on the user pain it eliminates.
+
 ## "Previously on…"
 
 Every part after #1 opens with a recap + link to the prior part:
@@ -188,6 +201,7 @@ Every part ends with an **H2 "Wrapping Up!"** (with exclamation). Content:
 ## Style cheat-sheet (quick reference)
 
 - **Active voice on every sentence** — scan main verbs; rewrite anything stative or passive. (See *"Active voice (critical)"* above.) Equal weight with the no-em-dash and no-"X, not Y" bans.
+- **Motivate technical detail from the user's perspective FIRST.** No cold opens into mechanism. Lead with the user pain or user payoff; the implementation follows. (See *"Motivate technical detail from the user's perspective first"* above.)
 - Italic-bold one-line lede. Link to prior part(s). *"If you missed that, make sure to go back and read it!"*
 - "we" for the journey, "I" for the opinions and jokes.
 - Each section: prose framing → code block → design commentary explaining *why* each decision matters.

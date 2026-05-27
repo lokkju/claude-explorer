@@ -55,6 +55,16 @@ Single-threaded. Subagents write files, return ≤300-word summaries. Pauses bet
 | LLM Council content | **Folded back IN as Part 6** (2026-05-22 reversal of the 2026-04-20 split-out decision). Trigger: a 2026-05-21 multi-day code-review pass driven by a new `llm-council-code-review` agent (heterogeneous GPT-5.2 + Gemini-3-Pro + Opus 4.7) produced a fresh batch of concrete, citable catches — including a shipping crash in `claude-explorer fetch` that no test covered. The cumulative receipts (Phase 19/20 catches from the build session + this 2026-05-21 sweep + the user's existing LinkedIn material) now justify a full series part rather than a forward-pointer. Detailed plan in `PLANS/articles/part6_llm_council_plan.md`. The seed doc at `PLANS/future_articles/llm_council.md` is being absorbed into the new part-plan; the future-articles file remains as historical record. |
 | Part 7 (perf postmortem) | **Added 2026-05-23.** A multi-day perf hunt produced a 5-belief falsification chain on search-typing lag, plus dramatic numbers across the stack (95% warm-switch reduction via virtualization; 4× cold-load; 13.6× cold-search via FTS5 projection table; 7.5s→13ms Cmd-F; gzip-event-loop trap; React.memo bypass via useContext). Standalone Part 7 — *Hunting Latency: A Performance Postmortem in Practice* — rather than fold into Part 5 (would bury the dramatic numbers) or Part 6 (would dilute Council methodology focus). Receipts: `PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md`, `PLANS/PERFORMANCE_BASELINE_2026-05-23.md`, 31 unpushed commits. Detailed plan TODO at `PLANS/articles/part7_perf_postmortem_plan.md` (next planning session). |
 | Part 6 / Part 7 ordering | **Open question.** "Build → Reflect → Hunt" (current 1-7 order) tells story of evolving project. "Build → Hunt → Reflect" (swap 6 and 7) is stronger pedagogically since Part 7's perf work was itself Council-driven. Decide at Part 6 draft time. |
+| Show Compactions toggle in Part 2 | Documented as a rendering-only filter (the conversation stays intact on disk), with multi-source detection (CC `isCompactSummary`, CC text-prefix, Cowork text-prefix) and title-leak filter. Schema-bump narrative reserved for Part 7. |
+| Demonstrated-focus arbitration in Part 2 | Documented as a UX commitment: clicks and manual scrolls protect viewer position; Cmd+G / Enter / card click / bookmark click are explicit nav. Implementation reserved for Part 6 / Part 7. |
+| Supervised CC image-cache watcher detection in Part 2 | Install-step warning sentence + caching-section banner / endpoint / log-line mention. Cross-OS detection via launchd / systemd / schtasks probes. |
+| Time Machine restore script polish in Part 2 | Cowork coverage + `tmutil latestbackup` auto-detect + APFS mount-on-demand + `--continue-on-mount-failure` + fail-fast non-root. |
+| Header-checkbox UX in Part 2 | Word-level: "toggle" prose replaced with "checkbox" prose where the conversation-header toggles are referenced; screenshot refresh shows the new affordance. |
+| Unified compact toggle + rich /compact rendering | One source of truth: viewer + copy + Markdown + PDF all honor the same Show Compactions preference; rich-summary rendering replaces the stub trigger row in exports. The previous Settings-page `export.includeCompactContent` pref + checkbox got REMOVED in favor of the conversation-header checkbox as the single source of truth; future readers should not expect a Settings entry. |
+| Truncation indicator (`N+` / `1000+`) in Part 2 | One-sentence user-facing note in the search section; full wire-format / capacity story stays in the existing truncation-disclosure subsection. The UI appends `+` to the displayed match count when the total exceeds the per-query limit, so a truncated count of 1000 renders as `1000+` (per `frontend/src/components/search/SearchPanel.tsx:473`). |
+| Settings-page flash sidebar | Lives in Part 7 (the misleading-green-e2e sidebar). Part 2 stays out of it. Codified rule `CLAUDE-TESTING.md §5.15`. |
+| Part 7 plan trigger | The 2026-05-25 perf hunt (commit `51f9def`) plus the schema self-healing (commit `7832b86`) constitute the second wave the Part 7 plan must capture; Part 7 plan TODO escalates. |
+| TOC in Part 2 articles | **Hand-maintained**, H2-only, plain GFM-slug links (`- [Section](#section)`). Placed between the lede paragraph and the first H2 in both `articles/part_2_web_app.md` and `articles/part_2_web_app_userdoc.md`. Renders correctly in Obsidian, MacDown, and GitHub; degrades to a visual outline on Medium (Medium assigns random per-block IDs, so the fragment links can't match). **Publish step: strip the TOC during Medium import** — Medium's reading UX favors a tight lede plus clear H2s, and a manual rebuild of the in-post links via Medium's link tool is brittle. The in-repo TOC stays for Obsidian and GitHub readers. Maintenance: I'll update the TOC whenever an H2 in either Part 2 article gets added, renamed, or removed (council guidance from 2026-05-27 Gemini 2.5 Pro + GPT-5.2 consult). |
 
 ## The Series (7 parts; was 5, +1 LLM Council added 2026-05-22, +1 Perf Postmortem added 2026-05-23)
 
@@ -91,7 +101,7 @@ See `PROCESS/00_session_inventory.md` for the full table. In scope: `a70251a5-�
 
 | # | Phase | Status | Artifact |
 |---|---|---|---|
-| A | Scaffold `PROCESS/` + copy plan | ✅ | `PROCESS/README.md`, `00_session_inventory.md`, `99_voice_cheatsheet.md`, `PLANS/medium-article.md` |
+| A | Scaffold `PROCESS/` + copy plan | ✅ | `PROCESS/README.md`, `00_session_inventory.md`, `99_voice_cheatsheet.md`, `PLANS/articles/medium-article.md` |
 | B | Main-session outline | ✅ | `PROCESS/a70251a5/outline.jsonl` (5006 rows) + `outline_digest.md` + `_build_outline.py` |
 | C | Phase boundary detection | ✅ | `PROCESS/a70251a5/phases.md` — 25 → **21 phases** after user-directed fold (2026-04-19); Phase 02 SKIPPED (off-topic); Phases 19–23 merged into `keyboard_and_search_navigation` |
 | D | Per-phase extractions | ✅ | **20 of 20 done.** Phase 02 skipped (off-topic) per user directive. |
@@ -141,7 +151,7 @@ Each subagent reads `PROCESS/a70251a5/outline.jsonl` + `phases.md`, pulls specif
 
 ---
 
-You are a Phase D extractor for the Medium-article pipeline. Plan: /Users/rpeck/Source/claude-desktop-message-exporter/PLANS/medium-article.md. Template: PROCESS/a70251a5/phase_01_intent_and_planning.md.
+You are a Phase D extractor for the Medium-article pipeline. Plan: /Users/rpeck/Source/claude-desktop-message-exporter/PLANS/articles/medium-article.md. Template: PROCESS/a70251a5/phase_01_intent_and_planning.md.
 
 ## Job
 
@@ -176,7 +186,7 @@ Match phase_01_intent_and_planning.md: H1 + session/positions/dates header, then
 - `PROCESS/README.md` — citation format and directory map.
 - `PROCESS/00_session_inventory.md` — session table + skip-note.
 - `PROCESS/99_voice_cheatsheet.md` — voice notes for drafting subagents.
-- `PLANS/medium-article.md` — this file.
+- `PLANS/articles/medium-article.md` — this file.
 
 ### B — Main-session outline (one subagent)
 `get_session_outline("a70251a5-…")` → `PROCESS/a70251a5/outline.jsonl` (one row per message) + `outline_digest.md` (every 100th human message rendered). Returns counts + date markers.

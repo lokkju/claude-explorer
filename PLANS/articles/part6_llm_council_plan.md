@@ -130,6 +130,22 @@ These are the headline. ~300 words each. Each follows the shape: **Trigger → W
 - **Outcome:** 806 → 299 LOC; six new modules under `blocks/`; 17 new contract tests pinning the public render contract via data-attributes (not byte-for-byte snapshots).
 - **Beat for the article:** the article should show the actual Decision Record fragment with the "Engineer Round-2 downgrade" reasoning. That's the council's audit trail in action.
 
+#### 4.6 Demonstrated-focus arbitration (ref-only vs ref + state mirror)
+
+- **Commit:** `0ecdab5` (2026-05-26 council debate; Part 2 prose landed in `5e26b3cb`).
+- **Catch:** after Pass A toggle flips or auto-promote of match 0, the viewer yanked off the user's recent click. The user re-reported the same symptom after the first fix shipped, which falsified the initial diagnosis and forced a re-instrument rather than a second patch in the same layer.
+- **Who:** gpt-5.2 framed the two implementation paths: `demonstratedFocusUuidRef` alone versus `ref + state mirror for React subscription`. Opus 4.7 challenged the state-mirror cost (subscription churn on every focus flip across a list of N rows; collides with the project's P0 rule against `useContext` of churning providers in list-rendered components).
+- **Outcome:** ref-only won, paired with a four-gate auto-promote effect and three explicit clear-signals. Clicks and manual scrolls demonstrate focus; subsequent state changes respect it; explicit nav gestures (Cmd+G, Cmd+Shift+G, Enter on a search hit, clicking a search card, clicking a bookmark) move the viewer because they ARE explicit signals. Documented in Part 2 §"Demonstrated focus and the click-protected viewer".
+- **Beat for the article:** the council frames the trade-off as "subscription cost vs. readability of the four-gate logic", and the ref-only path wins on both axes once you read the four gates aloud. A single drafter would likely have reached for the state mirror because "React state is how React tells React things changed"; the council catches the case where the change does not need to propagate through React's reconciliation at all. Show the four gates and the three clear-signals as a small table; that table IS the spec the implementation has to honor.
+
+#### 4.7 Watcher log-hygiene dedup (light touch)
+
+- **Commit:** `53c2f43` (supervised CC image-cache watcher); Part 2 prose landed in `5e26b3cb`.
+- **Catch:** the watcher's missing-path branch emitted a WARNING per walk per missing path, which produced 28+ duplicate log records during the user's 2026-05-26 incident before any real signal surfaced. The user's supervised-job log scrolled past the actionable line because the same line repeated every walk.
+- **Who:** Opus 4.7 caught the dedup opportunity on a code-quality pass. The watcher was working as designed; the log was screaming.
+- **Outcome:** a per-walk `seen_missing` set + level switch from repeated WARNING to a single INFO line once per walk eliminated the duplicates. The first occurrence in a session still logs at WARNING; subsequent walks log at INFO; the dedup set resets per process restart so a missing path that comes back and goes away again still surfaces.
+- **Beat for the article:** the dedup is a small fix, and it lives in a class of patterns the council catches consistently: the "if my own log is screaming, what was I about to add?" check. Log-spam and silent-swallow are the two failure modes of observability and they burn user trust differently: spam buries the signal, silence denies the signal. The council's role here triages which log-level decision matters (WARNING for actionable, INFO for routine; never repeat the same line within a walk). A single drafter pattern-matches on "should this be WARN or INFO" and stops there; the council additionally asks "and how often does this fire in the loop that wraps it?", which is the question that catches log-spam before it ships.
+
 ### 5. Two Receipts from the Original Build (~600 words)
 
 Reuse the `PLANS/future_articles/llm_council.md` Phase 19 and Phase 20 material with light updates.
@@ -269,7 +285,7 @@ Recoverable from git:
 
 ## Cross-References
 
-- `PLANS/medium-article.md` — series-level living plan (Part 6 added 2026-05-22)
+- `PLANS/articles/medium-article.md` — series-level living plan (Part 6 added 2026-05-22)
 - `PLANS/future_articles/llm_council.md` — historical seed doc; this plan supersedes it for the in-series version
 - `PLANS/articles/part2_revision_plan.md` — pattern for detailed per-part planning docs
 - `PLANS/articles/part2_codereview_audit.md` — sibling audit confirming Part 2 doesn't need updates from the same code-review session
