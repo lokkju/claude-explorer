@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
   type ReactNode,
 } from 'react'
 import { useConversations, useSearch } from '@/hooks/useConversations'
@@ -120,6 +121,22 @@ export function narrowSearchResults(
 export type ActiveMatchSource = 'auto' | 'user'
 
 /**
+ * Bug 3 (2026-05-26) — sentinel UUID stored in the demonstrated-focus
+ * ref when the user manually wheel/touch-scrolled the conversation pane
+ * without clicking a specific bubble. The recenter priority chain in
+ * `ConversationPage.markPendingRecenter` reads the ref's UUID and feeds
+ * it to `scrollBubbleIntoView`; when the UUID is this sentinel, the DOM
+ * lookup returns null (no message has this UUID) and the recenter
+ * effect early-returns, leaving the viewer wherever the user scrolled
+ * to. That is the spec'd "manual scroll means preserve scroll position"
+ * behavior.
+ *
+ * Real message UUIDs are 36-char hex strings; collision with this
+ * literal is effectively impossible.
+ */
+export const MANUAL_SCROLL_SENTINEL_UUID = '__manual_scroll__'
+
+/**
  * Shallow-structural equality on the `scope` object emitted from
  * `SearchPanelProvider`. Returns true iff both sides are undefined,
  * OR both are objects with the same conversationUuid + projectPath +
@@ -219,6 +236,25 @@ interface SearchPanelContextType {
   // the panel was already open.
   focusRequestSeq: number
   requestFocus: () => void
+  /**
+   * Bug 3 (2026-05-26) — demonstrated-focus latch. Mutated synchronously
+   * via `markDemonstratedFocus` and `clearDemonstratedFocus`. The
+   * auto-promote effect reads this ref's current value (not via the
+   * context value) so wheel/touch bursts do NOT churn the Provider
+   * identity. ConversationPage's `markPendingRecenter` priority chain
+   * also reads the ref directly, for synchronous click -> toggle
+   * sequencing.
+   *
+   * Values:
+   *   - `null` — no demonstrated focus; auto-promote is armed.
+   *   - real UUID — user clicked that bubble; recenter targets it.
+   *   - `MANUAL_SCROLL_SENTINEL_UUID` — user wheel/touch-scrolled;
+   *     recenter early-returns (sentinel matches no DOM element), so
+   *     viewer stays where the user scrolled to.
+   */
+  demonstratedFocusUuidRef: MutableRefObject<string | null>
+  markDemonstratedFocus: (uuid: string | null) => void
+  clearDemonstratedFocus: () => void
 }
 
 const SearchPanelContext = createContext<SearchPanelContextType | null>(null)
@@ -284,6 +320,25 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   )
   const [query, setQueryState] = useState<string>('')
   const [activeMatchIndex, setActiveMatchIndexState] = useState<number>(-1)
+
+  // Bug 3 (2026-05-26) — demonstrated-focus latch. See type-level docs
+  // on `demonstratedFocusUuidRef` for the contract. Ref-only (no state
+  // mirror): wheel events fire many times per trackpad burst; a state
+  // mirror would invalidate the Provider value identity on every fire
+  // and re-render every `useSearchPanel()` consumer. The auto-promote
+  // effect re-runs whenever `activeMatchIndex` flips to -1 (the reset
+  // effect's job on every queryKey change), which is the exact moment
+  // the gate matters; reading `.current` inline at that re-fire is
+  // sufficient. Council 2026-05-26 (gpt-5.2 thinking_mode=high).
+  const demonstratedFocusUuidRef = useRef<string | null>(null)
+
+  const markDemonstratedFocus = useCallback((uuid: string | null) => {
+    demonstratedFocusUuidRef.current = uuid
+  }, [])
+
+  const clearDemonstratedFocus = useCallback(() => {
+    demonstratedFocusUuidRef.current = null
+  }, [])
   // Provenance flag for the most recent activeMatchIndex change. See
   // ActiveMatchSource docs above. Default `'user'` is a safe initial
   // value: when the index is -1 there's no downstream navigation, so
@@ -551,18 +606,43 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   //   * activeMatchIndex === -1 — auto-promote ONCE per stable-query
   //     cycle; never overwrite the user's Cmd+G navigation when results
   //     refresh later (e.g., a new conversation arrives).
+  //   * demonstratedFocusUuidRef.current === null — Bug 3 (2026-05-26)
+  //     gate. When the user clicked a bubble or wheel/touch-scrolled
+  //     the conv pane BEFORE the refetch landed, the ref is non-null
+  //     and the auto-promote is suppressed. The user must explicitly
+  //     navigate (Cmd+G, Enter, card click, or typing a new query) to
+  //     re-arm. The ref is intentionally NOT in the dep list — refs
+  //     don't subscribe. The effect re-fires when `activeMatchIndex`
+  //     flips to -1 (the reset effect's job on every queryKey change),
+  //     which is the moment the gate is consulted.
   //
   // The existing SearchPanel.tsx effect picks up this index change AND
   // the source flag, and calls navigateToMatch with `focus: false`
   // for source='auto' so DOM focus stays in the search input while
   // the conversation pane scrolls + flashes the yellow ring.
   useEffect(() => {
-    if (!isSearching && flatMatches.length > 0 && activeMatchIndex === -1) {
+    if (
+      !isSearching &&
+      flatMatches.length > 0 &&
+      activeMatchIndex === -1 &&
+      demonstratedFocusUuidRef.current === null
+    ) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: "auto-promote first match once per stable-query cycle". Three-gate guard prevents infinite cascade; converting requires restructuring the navigateToMatch downstream effect too. Both setState calls (source + index) batch into a single render in React 18.
       setActiveMatchSourceState('auto')
       setActiveMatchIndexState(0)
     }
   }, [isSearching, flatMatches.length, activeMatchIndex])
+
+  // Bug 3 (2026-05-26) — re-arm auto-promote whenever the user types a
+  // new query. Each new query is a fresh search session; stale "I
+  // clicked a bubble during the LAST search" demonstrated focus must
+  // not bleed across sessions. Distinct from the reset-to-`-1` effect
+  // above: that one fires on ALL queryKey changes (toggle, sort, etc.)
+  // and must NOT clear demonstrated focus on a toggle (the whole point
+  // of the Bug 3 fix).
+  useEffect(() => {
+    demonstratedFocusUuidRef.current = null
+  }, [query])
 
   const open = useCallback(() => {
     setIsOpenPref(true)
@@ -615,6 +695,14 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
 
   const nextMatch = useCallback(() => {
     if (flatMatches.length === 0) return
+    // Bug 3 (2026-05-26) — Cmd+G is an explicit search-nav gesture, NOT
+    // a demonstrated-focus signal. Clear the latch BEFORE the state
+    // update so a subsequent refetch (e.g. the user toggles Show
+    // Compactions immediately after Cmd+G) re-arms auto-promote
+    // correctly. Without this clear, the same toggle that the user
+    // intended to "just narrow my results" would silently suppress
+    // auto-promote forever within the session.
+    demonstratedFocusUuidRef.current = null
     // Cmd+G is always user-initiated; pin source='user' so the
     // downstream effect moves DOM focus to the bubble (Cmd+C path).
     setActiveMatchSourceState('user')
@@ -626,6 +714,9 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
 
   const prevMatch = useCallback(() => {
     if (flatMatches.length === 0) return
+    // Same Bug 3 clear as `nextMatch` — Cmd+Shift+G is the symmetric
+    // explicit nav gesture.
+    demonstratedFocusUuidRef.current = null
     setActiveMatchSourceState('user')
     setActiveMatchIndexState((prev) => {
       if (prev < 0) return flatMatches.length - 1
@@ -710,6 +801,16 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
       setActiveMatchIndex,
       focusRequestSeq,
       requestFocus,
+      // Bug 3 (2026-05-26) — demonstrated-focus latch. Ref identity is
+      // stable across renders (React guarantees `useRef` returns the
+      // SAME object every render), and the callbacks are useCallback
+      // with empty deps, so adding these three fields does NOT
+      // invalidate the value identity except when one of the OTHER
+      // fields above changes. Wheel-burst-triggered mutations of
+      // `.current` do not flip identity.
+      demonstratedFocusUuidRef,
+      markDemonstratedFocus,
+      clearDemonstratedFocus,
     }),
     [
       isOpen, query, contextSize, sortField, sortOrder,
@@ -718,6 +819,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
       open, close, toggle, setQuery, setContextSize, setSortField,
       setSortOrder, nextMatch, prevMatch, setActiveMatchIndex,
       focusRequestSeq, requestFocus,
+      markDemonstratedFocus, clearDemonstratedFocus,
     ],
   )
 

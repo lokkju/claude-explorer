@@ -9,7 +9,10 @@ import { queryKeys } from '@/lib/queryClient'
 import { useConversation } from '@/hooks/useConversations'
 import { useSettings } from '@/contexts/SettingsContext'
 import { useKeyboardNavigation, type MessageInfo, type FocusArea } from '@/contexts/KeyboardNavigationContext'
-import { useSearchPanel } from '@/contexts/SearchPanelContext'
+import {
+  MANUAL_SCROLL_SENTINEL_UUID,
+  useSearchPanel,
+} from '@/contexts/SearchPanelContext'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { MessageBubble } from '@/components/message/MessageBubble'
@@ -66,6 +69,9 @@ export function ConversationPage() {
     query: searchPanelQuery,
     activeMatchIndex,
     flatMatches,
+    demonstratedFocusUuidRef,
+    markDemonstratedFocus,
+    clearDemonstratedFocus,
   } = useSearchPanel()
   // 2026-05-24 search-highlight fix: the active-match UUID is the
   // sidebar's currently-selected match (Cmd+G / card-click / auto-
@@ -281,36 +287,62 @@ export function ConversationPage() {
   // already kept the bubble in place, an unconditional scrollIntoView
   // would cause a visible flicker.
   const pendingRecenterRef = useRef<string | null>(null)
-  const markPendingRecenter = useCallback(() => {
-    const target =
-      activeMatchUuid ?? highlightMessageId ?? getSelectedMessageId()
-    if (target) pendingRecenterRef.current = target
-  }, [activeMatchUuid, highlightMessageId, getSelectedMessageId])
-
+  // Bug 2 (2026-05-26) — the last bubble the user explicitly clicked on
+  // (or the MANUAL_SCROLL_SENTINEL_UUID if the user wheel/touch-
+  // scrolled). Drives the post-toggle recenter target via the priority
+  // chain in `markPendingRecenter`. Without it, a stale `activeMatchUuid`
+  // (pointing at a search hit the user has since clicked AWAY from)
+  // would target an about-to-be-hidden compaction row, leaving the user
+  // wherever the virtualizer's reflow landed.
+  //
+  // Bug 3 (2026-05-26) — moved from a local `useRef` into
+  // `SearchPanelContext` (as `demonstratedFocusUuidRef`) so the
+  // auto-promote effect in the context can also gate on the same
+  // signal: when the user has demonstrated focus (clicked or scrolled),
+  // refetch-driven auto-promote is suppressed. The ref is the SAME
+  // synchronous channel as before; only its declaration moved.
+  //
+  // Cleared on conversation change so a click in conv A doesn't bleed
+  // recenter behavior into conv B. Within a conversation, every click
+  // overwrites; no manual cleanup needed.
   useEffect(() => {
-    const uuid = pendingRecenterRef.current
-    if (!uuid) return
-    pendingRecenterRef.current = null
-    const rafId = requestAnimationFrame(() => {
-      const el =
-        messageRefs.current.get(uuid) ??
-        document.querySelector<HTMLElement>(
-          `[data-message-uuid="${CSS.escape(uuid)}"]`,
-        )
-      if (!el) return // vanished focus target (compact-summary hidden / evicted)
-      const container = scrollAreaRef.current
-      if (!container) return
-      const targetRect = el.getBoundingClientRect()
-      const containerRect = container.getBoundingClientRect()
-      const drift = Math.abs(
-        targetRect.top + targetRect.height / 2 -
-          (containerRect.top + containerRect.height / 2),
-      )
-      if (drift <= 100) return // already pinned by browser scroll-anchoring
-      scrollBubbleIntoView(el, true)
-    })
-    return () => cancelAnimationFrame(rafId)
-  }, [hideCompactMarkers, showToolCalls])
+    clearDemonstratedFocus()
+  }, [uuid, clearDemonstratedFocus])
+  const markPendingRecenter = useCallback(() => {
+    // Priority chain (Bug 2 fix, 2026-05-26):
+    //   1. demonstratedFocusUuidRef — last explicit bubble click OR
+    //      MANUAL_SCROLL_SENTINEL_UUID for a manual wheel/touch
+    //      scroll. Highest priority because it's the user's most-
+    //      recent intent. When the sentinel is set, the recenter
+    //      effect's DOM lookup returns null and the toggle is a
+    //      silent no-op (browser scroll-anchoring preserves the
+    //      user's position).
+    //   2. activeMatchUuid — current search-panel match (Cmd+G /
+    //      card-click / auto-promote).
+    //   3. highlightMessageId — ephemeral ?highlight= URL param.
+    //
+    // CRITICAL: we do NOT fall back to ``getSelectedMessageId()`` here.
+    // The keyboard-selected message defaults to index 0 on
+    // conversation load, which means EVERY conversation has a
+    // selected-id from the moment it mounts — even when the user
+    // never interacted with the conversation pane. Falling back to
+    // that index-0 default would yank the user to the top of the
+    // conversation on every toggle, breaking the "toggle preserves
+    // mid-scroll reading position" contract pinned by
+    // ``toggle-preserves-focus-scroll.spec.ts::NEGATIVE PAIR``.
+    //
+    // The recenter effect downstream is a no-op when target is null
+    // (pendingRecenterRef stays null), so the toggle becomes a pure
+    // visual reflow and the browser's CSS scroll-anchoring keeps the
+    // user roughly where they were.
+    const target =
+      demonstratedFocusUuidRef.current ?? activeMatchUuid ?? highlightMessageId
+    if (target) pendingRecenterRef.current = target
+  }, [demonstratedFocusUuidRef, activeMatchUuid, highlightMessageId])
+
+  // The post-toggle recenter effect was relocated below `visibleMessages`
+  // and `virtualizer` definitions so the refs that read those values can
+  // see them at first render. See `recenterEffect` block further down.
 
   // Task A5 — PDF export spinner toast state.
   // `isExportingPdf` drives the `disabled` attribute on the button (needs
@@ -533,6 +565,77 @@ export function ConversationPage() {
       scrollAreaRef.current?.scrollTo({ top: 0, behavior: 'auto' })
     }
   }, [virtualizer, visibleMessages.length])
+
+  // ─── Post-toggle recenter effect (Bug 2 fix, 2026-05-26) ─────────────
+  // Placed AFTER ``visibleMessages`` + ``virtualizer`` so the ref-mirror
+  // pattern below sees them at first render. Co-located with
+  // ``markPendingRecenter`` upstream (the source-of-truth for the target
+  // UUID) via the ``pendingRecenterRef`` channel. See
+  // ``demonstratedFocusUuidRef`` (in SearchPanelContext) for the full
+  // rationale.
+  //
+  // Reads `visibleMessages` and `virtualizer` via refs so they aren't
+  // useEffect deps — otherwise the effect would re-fire on EVERY render
+  // (visibleMessages changes identity often), defeating the
+  // "fire-once-per-toggle" intent.
+  const visibleMessagesRef = useRef(visibleMessages)
+  visibleMessagesRef.current = visibleMessages
+  const virtualizerRef = useRef(virtualizer)
+  virtualizerRef.current = virtualizer
+  useEffect(() => {
+    const recenterUuid = pendingRecenterRef.current
+    if (!recenterUuid) return
+    pendingRecenterRef.current = null
+    const rafId = requestAnimationFrame(() => {
+      let el =
+        messageRefs.current.get(recenterUuid) ??
+        document.querySelector<HTMLElement>(
+          `[data-message-uuid="${CSS.escape(recenterUuid)}"]`,
+        )
+      // Bug 2 (2026-05-26) follow-up: the target may be outside the
+      // virtualizer's overscan window (the user clicked a bubble at
+      // viewport edge; the toggle's reflow + scroll-anchoring shifted
+      // the viewport so the bubble is now beyond the ±5-row overscan).
+      // Tell the virtualizer to mount it, then re-query the DOM.
+      // Without this, the user-clicked bubble after the compactions
+      // toggle has a non-mounted DOM node → el is null → silent early
+      // return → user stranded wherever the virtualizer's reflow
+      // landed (the Bug 2 symptom).
+      //
+      // Skipped in jsdom (vitest) where the virtualizer isn't used —
+      // the non-virtualized branch renders every row so querySelector
+      // always finds the node.
+      if (!el && !isJsdom) {
+        const visIdx = visibleMessagesRef.current.findIndex(
+          (m) => m.uuid === recenterUuid,
+        )
+        if (visIdx !== -1) {
+          virtualizerRef.current.scrollToIndex(visIdx, { align: 'center' })
+          // Re-query after the mount commits. measureElement may
+          // still adjust the row's height after this, but the
+          // scrollBubbleIntoView post-settle correction chain absorbs
+          // that drift (250 / 750 / 1250 ms ticks).
+          el =
+            messageRefs.current.get(recenterUuid) ??
+            document.querySelector<HTMLElement>(
+              `[data-message-uuid="${CSS.escape(recenterUuid)}"]`,
+            )
+        }
+      }
+      if (!el) return // vanished focus target (filtered out)
+      const container = scrollAreaRef.current
+      if (!container) return
+      const targetRect = el.getBoundingClientRect()
+      const containerRect = container.getBoundingClientRect()
+      const drift = Math.abs(
+        targetRect.top + targetRect.height / 2 -
+          (containerRect.top + containerRect.height / 2),
+      )
+      if (drift <= 100) return // already pinned by browser scroll-anchoring
+      scrollBubbleIntoView(el, true)
+    })
+    return () => cancelAnimationFrame(rafId)
+  }, [hideCompactMarkers, showToolCalls, isJsdom])
 
   // Reset message index when a new conversation is opened
   const prevUuidRef = useRef<string | undefined>(undefined)
@@ -1211,6 +1314,20 @@ export function ConversationPage() {
           data-testid="message-stream"
           className="h-full overflow-y-auto p-6"
           onScroll={handleScroll}
+          // Bug 3 (2026-05-26) — manual scroll demonstrates focus, so a
+          // subsequent search refetch (e.g. Show Compactions toggle)
+          // does NOT auto-promote the viewer back to the first match.
+          // Listen to wheel + touchstart (user-initiated) and NOT to
+          // scroll (fires on programmatic scrollIntoView too — would
+          // false-positive on the search-hit landing path). Use Capture
+          // variants so nested scroll regions (CompactMarker's expanded
+          // body, etc.) don't swallow the event before we see it.
+          onWheelCapture={() =>
+            markDemonstratedFocus(MANUAL_SCROLL_SENTINEL_UUID)
+          }
+          onTouchStartCapture={() =>
+            markDemonstratedFocus(MANUAL_SCROLL_SENTINEL_UUID)
+          }
         >
           <div className="mx-auto max-w-3xl">
             <SessionPreludeAffordance
@@ -1243,6 +1360,7 @@ export function ConversationPage() {
                     expandAllTools,
                     messages,
                     setSelectedMessageIndex,
+                    markDemonstratedFocus,
                   }),
                 )}
               </div>
@@ -1308,6 +1426,7 @@ export function ConversationPage() {
                         expandAllTools,
                         messages,
                         setSelectedMessageIndex,
+                        markDemonstratedFocus,
                         unwrapped: true, // suppress the inner ref-wrapper div
                       })}
                     </div>
@@ -1406,6 +1525,15 @@ interface RenderBubbleRowDeps {
   expandAllTools: boolean
   messages: { uuid: string; sender: string }[]
   setSelectedMessageIndex: (i: number) => void
+  /** Bug 2 (2026-05-26) / Bug 3 (2026-05-26): when the user clicks a
+   *  bubble, record the UUID via this callback so the next post-toggle
+   *  recenter (`markPendingRecenter`) targets THIS bubble — not a
+   *  stale `activeMatchUuid`. Lives in `SearchPanelContext` so the
+   *  same signal also gates the auto-promote effect (Bug 3 suppression
+   *  of refetch-driven yank-back). Synchronous (ref-backed) write
+   *  inside the callback dodges the React batching race the alternative
+   *  state-based fix would have introduced. */
+  markDemonstratedFocus: (uuid: string | null) => void
   unwrapped?: boolean
 }
 
@@ -1426,6 +1554,7 @@ function renderBubbleRow(message: Message, deps: RenderBubbleRowDeps) {
     expandAllTools,
     messages,
     setSelectedMessageIndex,
+    markDemonstratedFocus,
     unwrapped,
   } = deps
 
@@ -1496,6 +1625,17 @@ function renderBubbleRow(message: Message, deps: RenderBubbleRowDeps) {
   const onClickRow = () => {
     const idx = messages.findIndex((m) => m.uuid === message.uuid)
     if (idx !== -1) setSelectedMessageIndex(idx)
+    // Bug 2 (2026-05-26): record the user's explicit focus target so the
+    // next post-toggle recenter (in ConversationPage's
+    // ``markPendingRecenter``) hits the bubble the user actually
+    // clicked — not the stale ``activeMatchUuid`` from a prior search
+    // hit. Ref-based synchronous write; no React state churn.
+    //
+    // Bug 3 (2026-05-26): same call also gates the auto-promote effect
+    // in `SearchPanelContext` — a subsequent refetch (e.g. Show
+    // Compactions toggle) sees the non-null ref and skips the
+    // yank-back-to-first-match cycle.
+    markDemonstratedFocus(message.uuid)
   }
 
   if (unwrapped) {
