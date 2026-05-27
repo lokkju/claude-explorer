@@ -18,6 +18,19 @@
 
 In the previous installation of this series, we covered the three moving parts that make this project work (capture → fetch → browse / export / query), plus the five reasons you'd actually want a unified local archive in the first place. If you missed that, make sure to go back and read [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) first; Part 1 explains why we have to "capture" a `sessionKey` to download Claude Desktop conversations, and that Claude Code sessions already live on disk under `~/.claude/projects/`.
 
+**Contents**
+
+- [Install and First Run](#install-and-first-run)
+- [The Conversation List (Sidebar)](#the-conversation-list-sidebar)
+- [Reading Messages](#reading-messages)
+- [Searching and Navigating with the Keyboard](#searching-and-navigating-with-the-keyboard)
+- [Inside the Conversation Pane](#inside-the-conversation-pane)
+- [Appearance and Settings](#appearance-and-settings)
+- [Exports (Markdown and PDF)](#exports-markdown-and-pdf)
+- [Your History, On Your Disk](#your-history-on-your-disk)
+- [Coming Up: Another Claude, Querying Yours](#coming-up-another-claude-querying-yours)
+- [Wrapping Up!](#wrapping-up)
+
 ## Install and First Run
 
 `claude-explorer` is a local tool you can get running in just a few minutes: install dependencies, start the server, open it in your browser, and let the UI handle credential capture and the first fetch on its own. We'll leave the MCP server for the next article in the series; it lets you use the same corpus of Claude conversations to have Claude analyze itself.
@@ -37,9 +50,11 @@ which uvx
 # (skip if you only care about Claude Code sessions; they need no capture)
 uvx --from claude-explorer playwright install chromium
 
-# Strongly recommended: install the always-on image-cache watcher
-# (one-time; runs as a launchd / systemd / Task Scheduler job so
-# Claude Code can't quietly rotate your screenshots off disk).
+# Strongly recommended: install the always-on image-cache watcher.
+# One-time; runs as a launchd / systemd / Task Scheduler job. If you
+# skip this, claude-explorer can only protect your screenshots while
+# `serve` is running, and Claude Code rotates its image cache on its
+# own schedule, so any image rotated during downtime is gone.
 uvx claude-explorer install-watcher
 
 # Optional: install the system libraries WeasyPrint needs for PDF export
@@ -88,6 +103,8 @@ To pull in your Claude Desktop history, click the **Refresh** button in the top 
 
 ## The Conversation List (Sidebar)
 
+Install done, first fetch streaming. Open the browser, and the sidebar is the first thing your eye lands on; that's where the tour starts.
+
 The sidebar makes the unified corpus visible: one list containing all three Claude session sources — Claude Desktop conversations, Claude Code sessions, and Claude Cowork sessions (Desktop's "Cowork mode" local agent, whose `audit.jsonl` logs live under `~/Library/Application Support/Claude/local-agent-mode-sessions/`). All three are indexed by the same full-text search and exported by the same Markdown / PDF pipeline. A few affordances make the list usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read! That was my intro to the word "affordance".
 
 <div align="center">
@@ -132,7 +149,7 @@ Before we get to global search and keyboard navigation, let's look at how the vi
 
 ### Tool blocks and slash commands
 
-The viewer hides tool-use and tool-result blocks by default, because tool output can dominate the screen and drown out the conversation. When you want them, toggle them on in the conversation toolbar. The default is the right one for *reading* a session ("what happened, in plain English?"); the toggle is there for *auditing* one ("what did the assistant actually run, and what did it get back?"). Image attachments are deliberately *not* gated by that toggle; they're primary content.
+The viewer hides tool-use and tool-result blocks by default, because tool output can dominate the screen and drown out the conversation. When you want them, tick the **Show Tools** checkbox in the conversation toolbar. The default is the right one for *reading* a session ("what happened, in plain English?"); the checkbox is there for *auditing* one ("what did the assistant actually run, and what did it get back?"). Image attachments are deliberately *not* gated by that checkbox; they're primary content.
 
 ![[Pasted image 20260515191033.png]]
 
@@ -140,7 +157,9 @@ Slash commands get the same careful treatment. When you ran `/coding "Help me tr
 
 When a session opens with one or more `/exit` markers before any real user message (it happens more than you'd expect on long-running sessions resumed from a different terminal), the leading markers fold into a single *"Session prelude: N earlier /exit runs (show)"* control at the top, collapsed by default.
 
-When the **Tools** toggle is on there's an *"Expand / Collapse All Tools"* control that forces every tool block in the conversation open or closed at once. This saves a lot of time when you're reviewing a session with dozens of tool calls.
+When the **Show Tools** checkbox is on there's an *"Expand / Collapse All Tools"* control that forces every tool block in the conversation open or closed at once. This saves a lot of time when you're reviewing a session with dozens of tool calls.
+
+A sibling **Show Compactions** checkbox hides or shows `/compact` summary blocks the same way. Claude Code emits a compaction whenever the running context is summarized to free room for new turns; the checkbox acts as a view-filter, so the underlying conversation stays untouched and toggling it back on returns the summary card immediately.
 
 ## Searching and Navigating with the Keyboard
 
@@ -155,6 +174,8 @@ One quick note on key labels: I write shortcuts with the `⌘` glyph because I'm
 All of the search functions tie into a small set of keyboard shortcuts, each covered in its own section below. Search covers every message in the archive, including tool calls and tool results, and composes with whatever scope the sidebar is showing.
 
 With three panes, keyboard shortcuts need an explicit focus rule. Exactly one of `{sidebar, detail}` holds focus at any moment, and the keys apply to that pane only. Click anywhere in a pane to focus it; press `Enter` to descend from sidebar to detail, and `Esc` to pop back to the sidebar.
+
+A second, finer rule applies inside the detail pane, and it's the kind of thing you only notice when it's missing. Modern apps love to scroll themselves around in the background: a refetch lands, a checkbox flip rebuilds the list, a polling timer fires, and suddenly you've lost the bubble you were reading. The viewer tracks where you're reading and stays put unless you tell it otherwise. Click a bubble or scroll the conversation by hand, and that position stays. Search-result card clicks, bookmark clicks, `Enter` on a highlighted hit, and `⌘+G` / `⌘+Shift+G` explicitly move the viewer; everything else leaves you where you are.
 
 ### Emacs by default, Vim for heathens 😉
 
@@ -176,7 +197,7 @@ One last bit of polish in the sidebar: when you press `Ctrl+P` or `Ctrl+N` to st
 
 `⌘+K` opens the search panel and runs the query; the shortcut has become the standard across modern apps for *"I want a fast, global search"*. The pane slides in from the right so we can see the conversations list and the search hits list at the same time. The pane carries two tabs (Search and Bookmarks); `⌘+K` always lands on Search, and clicking the Bookmarks tab swaps the list view to your saved-message list (more on bookmarks in the conversation-pane section). Each search hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text.
 
-Once results are in, the panel header carries a small inline "N of M matches" counter so you can see your position at a glance. `⌘+G` jumps to the next match and `⌘+Shift+G` jumps to the previous one. `⌘+G` works across the whole result set, jumping between conversations as naturally as between matches in a single thread, so you can treat a result set like a playlist. If you prefer the mouse, clicking a hit loads the corresponding conversation and scrolls you precisely to the matching message.
+Once results are in, the panel header carries a small inline "N of M matches" counter so you can see your position at a glance. If the total reads as `1000+`, you've hit the per-query cap; refine the query to narrow the results and see the rest. `⌘+G` jumps to the next match and `⌘+Shift+G` jumps to the previous one. `⌘+G` works across the whole result set, jumping between conversations as naturally as between matches in a single thread, so you can treat a result set like a playlist. If you prefer the mouse, clicking a hit loads the corresponding conversation and scrolls you precisely to the matching message.
 
 #### What gets searched
 
@@ -199,13 +220,15 @@ Both modes highlight every matched token (or phrase) in the snippet, so you can 
 
 #### Scope composition
 
-Both search surfaces (the title-search input at the top of the left sidebar and the right-pane full-text search) honor whatever scope the sidebar is currently showing: the source dropdown, the workspace dropdown for Claude Code projects, and the active named filter. Results also respect the **Tools** toggle, so a hit you couldn't see in the viewer never shows up in the result list either. The mental model is "the sidebar is the lens; search asks questions through it." Flip a filter off and the previously-hidden matches re-appear without you re-typing the query.
+Both search surfaces (the title-search input at the top of the left sidebar and the right-pane full-text search) honor whatever scope the sidebar is currently showing: the source dropdown, the workspace dropdown for Claude Code projects, and the active named filter. Results also respect both header checkboxes; turn **Show Tools** off and hits that live inside a hidden tool block disappear from the list, and turn **Show Compactions** off and hits that live inside a hidden `/compact` summary disappear the same way. The mental model is "the sidebar is the lens; search asks questions through it." Flip a filter off and the previously-hidden matches re-appear without you re-typing the query.
 
 #### Scoping search to a conversation or project (Pin)
 
 Search defaults to global, but there's a complementary mode for when you've drilled into a specific session: *"search this conversation only"* (or *"this project only"*). That's a **pin**. There's a small `Search scope` button next to the conversation title with two entries: `Pin this conversation` and (when applicable) `Pin this project`. Click one and the search panel sprouts a small rounded scope tag (`In: <Conversation Title>`), and the sidebar dims any rows that fall outside the scope. The pin is sticky and survives a full page reload because it's encoded in the URL, which makes it shareable too. It clears when you click the explicit unpin control or type in the sidebar's title-search box. `⌘+G` honors the scope and wraps within it.
 
 ## Inside the Conversation Pane
+
+Now that we can find a conversation and step through it from the keyboard, the next stop is the detail pane itself: how it renders messages, what the affordances are, and what gets carried through to copy and export.
 
 When you select a conversation in the sidebar (and hit `Enter`, because loading is explicit), the detail pane renders the full session as a sequence of message bubbles.
 
@@ -225,7 +248,7 @@ Click any thumbnail and a full-screen lightbox opens; arrow keys move between im
 
 ### Image caching (Desktop and Claude Code)
 
-Images live in two places depending on which Claude they came from. Claude Desktop attachments come from the `claude.ai` API with the conversation fetch. Claude Code stores its image-cache files locally and **deletes them on its own rotation schedule**, so a screenshot you pasted last month may already be gone by the time you go looking for it. Claude Explorer keeps its own permanent local copy of both; the `install-watcher` you ran during install is what makes that protection always-on, even while the app isn't running.
+Images live in two places depending on which Claude they came from. Claude Desktop attachments come from the `claude.ai` API with the conversation fetch. Claude Code stores its image-cache files locally and **deletes them on its own rotation schedule**, so a screenshot you pasted last month may already be gone by the time you go looking for it. Claude Explorer keeps its own permanent local copy of both; the `install-watcher` you ran during install is what makes that protection always-on, even while the app isn't running. If you skipped that step, the app raises a persistent amber banner at the top of the UI reminding you to run it, because only the supervised watcher stands between you and a lost screenshot.
 
 ### Copy, branches, and scroll-to-match
 
@@ -259,11 +282,11 @@ If the goal is to make your Claude history *yours*, then *"I can read it in the 
 
 Clicking *Markdown* in the conversation header opens a small dialog with three radios: **Inline** (a single `.md` file with images embedded as `data:` URLs), **Bundle CommonMark** (a `.zip` with `conversation.md` plus `images/` and `attachments/` folders, using standard `[name](path)` links), and **Bundle Obsidian** (the same zip layout but with `[[wikilink]]` syntax in `conversation.md` so it drops cleanly into an Obsidian vault). A *"Save as default"* checkbox pre-selects your last pick the next time you open it. Inline is great for pasting a thread into a pull request or a notes app; bundles are the right pick when you want a portable archive that survives without the local server running.
 
-Bundles include every attachment in the conversation. Image attachments land in `images/`; PDFs, text files, and anything else Claude Desktop accepted land in `attachments/`. The Markdown links inside `conversation.md` are rewritten to point at the bundled paths, so the export remains internally consistent. The export honors the same tools toggle as the viewer.
+Bundles include every attachment in the conversation. Image attachments land in `images/`; PDFs, text files, and anything else Claude Desktop accepted land in `attachments/`. The Markdown links inside `conversation.md` are rewritten to point at the bundled paths, so the export remains internally consistent. The export honors both header checkboxes (Show Tools and Show Compactions) the same way the viewer does. Bundles that contain a `/compact` boundary now render the full summary the user sees in the viewer, rather than just the stub trigger line; the export captures what the user was reading.
 
 ### PDF export (WeasyPrint)
 
-WeasyPrint handles PDF export. It needs a few system libraries (`pango`, `cairo`, `libffi`); if you ran the optional `brew install` line up in the install section, you're set. You click export, you get a PDF of the conversation, and whether or not the tool calls appear depends on the same toggle. PDF is the thing you can stick in an archive folder, attach to a ticket, or keep as *"this is exactly what we saw at the time."*
+WeasyPrint handles PDF export. It needs a few system libraries (`pango`, `cairo`, `libffi`); if you ran the optional `brew install` line up in the install section, you're set. You click export, you get a PDF of the conversation, and the PDF inherits the same two header checkboxes (Show Tools and Show Compactions) the Markdown export does. PDF is the thing you can stick in an archive folder, attach to a ticket, or keep as *"this is exactly what we saw at the time."*
 
 ## Your History, On Your Disk
 
@@ -279,7 +302,14 @@ The session-transcript retention is controlled by the `cleanupPeriodDays` settin
 
 I learned about that setting the hard way: Claude Code deleted a batch of sessions out from under me one morning, and I had to restore them from Time Machine. Add the setting before you start trusting your local archive.
 
-If you're on a Mac and you've already been bitten, `utils/restore-deleted-sessions-and-images.sh` in the repo will pull both the missing session JSONLs and the image-cache PNGs back out of a Time Machine disk. It walks snapshots newest-first, restores anything that's gone from `~/.claude/projects/` and `~/.claude/image-cache/`, refuses to overwrite files that still exist, and supports `--dry-run` so you can see the plan before anything moves.
+If you're on a Mac and you've already been bitten, `utils/restore-deleted-sessions-and-images.sh` in the repo will pull missing session JSONLs and image-cache PNGs back out of a Time Machine disk. The one-liner `sudo ./utils/restore-deleted-sessions-and-images.sh` is enough on a typical setup; the script does the rest. What it covers:
+
+- Restores from all three locations: Claude Code sessions, the image cache, and (newly) the Cowork local-agent-mode-sessions tree.
+- Auto-detects the Time Machine disk via `tmutil latestbackup`, so you don't need to pass `--tm-disk` by hand.
+- Mounts only the Time Machine snapshots it actually needs, on demand.
+- Aborts immediately if you forgot `sudo`, rather than wasting 30 seconds before failing.
+- Supports `--dry-run` (preview the plan before anything moves) and `--continue-on-mount-failure` (don't abort the whole walk if one snapshot can't be mounted).
+- Refuses to overwrite files that still exist on disk.
 
 Claude Explorer gives you a single archive you can read and search locally, without remembering which interface holds which half of your history or whether the bit you want has already aged out. The long sessions you almost remember, the ones that taught you something real, stop being ephemeral. You can find them again, quote them, reuse them, and hand them to your future self, who will actually be able to read them.
 
