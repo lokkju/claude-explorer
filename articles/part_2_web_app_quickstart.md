@@ -11,7 +11,7 @@
 
 New here? Start with [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) for what this project is and why you'd want it. For the full product tour (named filters, branches, bookmarks, themes, Time Machine recovery), read the [user guide](part_2_web_app_userdoc.md); for the internals (search index, image-cache architecture, settings persistence), read the [deep-dive](part_2_web_app.md).
 
-![[Pasted image 20260527130701.png]]
+![Claude Explorer's three-pane web UI: the Conversation List, the Conversation Pane, and the Search Pane](Attachments/Pasted%20image%2020260527130701.png)
 
 ## Install
 
@@ -25,10 +25,15 @@ uvx --from claude-explorer playwright install chromium
 # Strongly recommended: the always-on image-cache watcher, so Claude Code
 # can't rotate your pasted screenshots off disk while the app is closed.
 uvx claude-explorer install-watcher
+```
 
+```
 # Optional, for PDF export on macOS (Linux/Windows: see the user guide)
 brew install pango cairo libffi
+```
 
+## Run
+```
 # Run it (this blocks; leave it running)
 uvx claude-explorer serve
 ```
@@ -39,18 +44,27 @@ Open `http://localhost:8765`. Your Claude Code sessions show up right away; the 
 
 Click **Refresh** at the top of the Conversation List, or press **`⌘+R`**. The first time, the app opens a small browser window to capture your `claude.ai` credentials, saves them locally, then fetches your conversations and streams progress in a corner popup. Later Refreshes reuse the saved credentials and re-capture only when they expire.
 
+## The Conversation List
+
+The left pane shows your whole archive in one place: Claude Desktop, Claude Code, and Claude Cowork sessions, interleaved. A few controls keep it manageable:
+
+- **Source dropdown:** `All Conversations | Claude Desktop | Claude Code | Claude Cowork` narrows the list (and every search) to one source.
+- **Project grouping:** Claude Code sessions group under the repo they ran in, so you can scan "everything I did in `foo`" at once.
+- **Starred** sessions (you star them in Claude Desktop) gather at the top of the list, so the ones you return to stay close.
+- **Named filters:** a small picker above the list saves reusable title-pattern filters for when things get noisy. Worth a few minutes of play once your archive grows; the [user guide](part_2_web_app_userdoc.md) has the full story.
+
 ## Find anything
 
-`claude-explorer` puts three panes on screen: the **Conversation List** on the left, the **Conversation Pane** in the center, and a **Search Pane** that slides in on **`⌘+K`**. One search covers every message across all three sources (Claude Desktop, Claude Code, Claude Cowork), including tool calls, tool results, and `/compact` summaries, and stays sub-second even on archives in the thousands.
+`claude-explorer` puts three panes on screen: the **Conversation List** on the left, the **Conversation Pane** in the center, and a **Search Pane** that slides in on **`⌘+K`**. One search covers every message across all three sources, including tool calls, tool results, and `/compact` summaries, and stays sub-second even on archives in the thousands.
 
 - **`⌘+K`** opens search and runs the query. Unquoted words (`comprehensive medium`) match in any order; wrap the query in quotes (`"comprehensive medium"`) to match that exact phrase.
 - **`⌘+G`** / **`⌘+Shift+G`** step to the next / previous match, jumping across conversations as easily as within one.
-- Press **`Enter`** on a hit to focus that message in the Conversation Pane; **`⌘+C`** copies it.
-- The **source dropdown**, your saved **named filters**, and the **Show Tools** / **Show Compactions** checkboxes all scope the search, so you never get a hit you can't see in the viewer.
+- Press **`Enter`** on a hit to focus that message in the Conversation Pane; **`⌘+C`** copies it; **`Esc`** takes you back to the list.
+- **Search honors** the scope you've already set: the Conversation List's source dropdown and active filter, plus the **Show Tools** / **Show Compactions** checkboxes. So each control you apply makes the search more targeted.
 
 ## Keyboard cheat sheet
 
-The app ships Emacs-style bindings by default; you can switch to Vim with one click on the Settings page.
+The app ships Emacs-style bindings by default; you can switch to Vim with one click on the Settings page. The **`?`** key will pop up a guide to all the keyboard shortcuts. Here's a preview:
 
 | Action | Key |
 |---|---|
@@ -71,8 +85,8 @@ On Windows and Linux, press **`Ctrl`** wherever this says **`⌘`**, and **`Alt`
 
 ## Read, export, keep
 
-- **Read.** The viewer hides tool blocks and `/compact` summaries by default so the conversation reads cleanly. Tick **Show Tools** or **Show Compactions** in the toolbar to bring them back. Click any image for a full-screen lightbox.
-- **Export.** Use **Copy as Markdown** in the conversation header for the clipboard, or export a whole conversation to Markdown (a single file or a zipped bundle with its images) or PDF. Every export honors the same two checkboxes the viewer does.
+- **Read.** The viewer hides tool blocks and `/compact` summaries by default so the conversation reads cleanly. Enable **Show Tools** or **Show Compactions** in the toolbar to bring them back. Click any image for a full-screen lightbox.
+- **Export.** Use **Copy as Markdown** in the conversation header for the clipboard, or export a whole conversation to Markdown (a single file or a zipped bundle with its images) or PDF. Like search, every export honors your **Show Tools** / **Show Compactions** choices, so the saved file matches what you see in the viewer.
 - **Keep.** Claude Code deletes session transcripts older than 30 days by default. Raise the limit once so you stop losing history:
 
 ```bash
