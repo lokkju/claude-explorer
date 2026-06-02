@@ -13,8 +13,8 @@
 //
 // NO APP CODE was read while writing this test.
 
-import { test, expect } from './fixtures'
-import { makeSummary } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
+import { makeSummary, withNetRetry } from './fixtures'
 
 const conversations = [makeSummary({ uuid: 'c-1', name: 'Foo' }), makeSummary({ uuid: 'c-2', name: 'Bar' })]
 
@@ -66,7 +66,7 @@ test.describe('Manage Filters modal — group editor', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/MyGroup/).first().click()
 
@@ -111,7 +111,7 @@ test.describe('Manage Filters modal — group editor', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/GroupWithMember/).first().click()
 
@@ -149,7 +149,7 @@ test.describe('Manage Filters modal — group editor', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/SelfExclusionGroup/).first().click()
 
@@ -191,7 +191,7 @@ test.describe('Manage Filters modal — group editor', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/GroupContainsDisabled/).first().click()
 
@@ -231,7 +231,7 @@ test.describe('Manage Filters modal — group editor', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/SummaryGroup/).first().click()
 
@@ -273,7 +273,7 @@ test.describe('Manage Filters modal — group editor', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
 
     const deletes = modal.getByRole('button', { name: /^delete/i })

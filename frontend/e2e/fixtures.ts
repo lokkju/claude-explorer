@@ -225,6 +225,46 @@ function synthesizeTree(detail: ConversationDetail): ConversationTree {
   }
 }
 
+/**
+ * Wrap any Playwright navigation action (`page.reload`, `page.goto`,
+ * etc.) so it tolerates Tailscale-induced `net::ERR_NETWORK_CHANGED`
+ * from Chromium. macOS flips the routing table when Tailscale
+ * re-associates, WiFi roams, or a VPN reconnects; a navigation that
+ * happens to land in that millisecond window dies with the network-
+ * changed error even though the localhost dev server is still up.
+ * Retrying within a few hundred milliseconds always wins.
+ *
+ * Catches that specific error class only — any other failure (real
+ * test bug, server down, navigation timeout) propagates unchanged.
+ *
+ * Use in place of `page.reload()` / `page.goto(...)` for tests that
+ * exercise navigation early in setup (before the page has settled),
+ * or anywhere a Tailscale-style routing tick has been observed to
+ * intercept a navigation. CI without Tailscale will never trip the
+ * retry path.
+ *
+ * Usage:
+ *   await withNetRetry(() => page.reload())
+ *   await withNetRetry(() => page.goto('/conversations'))
+ */
+export async function withNetRetry<T>(action: () => Promise<T>, maxAttempts = 4): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await action()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (!message.includes('net::ERR_NETWORK_CHANGED')) {
+        throw err
+      }
+      lastError = err
+      // Tiny backoff so the next OS routing tick lands first.
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+  throw lastError
+}
+
 export const test = base.extend<Fixtures>({
   /**
    * Grant clipboard permissions for every spec so Cmd+C tests pass headless.
@@ -626,7 +666,6 @@ export const test = base.extend<Fixtures>({
         if (type === 'error') capture.errors.push(text)
         else if (type === 'warning') capture.warnings.push(text)
       })
-      // eslint-disable-next-line react-hooks/rules-of-hooks -- safe: Playwright fixture API `use(value)`, not React.use().
       await use(capture)
       // Assert AFTER the test body completes. Both arrays empty → test
       // truly passed. Either populated → test was misleading-green per

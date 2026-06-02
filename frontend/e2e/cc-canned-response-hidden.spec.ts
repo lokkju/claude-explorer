@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 
 /**
  * Case 3 — `/exit` + canned `"No response requested."` fold (V1 polish
@@ -111,7 +111,7 @@ test.describe('CC Case 3 — canned response absorbed into /exit marker', () => 
       details: { [FOLD_UUID]: postFoldDetail },
     })
 
-    await page.goto(`/conversations/${FOLD_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${FOLD_UUID}`))
 
     // Settle: message stream + marker bubble rendered.
     await expect(page.getByTestId('message-stream')).toBeVisible()
@@ -218,7 +218,7 @@ test.describe('CC Case 3 — canned response absorbed into /exit marker', () => 
       details: { [counterUuid]: counterDetail },
     })
 
-    await page.goto(`/conversations/${counterUuid}`)
+    await withNetRetry(() => page.goto(`/conversations/${counterUuid}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
 
     // Settle: marker rendered.

@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, withNetRetry } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
 
 /**
@@ -146,7 +146,7 @@ test.describe('Keyboard — Cmd+G match navigation (B10, B12)', () => {
     })
     await mockSearch(page, searchResultsWithinC1)
 
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
 
     // Open SearchPanel and type query.
     await page.locator('main').click()
@@ -224,7 +224,7 @@ test.describe('Keyboard — Cmd+G crosses conversation boundaries (B11)', () => 
       },
     ])
 
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     await page.locator('main').click()
@@ -253,7 +253,7 @@ test.describe('Keyboard — u/a/U/A role-based message jump (B13)', () => {
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
 
     // Wait for the conversation to render.
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
@@ -289,9 +289,9 @@ test.describe('Keyboard — Emacs paging keys (B14, article-corrected)', () => {
   test.beforeEach(async ({ page }) => {
     // Default mode is Emacs. Ensure localStorage isn't holding "vim" from
     // a previous test run.
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.evaluate(() => localStorage.setItem('keyboardMode', JSON.stringify('emacs')))
-    await page.reload()
+    await withNetRetry(() => page.reload())
   })
 
   test('Ctrl+N / Ctrl+P move within detail; Alt+N / Alt+P page; Cmd+F toggles SearchPanel', async ({ page, mockBackend }) => {
@@ -299,7 +299,7 @@ test.describe('Keyboard — Emacs paging keys (B14, article-corrected)', () => {
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     await page.locator('[data-message-uuid="c1-m1"]').click()
@@ -341,7 +341,7 @@ test.describe('Keyboard — Emacs paging keys (B14, article-corrected)', () => {
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     const searchAside = page.locator('aside[aria-label="Search panel"]')
@@ -369,9 +369,9 @@ test.describe('Keyboard — Emacs paging keys (B14, article-corrected)', () => {
 
 test.describe('Keyboard — Vim navigation (B15, article-corrected)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.evaluate(() => localStorage.setItem('keyboardMode', JSON.stringify('vim')))
-    await page.reload()
+    await withNetRetry(() => page.reload())
   })
 
   test('j/k move; g/G jump first/last; / focuses sidebar search', async ({ page, mockBackend }) => {
@@ -380,7 +380,7 @@ test.describe('Keyboard — Vim navigation (B15, article-corrected)', () => {
       details: { [C1]: c1Detail, [C2]: c2Detail },
     })
 
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
     await page.locator('[data-message-uuid="c1-m1"]').click()
 
@@ -411,7 +411,7 @@ test.describe('Keyboard — Cmd+C copies focused message (B16)', () => {
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     // Click a specific message to focus the detail pane and select it.
@@ -443,7 +443,7 @@ test.describe('Keyboard — HintState when sidebar selection differs (B17)', () 
       details: { [C1]: c1Detail, [C2]: c2Detail },
     })
 
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     // Wait for c1 detail to load (a message bubble visible is enough).
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
@@ -466,7 +466,7 @@ test.describe('Keyboard — data-allow-shortcuts (B18)', () => {
     })
     await mockSearch(page, searchResultsWithinC1)
 
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
 
     // Open the SearchPanel and put focus into its input.
     await page.locator('main').click()

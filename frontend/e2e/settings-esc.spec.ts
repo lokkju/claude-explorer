@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 
 /**
  * Build-8 #8: pressing Escape on the Settings page navigates back.
@@ -6,9 +6,9 @@ import { test, expect } from './fixtures'
 
 test('Escape on Settings page navigates back to previous route', async ({ page, mockBackend }) => {
   await mockBackend();
-  await page.goto('/');
+  await withNetRetry(() => page.goto('/'));
 
-  await page.goto('/settings');
+  await withNetRetry(() => page.goto('/settings'));
   await expect(
     page.getByRole('heading', { name: /Settings/i }).first(),
   ).toBeVisible({ timeout: 5000 });

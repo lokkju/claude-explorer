@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 
 /**
  * M5.5: converted to `./fixtures` `mockBackend`. Without mocked
@@ -25,7 +25,7 @@ test.describe('Toast position must not be occluded by the search panel', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const searchPanel = page.locator('[data-testid="search-panel"], aside[aria-label*="earch"]').first()
     await page.waitForTimeout(300)

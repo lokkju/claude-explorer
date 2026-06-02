@@ -1,4 +1,4 @@
-import { test, expect, Route } from './fixtures';
+import { test, expect, Route, withNetRetry } from './fixtures';
 
 /**
  * Per-bubble tool-block toggle (Build-8 #5).
@@ -74,7 +74,7 @@ test.describe('Per-bubble tool-block toggle', () => {
   });
 
   test('per-bubble chevron toggles data-collapsed on the bubble', async ({ page }) => {
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
 
     // Show tool calls so the chevron is meaningful.
     // 2026-05-25: Tools control converted from Button to <input type="checkbox">
@@ -126,7 +126,7 @@ test.describe('M3: Expand/Collapse All Tools visibility-gated on Tools toggle', 
   test('Expand/Collapse button is hidden when Tools is off, visible when Tools is on', async ({
     page,
   }) => {
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
 
     // Confirm we land in a known state. The default for showToolCalls
     // is false (SettingsContext.tsx:61), so Tools is off and the
@@ -155,7 +155,7 @@ test.describe('M3: Expand/Collapse All Tools visibility-gated on Tools toggle', 
   test('clicking Expand/Collapse forces every tool block open or closed', async ({
     page,
   }) => {
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
 
     // Tools ON so the Expand button + tool blocks render.
     // 2026-05-25: Tools control is now a <input type="checkbox">.

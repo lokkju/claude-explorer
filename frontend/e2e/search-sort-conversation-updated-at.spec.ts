@@ -25,7 +25,7 @@
  * Settle signal: poll card-count + card-title sequence rather than
  * waitForTimeout.
  */
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, withNetRetry } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
 import type { Route } from './fixtures'
 
@@ -197,7 +197,7 @@ test.describe('Search sort — Bug B v2: conversation_updated_at, not max msg', 
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await expect(input).toBeVisible()
@@ -236,7 +236,7 @@ test.describe('Search sort — Bug B v2: conversation_updated_at, not max msg', 
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await expect(input).toBeVisible()

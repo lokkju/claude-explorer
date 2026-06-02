@@ -1,4 +1,4 @@
-import { test, expect, Route } from './fixtures';
+import { test, expect, Route, withNetRetry } from './fixtures';
 
 /**
  * Per-conversation force-refetch action (Build-1 follow-up).
@@ -75,7 +75,7 @@ test.describe('Force re-fetch', () => {
     const calls = { count: 0 };
     await mockBackend(page, calls);
 
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
 
     // The button was renamed to "Re-download this conversation" and later
     // demoted to an icon-only ghost (aria-label preserved).

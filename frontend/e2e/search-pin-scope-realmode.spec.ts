@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -103,7 +103,7 @@ test.describe('Search pin scope chip — real-mode provider tree (P2 2026-05-04)
 
     // Pre-load URL with ?pin=conv:<uuid>. The real SearchPinProvider
     // reads this synchronously via useState(() => readScopeFromUrl()).
-    await page.goto(`/conversations/${PINNED}?pin=conv:${PINNED}`)
+    await withNetRetry(() => page.goto(`/conversations/${PINNED}?pin=conv:${PINNED}`))
 
     // Wait for the conversation page to settle. The pin button is a
     // good proxy because it depends on the same provider tree.
@@ -133,7 +133,7 @@ test.describe('Search pin scope chip — real-mode provider tree (P2 2026-05-04)
     // the narrow size from the first paint.
     await page.setViewportSize({ width: 600, height: 800 })
 
-    await page.goto(`/conversations/${PINNED}?pin=conv:${PINNED}`)
+    await withNetRetry(() => page.goto(`/conversations/${PINNED}?pin=conv:${PINNED}`))
 
     await expect(page.getByTestId('pin-scope-button')).toBeVisible({ timeout: 5000 })
 
@@ -167,7 +167,7 @@ test.describe('Search pin scope chip — real-mode provider tree (P2 2026-05-04)
       localStorage.setItem('rightPaneTab', JSON.stringify('bookmarks'))
     })
 
-    await page.goto(`/conversations/${PINNED}?pin=conv:${PINNED}`)
+    await withNetRetry(() => page.goto(`/conversations/${PINNED}?pin=conv:${PINNED}`))
     await expect(page.getByTestId('pin-scope-button')).toBeVisible({ timeout: 5000 })
 
     const isMac = process.platform === 'darwin'

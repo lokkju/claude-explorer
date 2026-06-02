@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 
 /**
  * D9 — Cowork session-error banner.
@@ -51,7 +51,7 @@ test.describe('Cowork D9 — error banner', () => {
       details: { [ERROR_UUID]: erroredDetail },
     })
 
-    await page.goto(`/conversations/${ERROR_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${ERROR_UUID}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
 
     const banner = page.getByTestId('cowork-error-banner')
@@ -65,7 +65,7 @@ test.describe('Cowork D9 — error banner', () => {
       details: { [CLEAN_UUID]: cleanDetail },
     })
 
-    await page.goto(`/conversations/${CLEAN_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${CLEAN_UUID}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
 
     // Bidirectional: banner explicitly absent.

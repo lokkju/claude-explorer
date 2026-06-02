@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -73,7 +73,7 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
 
     // Wait for the virtualizer to mount at least one bubble (proves the
     // virtualizer is initialized and ResizeObserver is attached — the
@@ -91,16 +91,19 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
       page.getByRole('heading', { name: /settings/i, level: 1 }),
     ).toBeVisible()
 
-    // Pin a pref toggle is visible — confirms the page is fully
-    // mounted, not just transiently showing the header. We pin on
-    // `settings-markdown-bundle-images` (a stable Settings toggle).
-    // The previous pin (`settings-include-compact-content`) was
-    // REMOVED in the 2026-05-24 unified-toggle refactor — the
-    // conversation header's "Show Compactions" checkbox now drives
-    // both viewer + export inclusion, so the Settings duplicate is
-    // gone.
+    // Pin a Settings element to confirm full mount — not just a
+    // transiently-visible header. The Export section's data attribute
+    // is stable across refactors of the underlying radio markup.
+    // History notes:
+    //   - `settings-include-compact-content` was removed in the
+    //     2026-05-24 unified-toggle refactor (the conversation header's
+    //     "Show Compactions" checkbox now drives both viewer + export).
+    //   - `settings-markdown-bundle-images` was removed in the
+    //     2026-05-29 markdown-export-mode unification (a single
+    //     `markdownExportMode` key now drives both the Settings section
+    //     and the Markdown dialog).
     await expect(
-      page.locator('[data-testid="settings-markdown-bundle-images"]'),
+      page.locator('[data-section="markdown-export"]'),
     ).toBeVisible()
 
     // Negative pair: the URL must NOT have bounced back to a
@@ -122,7 +125,7 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await page.goto('/settings')
+    await withNetRetry(() => page.goto('/settings'))
     await expect(
       page.getByRole('heading', { name: /settings/i, level: 1 }),
     ).toBeVisible()
@@ -131,7 +134,7 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
     // virtualizer; if flushSync fires during the mount-time
     // ResizeObserver callback under React 19, the URL would bounce
     // back to /settings via the same error-rollback mechanism.
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
     await expect(page.locator('[data-message-uuid="m1"]')).toBeVisible()
 
     await page.waitForTimeout(500)
@@ -196,7 +199,7 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
     await expect(page.locator('[data-message-uuid="m1"]')).toBeVisible()
 
     // Open search panel, type query, IMMEDIATELY navigate to Settings

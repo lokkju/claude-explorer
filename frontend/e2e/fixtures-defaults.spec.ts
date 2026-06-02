@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 
 /**
  * M1 of the mock-data conversion plan
@@ -61,7 +61,7 @@ test.describe('mockBackend default routes (M1)', () => {
         body: '<!doctype html><html><body>boot</body></html>',
       }),
     )
-    await page.goto('http://localhost:5173/__bootstrap__')
+    await withNetRetry(() => page.goto('http://localhost:5173/__bootstrap__'))
   })
 
   test('GET /api/config returns AppConfig JSON without conversation_count', async ({ page, mockBackend }) => {

@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 
 /**
  * Regression test (2026-05-14, manual finding): Cmd+K was opening the
@@ -43,7 +43,7 @@ test.describe('Cmd+K always opens the Search tab (regression 2026-05-14)', () =>
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     const searchAside = page.locator('aside[aria-label="Search panel"]')
@@ -87,7 +87,7 @@ test.describe('Cmd+K always opens the Search tab (regression 2026-05-14)', () =>
       details: { [C1]: c1Detail },
       preferences: { rightPaneTab: 'bookmarks' },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     const searchAside = page.locator('aside[aria-label="Search panel"]')
@@ -108,7 +108,7 @@ test.describe('Cmd+K always opens the Search tab (regression 2026-05-14)', () =>
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     const searchAside = page.locator('aside[aria-label="Search panel"]')

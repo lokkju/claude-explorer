@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, searchEnvelopeJson, type Page, type Route } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, searchEnvelopeJson, type Page, type Route, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -98,7 +98,7 @@ test.describe('Search-hit highlights persist past the URL-cleanup timer (2026-05
       details: { [CONV]: detail },
     })
     await mockSearch(page)
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
 
     // Open search panel, type the needle. Auto-promote should land on
     // msg-with-needle.
@@ -142,7 +142,7 @@ test.describe('Search-hit highlights persist past the URL-cleanup timer (2026-05
       details: { [CONV]: detail },
     })
     await mockSearch(page)
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
 
     const isMac = process.platform === 'darwin'
     await page.keyboard.press(isMac ? 'Meta+f' : 'Control+f')

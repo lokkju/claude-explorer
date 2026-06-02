@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, withNetRetry } from './fixtures'
 import type { SearchResult, Message, CompactMarker } from '../src/lib/types'
 
 /**
@@ -184,7 +184,7 @@ test.describe('Bug 2 (2026-05-26): Toggle preserves focus AFTER user click', () 
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await page.goto(`/conversations/${CONV_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     // Step 1: open search, fill the needle, click the search-result card
@@ -305,7 +305,7 @@ test.describe('Bug 2 (2026-05-26): Toggle preserves focus AFTER user click', () 
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await page.goto(`/conversations/${CONV_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     await page.keyboard.press('Meta+k')

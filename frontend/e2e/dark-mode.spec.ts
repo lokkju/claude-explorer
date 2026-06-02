@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 
 /**
  * Dark-mode runtime application (Build-8 #7).
@@ -12,14 +12,14 @@ import { test, expect } from './fixtures'
 test.describe('Dark mode runtime', () => {
   test.beforeEach(async ({ page, mockBackend }) => {
     await mockBackend();
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await page.evaluate(() => localStorage.clear());
-    await page.reload();
+    await withNetRetry(() => page.reload());
   });
 
   test('toggling to dark theme applies .dark to <html> and dark-mode CSS to the body', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
-    await page.goto('/settings');
+    await withNetRetry(() => page.goto('/settings'));
 
     // Light mode first: capture body bg.
     await page.click('label:has-text("Light")');

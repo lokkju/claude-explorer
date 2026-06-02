@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -47,7 +47,7 @@ const detail = makeDetail(summary, [message])
 test.describe('P1.3a — Tool placeholder text is hidden in the viewer', () => {
   test('bubble renders surrounding text but strips the literal placeholder line', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [CD]: detail } })
-    await page.goto(`/conversations/${CD}`)
+    await withNetRetry(() => page.goto(`/conversations/${CD}`))
 
     const bubble = page.locator('[data-message-uuid="tp-m1"]')
     await expect(bubble).toBeVisible()
@@ -71,7 +71,7 @@ test.describe('P1.3a — Tool placeholder text is hidden in the viewer', () => {
     } as Partial<Message> & { uuid: string })
     const detail = makeDetail(summary, [m])
     await mockBackend({ conversations: [summary], details: { [CD]: detail } })
-    await page.goto(`/conversations/${CD}`)
+    await withNetRetry(() => page.goto(`/conversations/${CD}`))
 
     const bubble = page.locator('[data-message-uuid="fenced-placeholder"]')
     await expect(bubble).toBeVisible()
@@ -92,7 +92,7 @@ test.describe('P1.3a — Tool placeholder text is hidden in the viewer', () => {
     } as Partial<Message> & { uuid: string })
     const detail = makeDetail(summary, [m])
     await mockBackend({ conversations: [summary], details: { [CD]: detail } })
-    await page.goto(`/conversations/${CD}`)
+    await withNetRetry(() => page.goto(`/conversations/${CD}`))
 
     const bubble = page.locator('[data-message-uuid="mid-para-placeholder"]')
     await expect(bubble).toBeVisible()

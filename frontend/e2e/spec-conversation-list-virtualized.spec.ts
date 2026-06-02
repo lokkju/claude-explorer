@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { ConversationSummary, ConversationDetail } from '../src/lib/types'
 
 /**
@@ -112,7 +112,7 @@ test.describe('Conversation list (virtualized flat view)', () => {
   })
 
   test('renders FAR fewer DOM rows than the dataset size', async ({ page }) => {
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     // Wait for the first conversation to appear.
     await expect(page.getByText(/Starred fixture 0 /).first()).toBeVisible({ timeout: 10000 })
 
@@ -125,7 +125,7 @@ test.describe('Conversation list (virtualized flat view)', () => {
   })
 
   test('shows the Starred header and pins starred rows to the top', async ({ page }) => {
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await expect(page.getByText('Starred', { exact: true })).toBeVisible({ timeout: 10000 })
     // The starred rows should all be present in the initial render
     // (they're the first 5 in the items list — virtualizer's first
@@ -136,7 +136,7 @@ test.describe('Conversation list (virtualized flat view)', () => {
   })
 
   test('scroll-to-bottom mounts conversations near the end of the dataset', async ({ page }) => {
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await expect(page.getByText(/Starred fixture 0 /).first()).toBeVisible({ timeout: 10000 })
 
     // Scroll the Radix viewport to its bottom. We don't assert on
@@ -161,7 +161,7 @@ test.describe('Conversation list (virtualized flat view)', () => {
   })
 
   test('scroll-to-middle mounts conversations from the middle of the dataset', async ({ page }) => {
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await expect(page.getByText(/Starred fixture 0 /).first()).toBeVisible({ timeout: 10000 })
 
     // Scroll roughly halfway down.
@@ -177,7 +177,7 @@ test.describe('Conversation list (virtualized flat view)', () => {
   })
 
   test('type-to-filter narrows the rendered set to title-matches only', async ({ page }) => {
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await expect(page.getByText(/Starred fixture 0 /).first()).toBeVisible({ timeout: 10000 })
 
     const searchInput = page.getByPlaceholder('Search titles and projects')
@@ -194,7 +194,7 @@ test.describe('Conversation list (virtualized flat view)', () => {
   })
 
   test('clicking a visible row navigates to /conversations/<uuid>', async ({ page }) => {
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await expect(page.getByText(/Starred fixture 0 /).first()).toBeVisible({ timeout: 10000 })
 
     // Click the first starred row.
@@ -203,7 +203,7 @@ test.describe('Conversation list (virtualized flat view)', () => {
   })
 
   test('deep-linking to a conversation near the end mounts AND visually surfaces that row', async ({ page }) => {
-    await page.goto(`/conversations/${FIXTURE_DEEP_LINK_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${FIXTURE_DEEP_LINK_UUID}`))
 
     // Scope the needle search to the sidebar. The conversation-detail
     // header on the right pane ALSO contains the needle text (it's
@@ -243,7 +243,7 @@ test.describe('Conversation list (virtualized flat view)', () => {
   })
 
   test('a row well past the initial viewport is NOT in the DOM until scrolled to', async ({ page }) => {
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     // Wait for first render.
     await expect(page.getByText(/Starred fixture 0 /).first()).toBeVisible({ timeout: 10000 })
 

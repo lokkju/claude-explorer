@@ -9,7 +9,7 @@
  *   4. Save; reopen the filter; Name persists as last value the user typed.
  */
 
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 
 test.describe('CF2 — atom name prefill', () => {
   test('prefill, manual override, resume on clear, persistence', async ({ page, mockBackend }) => {
@@ -20,7 +20,7 @@ test.describe('CF2 — atom name prefill', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.getByTestId('active-filter-select').click()
     await page.getByTestId('active-filter-manage').click()
     await page.getByTestId('manage-filters-new').click()

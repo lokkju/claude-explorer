@@ -10,8 +10,8 @@
 //
 // NO APP CODE was read while writing this test.
 
-import { test, expect } from './fixtures'
-import { makeSummary } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
+import { makeSummary, withNetRetry } from './fixtures'
 
 const conversations = [
   makeSummary({ uuid: 'c-foo', name: 'Foo' }),
@@ -77,7 +77,7 @@ test.describe('Cycle defense', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
 
     await modal.getByText(/^GroupG$/).first().click()
@@ -128,7 +128,7 @@ test.describe('Cycle defense', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Sidebar still functional. With a cycle that short-circuits to "passes",
     // every conversation is visible.

@@ -16,8 +16,8 @@
  *   4. Fresh install (`_migratedV1: false`) -> banner never visible.
  */
 
-import { test, expect } from './fixtures'
-import { makeSummary } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
+import { makeSummary, withNetRetry } from './fixtures'
 import type { FiltersState } from '../src/lib/filterEngine'
 
 const conversations = [
@@ -97,7 +97,7 @@ test.describe('CF3 — migration banner', () => {
       }
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     const banner = page.getByTestId('filters-migration-banner')
     await expect(banner).toBeVisible()
@@ -120,7 +120,7 @@ test.describe('CF3 — migration banner', () => {
     // Reload. The mockBackend prefs store was mutated by the PATCH, so a
     // subsequent GET reflects `migrationBannerDismissed: true` and the
     // banner does NOT reappear.
-    await page.reload()
+    await withNetRetry(() => page.reload())
     await expect(page.getByTestId('filters-migration-banner')).toHaveCount(0)
   })
 
@@ -133,7 +133,7 @@ test.describe('CF3 — migration banner', () => {
       preferences: { filters: migratedDismissed },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await expect(page.getByTestId('filters-migration-banner')).toHaveCount(0)
   })
 
@@ -146,7 +146,7 @@ test.describe('CF3 — migration banner', () => {
       preferences: { filters: freshInstall },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Wait for the sidebar to render so we know the app has settled.
     await expect(page.getByTestId('active-filter-select')).toBeVisible()

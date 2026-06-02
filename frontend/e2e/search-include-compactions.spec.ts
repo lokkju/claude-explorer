@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { SearchResult, CompactMarker } from '../src/lib/types'
 
 /**
@@ -158,7 +158,7 @@ test.describe('Search — include_compactions filter (Bug 1 fix 2026-05-26)', ()
     const seen = await mountSearchRouteAware(page)
     await page.setViewportSize({ width: 1024, height: 1200 })
 
-    await page.goto(`/conversations/${TM}`)
+    await withNetRetry(() => page.goto(`/conversations/${TM}`))
     await expect(page.locator('[data-message-uuid="pre-msg"]')).toBeVisible()
 
     // Show Compactions checkbox must be CHECKED by default.
@@ -199,7 +199,7 @@ test.describe('Search — include_compactions filter (Bug 1 fix 2026-05-26)', ()
     const seen = await mountSearchRouteAware(page)
     await page.setViewportSize({ width: 1024, height: 1200 })
 
-    await page.goto(`/conversations/${TM}`)
+    await withNetRetry(() => page.goto(`/conversations/${TM}`))
     await expect(page.locator('[data-message-uuid="pre-msg"]')).toBeVisible()
 
     // Click the Show Compactions checkbox OFF.
@@ -257,7 +257,7 @@ test.describe('Search — include_compactions filter (Bug 1 fix 2026-05-26)', ()
     const seen = await mountSearchRouteAware(page)
     await page.setViewportSize({ width: 1024, height: 1200 })
 
-    await page.goto(`/conversations/${TM}`)
+    await withNetRetry(() => page.goto(`/conversations/${TM}`))
     await expect(page.locator('[data-message-uuid="pre-msg"]')).toBeVisible()
 
     // Toggle OFF.

@@ -7,7 +7,7 @@
  *   4. Remove A from G; reopen A; delete now succeeds (row disappears).
  */
 
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 import type { FiltersState } from '../src/lib/filterEngine'
 
 const seedState: FiltersState = {
@@ -43,7 +43,7 @@ test.describe('CF2 — used-by + delete blocking', () => {
       preferences: { filters: seedState },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.getByTestId('active-filter-select').click()
     await page.getByTestId('active-filter-manage').click()
 

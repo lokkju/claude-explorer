@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -88,7 +88,7 @@ test.describe('ConversationPage — bubble list is virtualized (user-observable 
   })
 
   test('renders FAR fewer DOM rows than the dataset size', async ({ page }) => {
-    await page.goto(`/conversations/${CONV_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
     // Wait for the first message to appear so we know mount finished.
     await expect(page.locator('[data-message-uuid="vmsg-0000"]')).toBeVisible({ timeout: 15000 })
 
@@ -107,7 +107,7 @@ test.describe('ConversationPage — bubble list is virtualized (user-observable 
   })
 
   test('tail-end message is NOT in the DOM until scrolled to', async ({ page }) => {
-    await page.goto(`/conversations/${CONV_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="vmsg-0000"]')).toBeVisible({ timeout: 15000 })
 
     // The needle is at idx 590 of 600 — far below the initial viewport
@@ -120,7 +120,7 @@ test.describe('ConversationPage — bubble list is virtualized (user-observable 
   })
 
   test('scroll-to-bottom mounts tail messages AND unmounts head messages', async ({ page }) => {
-    await page.goto(`/conversations/${CONV_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="vmsg-0000"]')).toBeVisible({ timeout: 15000 })
 
     // Variable-height virtualizers correct their total scroll height as

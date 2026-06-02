@@ -1,4 +1,4 @@
-import { test, expect, makeSummary } from './fixtures'
+import { test, expect, makeSummary, withNetRetry } from './fixtures'
 
 /**
  * Cowork sidebar source filter (Phase 5).
@@ -83,7 +83,7 @@ test.describe('Cowork sidebar source filter', () => {
       })
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Settle: sidebar populated with all 4 sessions.
     await expect(page.getByText('Cowork Session Alpha')).toBeVisible()
@@ -113,7 +113,7 @@ test.describe('Cowork sidebar source filter', () => {
     mockBackend,
   }) => {
     await mockBackend({ conversations: [coworkA, coworkB, cc] })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await expect(page.getByText('Cowork Session Alpha')).toBeVisible()
 
     // Baseline: under default 'all' filter (CC visible), toggle exists.

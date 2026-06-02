@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures';
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures';
 
 /**
  * Regression spec for the V1 polish round 3 bug (2026-05-12):
@@ -93,7 +93,7 @@ test.describe('CC slash-command badge — argful marker', () => {
       details: { [ARGFUL_UUID]: argfulDetail },
     });
 
-    await page.goto(`/conversations/${ARGFUL_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${ARGFUL_UUID}`));
 
     // Deterministic settle.
     await expect(page.getByTestId('message-stream')).toBeVisible();
@@ -131,7 +131,7 @@ test.describe('CC slash-command badge — argful marker', () => {
       details: { [ARGFUL_UUID]: argfulDetail },
     });
 
-    await page.goto(`/conversations/${ARGFUL_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${ARGFUL_UUID}`));
     await expect(page.getByTestId('message-stream')).toBeVisible();
     const markerBubble = page.locator('[data-message-uuid="marker-coding"]');
     await expect(markerBubble).toBeVisible();
@@ -202,7 +202,7 @@ test.describe('CC slash-command badge — argless marker', () => {
       details: { [ARGLESS_UUID]: arglessDetail },
     });
 
-    await page.goto(`/conversations/${ARGLESS_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${ARGLESS_UUID}`));
     await expect(page.getByTestId('message-stream')).toBeVisible();
     await expect(page.locator('[data-message-uuid="marker-exit"]')).toBeVisible();
 
@@ -278,7 +278,7 @@ test.describe('CC slash-command badge — Desktop counter-case', () => {
       details: { [DESKTOP_UUID]: desktopDetail },
     });
 
-    await page.goto(`/conversations/${DESKTOP_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${DESKTOP_UUID}`));
     await expect(page.getByTestId('message-stream')).toBeVisible();
     await expect(page.locator('[data-message-uuid="d-u1"]')).toBeVisible();
 

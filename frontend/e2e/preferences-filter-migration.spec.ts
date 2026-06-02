@@ -10,7 +10,7 @@
  *   - The sentinel `_migratedV1: true` prevents re-migration on reload.
  */
 
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 import type { Route } from './fixtures'
 
 interface PrefsState {
@@ -77,7 +77,7 @@ test.describe('FilterContext composable-graph migration (CF1)', () => {
       activeFilterIds: [],
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Wait until the migration PATCH has landed.
     await expect.poll(() => patches.bodies.length, { timeout: 5_000 }).toBeGreaterThan(0)
@@ -125,11 +125,11 @@ test.describe('FilterContext composable-graph migration (CF1)', () => {
       activeFilterIds: [],
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await expect.poll(() => patches.bodies.length, { timeout: 5_000 }).toBeGreaterThan(0)
     const countAfterFirstLoad = patches.bodies.length
 
-    await page.reload()
+    await withNetRetry(() => page.reload())
     // Give the page a moment to settle.
     await page.waitForTimeout(500)
 
@@ -156,7 +156,7 @@ test.describe('FilterContext composable-graph migration (CF1)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.waitForTimeout(500)
     // The picker shows the pre-existing filter as active (load smoke).
     await expect(page.getByTestId('active-filter-select')).toContainText('Already migrated')

@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 
 /**
  * Mobile responsive layout (Build-8 #9).
@@ -12,7 +12,7 @@ test.describe('Mobile responsive layout', () => {
 
   test.beforeEach(async ({ page, mockBackend }) => {
     await mockBackend();
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
   });
 
   test('sidebar is hidden on mobile by default and hamburger toggles it', async ({ page }) => {

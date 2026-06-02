@@ -18,7 +18,7 @@
  * dialog.
  */
 
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, withNetRetry } from './fixtures'
 import type { Route } from './fixtures'
 
 const ME = '00000000-0000-0000-0000-0000000000d7'
@@ -112,7 +112,7 @@ test.describe('Markdown export dialog (Phase 7)', () => {
     const calls: ExportCall[] = []
     await installExportRoutes(page, calls)
 
-    await page.goto(`/conversations/${ME}`)
+    await withNetRetry(() => page.goto(`/conversations/${ME}`))
     await page.getByRole('button', { name: 'Markdown', exact: true }).click()
 
     const dialog = page.getByTestId('markdown-export-dialog')
@@ -131,7 +131,7 @@ test.describe('Markdown export dialog (Phase 7)', () => {
     const calls: ExportCall[] = []
     await installExportRoutes(page, calls)
 
-    await page.goto(`/conversations/${ME}`)
+    await withNetRetry(() => page.goto(`/conversations/${ME}`))
     await page.getByRole('button', { name: 'Markdown', exact: true }).click()
 
     const dialog = page.getByTestId('markdown-export-dialog')
@@ -148,7 +148,7 @@ test.describe('Markdown export dialog (Phase 7)', () => {
     const calls: ExportCall[] = []
     await installExportRoutes(page, calls)
 
-    await page.goto(`/conversations/${ME}`)
+    await withNetRetry(() => page.goto(`/conversations/${ME}`))
     await page.getByRole('button', { name: 'Markdown', exact: true }).click()
 
     const dialog = page.getByTestId('markdown-export-dialog')
@@ -170,7 +170,7 @@ test.describe('Markdown export dialog (Phase 7)', () => {
     const calls: ExportCall[] = []
     await installExportRoutes(page, calls)
 
-    await page.goto(`/conversations/${ME}`)
+    await withNetRetry(() => page.goto(`/conversations/${ME}`))
     await page.getByRole('button', { name: 'Markdown', exact: true }).click()
 
     const dialog = page.getByTestId('markdown-export-dialog')
@@ -190,7 +190,7 @@ test.describe('Markdown export dialog (Phase 7)', () => {
     const calls: ExportCall[] = []
     await installExportRoutes(page, calls)
 
-    await page.goto(`/conversations/${ME}`)
+    await withNetRetry(() => page.goto(`/conversations/${ME}`))
     await page.getByRole('button', { name: 'Markdown', exact: true }).click()
 
     const dialog = page.getByTestId('markdown-export-dialog')
@@ -227,7 +227,7 @@ test.describe('Markdown export dialog (Phase 7)', () => {
       const calls: ExportCall[] = []
       await installExportRoutes(page, calls)
 
-      await page.goto(`/conversations/${ME}`)
+      await withNetRetry(() => page.goto(`/conversations/${ME}`))
       await page.getByRole('button', { name: 'Markdown', exact: true }).click()
 
       const dialog = page.getByTestId('markdown-export-dialog')

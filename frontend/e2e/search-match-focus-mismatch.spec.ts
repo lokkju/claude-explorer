@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
 
 /**
@@ -215,7 +215,7 @@ test.describe('Search — include_tool_calls filter (architectural fix 2026-05-1
     const seen = await mountSearchRouteAware(page)
     await page.setViewportSize({ width: 1024, height: 1200 })
 
-    await page.goto(`/conversations/${TM}`)
+    await withNetRetry(() => page.goto(`/conversations/${TM}`))
     await expect(page.locator('[data-message-uuid="tm-0"]')).toBeVisible()
 
     // Enable Tools — the checkbox toggles showToolCalls in SettingsContext,
@@ -273,7 +273,7 @@ test.describe('Search — include_tool_calls filter (architectural fix 2026-05-1
     const seen = await mountSearchRouteAware(page)
     await page.setViewportSize({ width: 1024, height: 1200 })
 
-    await page.goto(`/conversations/${TM}`)
+    await withNetRetry(() => page.goto(`/conversations/${TM}`))
     await expect(page.locator('[data-message-uuid="tm-0"]')).toBeVisible()
     // Sanity: showToolCalls defaults to false, so tm-tool is filtered out.
     await expect(page.locator('[data-message-uuid="tm-tool"]')).toBeHidden()

@@ -12,8 +12,8 @@
 //
 // NO APP CODE was read while writing this test.
 
-import { test, expect } from './fixtures'
-import { makeSummary } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
+import { makeSummary, withNetRetry } from './fixtures'
 
 const conversations = [
   makeSummary({ uuid: 'c-foo', name: 'Foo morning' }),
@@ -60,7 +60,7 @@ test.describe('Delete UX', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
 
     const trash = modal.getByRole('button', { name: /^delete/i }).first()
@@ -102,7 +102,7 @@ test.describe('Delete UX', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
 
     const trash = modal.getByRole('button', { name: /^delete/i }).first()
@@ -147,7 +147,7 @@ test.describe('Delete UX', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
 
     // Find the trash button for AtomUsed specifically.
@@ -188,7 +188,7 @@ test.describe('Delete UX', () => {
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Pre-condition: filter is active. Foo hidden.
     await expect(page.getByText('Foo morning')).toHaveCount(0)

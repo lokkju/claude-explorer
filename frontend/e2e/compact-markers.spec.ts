@@ -1,4 +1,4 @@
-import { test, expect, Route } from './fixtures';
+import { test, expect, Route, withNetRetry } from './fixtures';
 
 /**
  * Compact-marker UX tests (Build-7).
@@ -142,7 +142,7 @@ test.describe('Compact markers', () => {
   });
 
   test('renders inline compact-marker pill for both kinds', async ({ page }) => {
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     const markers = page.locator('[data-compact-marker]');
     await expect(markers).toHaveCount(2);
     await expect(markers.first()).toContainText(/Compacted/);
@@ -150,14 +150,14 @@ test.describe('Compact markers', () => {
   });
 
   test('manual compact shows the user prompt inline on the divider', async ({ page }) => {
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     await expect(
       page.locator('text=preserve context for the build phase').first()
     ).toBeVisible();
   });
 
   test('clicking the pill toggles the summary panel', async ({ page }) => {
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     const pill = page.locator('[data-compact-marker-pill]').first();
     await expect(pill).toBeVisible();
     await expect(page.locator('[data-compact-marker-panel]')).toHaveCount(0);
@@ -168,7 +168,7 @@ test.describe('Compact markers', () => {
   });
 
   test(']/[ navigate between compact markers', async ({ page }) => {
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     await expect(page.locator('[data-compact-marker]').first()).toBeVisible();
 
     // Press ] - jump to first marker (no active yet -> goes to index 0).
@@ -219,7 +219,7 @@ test.describe('Compact markers', () => {
     // smallest stable proxy for the visual claim. If we ever swap
     // tailwind for another styling system we'll need to update this
     // test — that's an acceptable maintenance cost.
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
 
     // Open the manual marker (index 1 of the 2 markers in the fixture).
     const manualPill = page.locator(
@@ -258,7 +258,7 @@ test.describe('Compact markers', () => {
     // obvious. `header-toggles-as-checkboxes.spec.ts` has the
     // canonical inversion test; this one is the legacy regression
     // guard for the original 2-marker fixture's toggle path.
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     await expect(page.locator('[data-compact-marker]').first()).toBeVisible();
 
     const showCompactions = page.locator(
@@ -308,7 +308,7 @@ test.describe('Compact markers', () => {
       });
     });
 
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     await expect(page.locator('text=Continuing.').first()).toBeVisible();
     await expect(page.getByRole('button', { name: /compact markers/i })).toHaveCount(0);
   });

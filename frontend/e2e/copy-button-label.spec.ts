@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 
 /**
  * Build-8 #10: the conversation-toolbar Copy button should be labeled
@@ -27,7 +27,7 @@ test('conversation Copy button is labeled "Copy as Markdown"', async ({ page, mo
     details: { [uuid]: makeDetail(summary, messages) },
   });
 
-  await page.goto('/');
+  await withNetRetry(() => page.goto('/'));
 
   const firstConv = page.getByRole('button', { name: /\d+ msgs/ }).first();
   await firstConv.click();

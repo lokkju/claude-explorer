@@ -1,4 +1,4 @@
-import { test, expect, makeSummary } from './fixtures'
+import { test, expect, makeSummary, withNetRetry } from './fixtures'
 
 /**
  * Manual finding 2026-05-03 (Bug A): on FE reload against a real
@@ -25,7 +25,7 @@ test.describe('ConnectionStatus on reload (Bug A)', () => {
     })
     await mockBackend({ conversations: [makeSummary({ uuid: 'a', name: 'Conv A' })] })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // The modal copy "Attempt N of 5" must never become visible.
     // Poll for 6 seconds (slightly past the 2.5s mock delay × 2 to
@@ -54,7 +54,7 @@ test.describe('ConnectionStatus on reload (Bug A)', () => {
     })
     await mockBackend({ conversations: [] })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     // Wait long enough for StrictMode double-mount + ConnectionStatus
     // initial check + at least one retry-window to elapse.
     await page.waitForTimeout(3000)
@@ -87,7 +87,7 @@ test.describe('ConnectionStatus on reload (Bug A)', () => {
     })
     await mockBackend({ conversations: [] })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     // Watch for 7 seconds for any "Attempt N of 5" copy.
     const retryText = page.getByText(/Attempt \d+ of \d+/i)
     const start = Date.now()

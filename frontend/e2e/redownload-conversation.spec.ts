@@ -1,4 +1,4 @@
-import { test, expect, Route } from './fixtures';
+import { test, expect, Route, withNetRetry } from './fixtures';
 
 /**
  * Build-9 Bug 3 (frontend): the per-conversation "Re-download this
@@ -95,7 +95,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { uuid: FAKE_UUID, status: 'refetched', name: baseConv.name },
     });
 
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
 
     // The renamed button MUST be visible.
     const button = page.getByRole('button', { name: /re-download this conversation/i });
@@ -108,7 +108,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { uuid: FAKE_UUID, status: 'refetched', name: baseConv.name },
     });
 
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     await page.getByRole('button', { name: /re-download this conversation/i }).click();
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -124,7 +124,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { detail: friendly },
     });
 
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     await page.getByRole('button', { name: /re-download this conversation/i }).click();
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -142,7 +142,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { detail: friendly },
     });
 
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     await page.getByRole('button', { name: /re-download this conversation/i }).click();
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -158,7 +158,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { detail: sessionExpired },
     });
 
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
     await page.getByRole('button', { name: /re-download this conversation/i }).click();
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();

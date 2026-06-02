@@ -16,7 +16,7 @@
  * a soak window. Tests assert the dual side: server PATCH + local mirror.
  */
 
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 import type { Route, Page } from './fixtures'
 
 interface PrefsState {
@@ -71,9 +71,9 @@ test.describe('SearchPanelContext preferences migration (P3e)', () => {
     await mockBackend({})
     const { patches } = await installPrefsRoute(page, {})
 
-    await page.goto('/conversations')
+    await withNetRetry(() => page.goto('/conversations'))
     await page.evaluate(() => localStorage.clear())
-    await page.reload()
+    await withNetRetry(() => page.reload())
 
     // Open the search panel via Cmd+F (works on both mac/linux due to
     // the cmdOrCtrl branch in useKeyboardShortcuts).
@@ -114,10 +114,10 @@ test.describe('SearchPanelContext preferences migration (P3e)', () => {
     await installPrefsRoute(page, { 'searchPanel.isOpen': true })
 
     // Make sure we are not relying on a stale local value.
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.evaluate(() => localStorage.clear())
 
-    await page.goto('/conversations')
+    await withNetRetry(() => page.goto('/conversations'))
 
     // After mount the server says isOpen=true, so the panel must be
     // rendered with aria-hidden=false on first paint.

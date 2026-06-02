@@ -1,4 +1,4 @@
-import { test, expect, Route } from './fixtures';
+import { test, expect, Route, withNetRetry } from './fixtures';
 
 /**
  * cowork-multi-org C6 frontend e2e.
@@ -119,7 +119,7 @@ async function mockBackend(
 
 test('workspace selector renders when /api/orgs returns >= 2 orgs', async ({ page }) => {
   await mockBackend(page);
-  await page.goto('/');
+  await withNetRetry(() => page.goto('/'));
 
   // The workspace select should be visible (length >= 2 gate).
   await expect(page.getByTestId('workspace-select')).toBeVisible();
@@ -130,7 +130,7 @@ test('workspace selector hidden when authenticated: false', async ({ page }) => 
   await mockBackend(page, {
     orgsResponse: { status: 200, body: { authenticated: false, orgs: [] } },
   });
-  await page.goto('/');
+  await withNetRetry(() => page.goto('/'));
 
   // Selector slot reserved for layout stability; the actual <Select>
   // element with our test-id must not exist.
@@ -148,7 +148,7 @@ test('workspace selector hidden when only one org', async ({ page }) => {
       },
     },
   });
-  await page.goto('/');
+  await withNetRetry(() => page.goto('/'));
   await expect(page.getByTestId('workspace-select')).not.toBeVisible();
 });
 
@@ -165,7 +165,7 @@ test('selecting Cowork filters /api/conversations request and shows Synology con
     }
   });
 
-  await page.goto('/');
+  await withNetRetry(() => page.goto('/'));
 
   // Both conversations are visible initially (no workspace filter).
   await expect(page.getByText('Synology metadata explanation')).toBeVisible();
@@ -199,7 +199,7 @@ test('selecting "All workspaces" clears the filter', async ({ page }) => {
     }
   });
 
-  await page.goto('/');
+  await withNetRetry(() => page.goto('/'));
 
   // Pick Cowork
   await page.getByTestId('workspace-select').click();

@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -77,7 +77,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
 
     const toolsCheckbox = page.locator(
       '[data-testid="header-show-tools-checkbox"]',
@@ -103,7 +103,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
 
     const toolsCheckbox = page.locator(
       '[data-testid="header-show-tools-checkbox"]',
@@ -127,7 +127,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
 
     const compactionsCheckbox = page.locator(
       '[data-testid="header-show-compactions-checkbox"]',
@@ -195,7 +195,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       })
     })
 
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
 
     const compactionsCheckbox = page.locator(
       '[data-testid="header-show-compactions-checkbox"]',
@@ -246,7 +246,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await page.goto(`/conversations/${CONV}`)
+    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
 
     const compactionsCheckbox = page.locator(
       '[data-testid="header-show-compactions-checkbox"]',

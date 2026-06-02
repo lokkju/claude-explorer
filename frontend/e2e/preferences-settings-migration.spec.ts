@@ -3,7 +3,7 @@
  *
  * After this commit, every persistent SettingsContext key (theme,
  * keyboardMode, sortField, sortOrder, groupByProject, hideCompactMarkers,
- * rightPaneTab, markdownBundleImages, markdownDialect) must:
+ * rightPaneTab, markdownExportMode) must:
  *
  *   1. PATCH `/api/preferences` when the user changes it (the body
  *      contains the changed key under `data`).
@@ -17,7 +17,7 @@
  * a soak window. Tests assert the dual side: server PATCH + local mirror.
  */
 
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 import type { Route } from './fixtures'
 
 interface PrefsState {
@@ -74,10 +74,10 @@ test.describe('SettingsContext preferences migration (P3c)', () => {
     await mockBackend({})
     const { patches } = await installPrefsRoute(page, {})
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.evaluate(() => localStorage.clear())
 
-    await page.goto('/settings')
+    await withNetRetry(() => page.goto('/settings'))
 
     // Click the Dark theme radio. SettingsPage renders a RadioGroup of
     // Light/Dark/System labels.
@@ -104,9 +104,9 @@ test.describe('SettingsContext preferences migration (P3c)', () => {
     await installPrefsRoute(page, { theme: 'dark' })
 
     // Make sure we are not relying on a stale local value.
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.evaluate(() => localStorage.clear())
-    await page.reload()
+    await withNetRetry(() => page.reload())
 
     // After mount the server says theme=dark, so <html> must carry the
     // `dark` class regardless of the browser color-scheme media.

@@ -1,4 +1,4 @@
-import { test, expect, makeSummary } from './fixtures'
+import { test, expect, makeSummary, withNetRetry } from './fixtures'
 
 /**
  * D8 — "Show archived" sidebar toggle.
@@ -48,7 +48,7 @@ test.describe('Cowork D8 — Show archived toggle', () => {
       route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Switch to Cowork filter so the toggle is visible.
     await page.getByTestId('source-filter-select').click()
@@ -86,7 +86,7 @@ test.describe('Cowork D8 — Show archived toggle', () => {
     await mockBackend({ conversations: [active] })
 
     // Switch to Claude Code; toggle should disappear.
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.getByTestId('source-filter-select').click()
     await page.getByRole('option', { name: /^Claude Code$/i }).click()
 

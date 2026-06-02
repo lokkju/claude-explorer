@@ -1,4 +1,4 @@
-import { test, expect, type Page } from './fixtures';
+import { test, expect, type Page, withNetRetry } from './fixtures';
 
 /**
  * Build-1: Refresh-button toast notifications + credentials-expired handling.
@@ -41,7 +41,7 @@ test.describe('Refresh toast', () => {
       });
     });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await clickRefresh(page);
 
     await expect(page.locator('[data-sonner-toast]').first()).toBeVisible({ timeout: 5000 });
@@ -73,7 +73,7 @@ test.describe('Refresh toast', () => {
       });
     });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await clickRefresh(page);
 
     const errorToast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -115,7 +115,7 @@ test.describe('Refresh toast', () => {
       });
     });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();

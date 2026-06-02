@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -122,7 +122,7 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockSearchResults(page)
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await openPanelAndType(page, 'needle')
 
     const input = page.getByPlaceholder('Search messages...')
@@ -148,7 +148,7 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
   test('aria-live region announces "Match N of M"', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockSearchResults(page)
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await openPanelAndType(page, 'needle')
 
     const live = page.locator('[data-testid="search-match-aria-live"]')
@@ -170,7 +170,7 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
   test('Enter on the active match focuses the message and keeps panel open', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockSearchResults(page)
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await openPanelAndType(page, 'needle')
 
     // V1 polish: auto-focus already promoted activeMatchIndex to 0 once
@@ -240,7 +240,7 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
     // 2. B's bubble is NOT in the DOM yet (cross-conv navigation hasn't
     //    happened).
     // 3. The search input has focus (panel opened, ready to type).
-    await page.goto(`/conversations/${A}`)
+    await withNetRetry(() => page.goto(`/conversations/${A}`))
     const isMac = process.platform === 'darwin'
     await page.keyboard.press(isMac ? 'Meta+f' : 'Control+f')
     const input = page.getByPlaceholder('Search messages...')
@@ -274,7 +274,7 @@ test.describe('Search focus model (manual finding 2026-05-04)', () => {
   test('Esc closes the panel and keeps focus on the active-match message', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockSearchResults(page)
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await openPanelAndType(page, 'needle')
 
     const isMac = process.platform === 'darwin'

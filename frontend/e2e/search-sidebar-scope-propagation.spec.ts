@@ -18,7 +18,7 @@
 // on the URL/body params, NOT on response timing. This is the deterministic
 // signal that proves the wiring works.
 
-import { test, expect, makeSummary, type Page, type Route } from './fixtures'
+import { test, expect, makeSummary, type Page, type Route, withNetRetry } from './fixtures'
 
 const PRIMARY_ORG_ID = 'ae24ae66-4622-48e7-b4b3-1ab2c49f933d'
 const SECONDARY_ORG_ID = '99999999-9999-9999-9999-999999999999'
@@ -225,7 +225,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Set source to Claude Code via the sidebar dropdown.
     const sourceSelect = page.locator('[data-testid]').nth(0) // fallback; use generic
@@ -272,7 +272,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Pick the secondary workspace from the dropdown.
     const workspaceTrigger = page.getByTestId('workspace-select')
@@ -334,7 +334,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Sanity: the "bar" conversation should be HIDDEN from the sidebar.
     await expect(page.getByText('bar project chat')).toHaveCount(0)
@@ -404,7 +404,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     const input = await openSearchPanel(page)
     await input.fill('needle')
@@ -483,7 +483,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
         },
       },
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Type "chat" in the sidebar title-search — all three titles contain "chat",
     // but the active filter hides "bar". The visible list should be only the
@@ -542,7 +542,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Set source = Claude Code.
     // The Sidebar mounts three <Select>s in order:

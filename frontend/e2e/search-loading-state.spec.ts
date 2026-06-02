@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
 
 /**
@@ -70,7 +70,7 @@ test.describe('Search panel loading state (Bug B)', () => {
       })
     })
 
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await page.locator('main').click()
     await page.keyboard.press('Meta+k')
     const input = page.locator('input[placeholder="Search messages..."]')
@@ -131,7 +131,7 @@ test.describe('Search panel loading state (Bug B)', () => {
       }
     })
 
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await page.locator('main').click()
     await page.keyboard.press('Meta+k')
     const input = page.locator('input[placeholder="Search messages..."]')

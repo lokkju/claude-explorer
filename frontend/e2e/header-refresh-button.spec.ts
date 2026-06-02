@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 
 /**
  * M5.5: converted to `./fixtures` `mockBackend`. Without mocked
@@ -35,7 +35,7 @@ test.describe('Header Refresh button (Sidebar)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const headerRefresh = page.locator('aside button[title="Refresh conversation list"]')
     await expect(headerRefresh).toBeVisible()
     await headerRefresh.click()
@@ -81,7 +81,7 @@ test.describe('Header Refresh button (Sidebar)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     // Wait for the initial list load.
     await expect.poll(() => listRequestCount).toBeGreaterThan(0)
     const before = listRequestCount
@@ -111,7 +111,7 @@ test.describe('Header Refresh button (Sidebar)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     const headerRefresh = page.locator('aside button[title="Refresh conversation list"]')
     await headerRefresh.click()
 

@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures';
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures';
 
 /**
  * Regression spec for the V1 polish bug (2026-05-12, council round 2):
@@ -113,7 +113,7 @@ test.describe('CC session-prelude affordance', () => {
       details: { [UUID]: detail },
     });
 
-    await page.goto(`/conversations/${UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${UUID}`));
 
     // Deterministic settle barrier (per feedback_playwright_settle_signals).
     await expect(page.getByTestId('message-stream')).toBeVisible();
@@ -151,7 +151,7 @@ test.describe('CC session-prelude affordance', () => {
       details: { [UUID]: detail },
     });
 
-    await page.goto(`/conversations/${UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${UUID}`));
     await expect(page.getByTestId('message-stream')).toBeVisible();
     await expect(page.locator('[data-message-uuid="real-user-1"]')).toBeVisible();
 
@@ -244,7 +244,7 @@ test.describe('CC session-prelude affordance', () => {
       details: { [noPreludeUuid]: noPreludeDetail },
     });
 
-    await page.goto(`/conversations/${noPreludeUuid}`);
+    await withNetRetry(() => page.goto(`/conversations/${noPreludeUuid}`));
     await expect(page.getByTestId('message-stream')).toBeVisible();
     await expect(page.locator('[data-message-uuid="u1"]')).toBeVisible();
 

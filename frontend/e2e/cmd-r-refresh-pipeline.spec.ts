@@ -1,4 +1,4 @@
-import { test, expect, makeSummary } from './fixtures'
+import { test, expect, makeSummary, withNetRetry } from './fixtures'
 
 /**
  * Stream C: Cmd+R must invoke the same Build-9 capture+fetch pipeline
@@ -60,7 +60,7 @@ test.describe('Stream C: Cmd+R triggers /api/fetch/refresh', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Focus the main pane so the keydown listener runs against the
     // app, not an input element. The handler in
@@ -87,6 +87,53 @@ test.describe('Stream C: Cmd+R triggers /api/fetch/refresh', () => {
     // when the caller passes false. So the URL must NOT carry
     // `incremental=false` — proving we asked for the incremental
     // path, not the full-refresh path.
+    expect(refreshRequests[0]).not.toContain('incremental=false')
+  })
+
+  test('pressing Ctrl+R (Windows / Linux) also hits /api/fetch/refresh', async ({
+    page,
+    mockBackend,
+  }) => {
+    // Ctrl+R is the native browser reload on Windows / Linux. Before the
+    // 2026-05-29 fix the handler bound `e.metaKey && !e.ctrlKey`, so
+    // Ctrl+R fell through to a page reload and the article's "the code
+    // accepts both modifiers, so the shortcuts work everywhere" claim
+    // was false off macOS. The handler now uses the shared cmdOrCtrl
+    // modifier and calls preventDefault, so Ctrl+R must refresh in-app
+    // instead of reloading. This is the regression guard for that fix.
+    const refreshRequests: string[] = []
+    page.on('request', (req) => {
+      const url = req.url()
+      if (url.includes('/api/fetch/refresh')) {
+        refreshRequests.push(url)
+      }
+    })
+
+    await mockBackend({
+      conversations: [SUMMARY],
+      extraRoutes: async (p) => {
+        await p.route('**/api/fetch/refresh*', async (route) => {
+          const body =
+            'data: {"type":"start","message":"Fetching conversation list..."}\n\n' +
+            'data: {"type":"complete","message":"Fetched 0 conversations successfully.","current":0,"total":0}\n\n'
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body,
+          })
+        })
+      },
+    })
+
+    await withNetRetry(() => page.goto('/'))
+    await page.locator('main').click()
+
+    await page.keyboard.press('Control+r')
+
+    await expect
+      .poll(() => refreshRequests.length, { timeout: 3000 })
+      .toBeGreaterThan(0)
+    expect(refreshRequests[0]).toContain('/api/fetch/refresh')
     expect(refreshRequests[0]).not.toContain('incremental=false')
   })
 
@@ -123,7 +170,7 @@ test.describe('Stream C: Cmd+R triggers /api/fetch/refresh', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.locator('main').click()
 
     await page.keyboard.press('Meta+r')

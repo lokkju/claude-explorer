@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -85,7 +85,7 @@ test.describe('CC inline image content block opens lightbox (Issue #1)', () => {
     const detail = makeDetail(summary, [m])
 
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
 
     const bubble = page.locator('[data-message-uuid="cci-1"]')
     await expect(bubble).toBeVisible()
@@ -134,7 +134,7 @@ test.describe('CC `[Image: source: <path>]` marker opens lightbox (Issue #1)', (
     const detail = makeDetail(summary, [m])
 
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
 
     const bubble = page.locator('[data-message-uuid="ccm-1"]')
     await expect(bubble).toBeVisible()

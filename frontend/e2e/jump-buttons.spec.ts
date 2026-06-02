@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 
 /**
  * Build-3: Jump-to-top + Jump-to-bottom buttons that don't get obscured
@@ -42,7 +42,7 @@ function buildLongConversation() {
 }
 
 async function openLongConversation(page: import('@playwright/test').Page) {
-  await page.goto('/');
+  await withNetRetry(() => page.goto('/'));
   const row = page.getByText(LONG_TITLE);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();

@@ -14,7 +14,7 @@
  *     (bidirectional pair — toggling a session that has no markers
  *     is meaningless, so the affordance correctly stays out of the UI).
  */
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 
 
 const COWORK_UUID = '00000000-0000-4000-8000-000000000c0c'
@@ -55,7 +55,7 @@ test.describe('Show Compactions checkbox for non-CC conversations', () => {
       conversations: [summary],
       details: { [COWORK_UUID]: detail },
     })
-    await page.goto(`/conversations/${COWORK_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${COWORK_UUID}`))
 
     // Settle: Show Tools is unconditional in the header — its presence
     // proves the header is fully rendered. Then assert Show Compactions
@@ -82,7 +82,7 @@ test.describe('Show Compactions checkbox for non-CC conversations', () => {
       conversations: [summary],
       details: { [COWORK_UUID]: detail },
     })
-    await page.goto(`/conversations/${COWORK_UUID}`)
+    await withNetRetry(() => page.goto(`/conversations/${COWORK_UUID}`))
 
     await expect(page.getByTestId('header-show-tools-checkbox')).toBeVisible()
     await expect(

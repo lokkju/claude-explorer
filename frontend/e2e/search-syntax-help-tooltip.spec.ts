@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 
 /**
  * 2026-05-14 polish: the SearchPanel's right-sidebar input now has a
@@ -34,7 +34,7 @@ test.describe('Search syntax help tooltip (2026-05-14)', () => {
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     // Open the SearchPanel.
@@ -73,7 +73,7 @@ test.describe('Search syntax help tooltip (2026-05-14)', () => {
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await page.goto(`/conversations/${C1}`)
+    await withNetRetry(() => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     await page.keyboard.press('Meta+k')

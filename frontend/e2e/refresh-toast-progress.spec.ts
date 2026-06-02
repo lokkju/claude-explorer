@@ -1,4 +1,4 @@
-import { test, expect, type Page } from './fixtures';
+import { test, expect, type Page, withNetRetry } from './fixtures';
 
 /**
  * Build-9 Bug 2: Toast text MUST update with each `progress` SSE event
@@ -56,7 +56,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -87,7 +87,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -110,7 +110,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await clickRefresh(page);
 
     // Wait for at least one toast.
@@ -140,7 +140,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -179,7 +179,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();

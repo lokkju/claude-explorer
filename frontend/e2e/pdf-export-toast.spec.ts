@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, withNetRetry } from './fixtures'
 
 /**
  * Task A5 — Spinner toast UX for PDF export.
@@ -48,7 +48,7 @@ function minimalPdfBytes(): Buffer {
 }
 
 async function gotoConversation(page: Page) {
-  await page.goto(`/conversations/${PDF}`)
+  await withNetRetry(() => page.goto(`/conversations/${PDF}`))
   await expect(page.locator('[data-message-uuid="pdf-m1"]')).toBeVisible()
 }
 

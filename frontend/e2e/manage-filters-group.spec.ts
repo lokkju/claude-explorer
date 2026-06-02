@@ -18,8 +18,8 @@
  *   - "Baz"        → A drops BUT B keeps (no Bar match, hide passes)        → kept
  */
 
-import { test, expect } from './fixtures'
-import { makeSummary } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
+import { makeSummary, withNetRetry } from './fixtures'
 
 const conversations = [
   makeSummary({ uuid: 'c1', name: 'Foo Apple' }),
@@ -41,7 +41,7 @@ test.describe('CF2 — manage filters group editor', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Open Manage filters.
     // CFR1: "Manage filters…" lives inside the active-filter picker

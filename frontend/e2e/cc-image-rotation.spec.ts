@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 import type { Route } from './fixtures'
 
@@ -87,7 +87,7 @@ test.describe('G3 — cc-image rotation: frontend re-requests on reload', () => 
     })
 
     // First load — should fetch PNG_A.
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     const tile = page
       .locator('[data-message-uuid="msg-rot"]')
       .locator('[data-cc-image-marker]')
@@ -123,7 +123,7 @@ test.describe('G3 — cc-image rotation: frontend re-requests on reload', () => 
 
     // Reload — frontend MUST re-issue the same URL.
     const hitsBeforeReload = hits
-    await page.reload()
+    await withNetRetry(() => page.reload())
     await expect(tile).toBeVisible({ timeout: 5000 })
     await expect(tile.locator('img')).toBeVisible({ timeout: 5000 })
 

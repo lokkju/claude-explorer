@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -69,7 +69,7 @@ test.describe('Search typing latency (manual finding 2026-05-04)', () => {
       })
     })
 
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await expect(page.locator('[data-message-uuid="m-0"]')).toBeVisible({ timeout: 10_000 })
 
     // Open the SearchPanel.

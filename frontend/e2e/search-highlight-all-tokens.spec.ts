@@ -19,7 +19,7 @@
  * deterministic DOM signal (result-card count + mark count) instead of
  * any bare `waitForTimeout`.
  */
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, withNetRetry } from './fixtures'
 import type { SearchResult } from '../src/lib/types'
 import type { Route } from './fixtures'
 
@@ -115,7 +115,7 @@ test.describe('Search highlight rendering (all tokens, 2026-05-14)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await expect(input).toBeVisible()
@@ -154,7 +154,7 @@ test.describe('Search highlight rendering (all tokens, 2026-05-14)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await input.fill('comprehensive')
@@ -207,7 +207,7 @@ test.describe('Search highlight rendering (all tokens, 2026-05-14)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await input.fill('tensorflow kubernetes rustlang')

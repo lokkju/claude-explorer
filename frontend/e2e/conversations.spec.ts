@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, withNetRetry } from './fixtures'
 import type { ConversationSummary, ConversationDetail } from '../src/lib/types'
 
 /**
@@ -162,7 +162,7 @@ test.describe('Conversation Browser', () => {
   });
 
   test('loads and displays conversation list', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     // App header.
     await expect(page.getByText('Claude Explorer')).toBeVisible();
@@ -175,7 +175,7 @@ test.describe('Conversation Browser', () => {
   });
 
   test('displays starred conversations at top', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     // Wait for the list to render.
     await expect(page.getByText(TLS_TITLE)).toBeVisible({ timeout: 10000 });
@@ -187,7 +187,7 @@ test.describe('Conversation Browser', () => {
   });
 
   test('filters conversations with search', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     await expect(page.getByText(TLS_TITLE)).toBeVisible({ timeout: 10000 });
 
@@ -205,7 +205,7 @@ test.describe('Conversation Browser', () => {
   });
 
   test('selects and displays conversation detail', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     // Click the long TLS conversation by exact title.
     await expect(page.getByText(TLS_TITLE)).toBeVisible({ timeout: 10000 });
@@ -225,7 +225,7 @@ test.describe('Conversation Browser', () => {
   });
 
   test('URL updates when selecting conversation', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     await expect(page.getByText(TLS_TITLE)).toBeVisible({ timeout: 10000 });
     await page.getByText(TLS_TITLE).click();
@@ -234,7 +234,7 @@ test.describe('Conversation Browser', () => {
   });
 
   test('shows hint state when no conversation selected', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     // The empty-state copy: "Press Enter to open this conversation."
     await expect(
@@ -250,7 +250,7 @@ test.describe('Conversation Detail', () => {
   });
 
   test('displays human and assistant messages', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     await expect(page.getByText(TLS_TITLE)).toBeVisible({ timeout: 10000 });
     await page.getByText(TLS_TITLE).click();
@@ -265,7 +265,7 @@ test.describe('Conversation Detail', () => {
   });
 
   test('renders markdown in messages', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     await expect(page.getByText(TLS_TITLE)).toBeVisible({ timeout: 10000 });
     await page.getByText(TLS_TITLE).click();
@@ -282,7 +282,7 @@ test.describe('Export Functionality', () => {
   });
 
   test('Markdown export button is visible in the conversation header', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     await expect(page.getByText(TLS_TITLE)).toBeVisible({ timeout: 10000 });
     await page.getByText(TLS_TITLE).click();
@@ -292,7 +292,7 @@ test.describe('Export Functionality', () => {
   });
 
   test('PDF export button is visible in the conversation header', async ({ page }) => {
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     await expect(page.getByText(TLS_TITLE)).toBeVisible({ timeout: 10000 });
     await page.getByText(TLS_TITLE).click();

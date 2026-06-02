@@ -14,8 +14,8 @@
  * load-bearing UX claim.
  */
 
-import { test, expect } from './fixtures'
-import { makeSummary } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
+import { makeSummary, withNetRetry } from './fixtures'
 
 const conversations = [
   makeSummary({ uuid: 'c1', name: 'cron1 daily backup' }),
@@ -33,7 +33,7 @@ test.describe('CFR1 — cron case (one atom, hide, OR\'d patterns)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // Sanity: all 4 rows visible before any filter is active.
     for (const c of conversations) {

@@ -1,4 +1,4 @@
-import { test, expect, Route } from './fixtures';
+import { test, expect, Route, withNetRetry } from './fixtures';
 
 /**
  * Persistent rich title-based sidebar filters (Build-5).
@@ -54,7 +54,7 @@ test.describe('Sidebar filters (CF1)', () => {
     });
     await seedPrefs(page, {});
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await page.evaluate(() => { localStorage.clear(); });
     // CFR1: "Manage filters…" lives in the active-filter picker dropdown.
     await page.getByTestId('active-filter-select').click();
@@ -74,7 +74,7 @@ test.describe('Sidebar filters (CF1)', () => {
     });
     await seedPrefs(page, { filters: { nodes: {}, activeId: null, _migratedV1: true, _migratedV2: true } });
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await page.evaluate(() => { localStorage.clear(); });
 
     await page.getByTestId('active-filter-select').click();
@@ -126,7 +126,7 @@ test.describe('Sidebar filters (CF1)', () => {
       _migratedV2: true,
     }));
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await expect(page.getByText('MCP server bootstrap')).toBeVisible();
     await expect(page.getByText('React refactor')).toBeVisible();
     await expect(page.getByText('MCP test plan')).toHaveCount(0);
@@ -154,7 +154,7 @@ test.describe('Sidebar filters (CF1)', () => {
       _migratedV2: true,
     }));
 
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await expect(page.getByText(/hidden by/i)).toBeVisible();
     await expect(page.getByRole('button', { name: /clear active filter/i })).toBeVisible();
   });
@@ -241,7 +241,7 @@ test.describe('Sidebar title search scope (P1.2)', () => {
 
   test('summary-only match is excluded', async ({ page }) => {
     await mockOnly(page, [summaryOnlyMatch]);
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     // Row visible before typing (sanity).
     await expect(page.getByText(summaryOnlyMatch.name)).toBeVisible();
 
@@ -255,7 +255,7 @@ test.describe('Sidebar title search scope (P1.2)', () => {
 
   test('project_path-only match is included', async ({ page }) => {
     await mockOnly(page, [projectPathMatch]);
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
     await expect(page.getByText(projectPathMatch.name)).toBeVisible();
 
     const searchInput = page.getByTestId('sidebar-title-search');
@@ -271,7 +271,7 @@ test.describe('Sidebar title search scope (P1.2)', () => {
     // the scope was widened to include project_path). toHaveAttribute
     // asserts the literal value, not just that A placeholder exists.
     await mockOnly(page, [summaryOnlyMatch]);
-    await page.goto('/');
+    await withNetRetry(() => page.goto('/'));
 
     const searchInput = page.getByTestId('sidebar-title-search');
     await expect(searchInput).toBeVisible();

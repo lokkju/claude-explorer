@@ -1,4 +1,4 @@
-import { test, expect, Route } from './fixtures';
+import { test, expect, Route, withNetRetry } from './fixtures';
 
 /**
  * Branch switching wire-up (Build-8 #6).
@@ -103,7 +103,7 @@ test.describe('Branch switching (Build-8 #6)', () => {
   });
 
   test('selecting a branch in TreeViewModal updates the message stream and URL', async ({ page }) => {
-    await page.goto(`/conversations/${FAKE_UUID}`);
+    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
 
     // Initial: branch A is the displayed branch.
     await expect(page.getByText('BRANCH-A reply 1')).toBeVisible();

@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
 import type { Browser, BrowserContext, Page, Route } from './fixtures'
 
 /**
@@ -23,11 +23,11 @@ import type { Browser, BrowserContext, Page, Route } from './fixtures'
  * proof without that blast radius (see decision_record in the audit
  * commit message).
  *
- * Coverage targets (the four §16.1 prefs):
+ * Coverage targets (the three §16.1 prefs — unified Markdown mode
+ * replaces the legacy bundleImages + dialect pair as of 2026-05-29):
  *   - theme
  *   - keyboardMode
- *   - markdownBundleImages
- *   - markdownDialect
+ *   - markdownExportMode
  */
 
 interface PrefsState {
@@ -165,17 +165,17 @@ async function newPage(browser: Browser, prefsState: PrefsState): Promise<{ cont
 }
 
 test.describe('G1 — preferences persist across browser contexts', () => {
-  test('all four §16.1 prefs changed in context A are visible in context B', async ({ browser }) => {
+  test('all three §16.1 prefs changed in context A are visible in context B', async ({ browser }) => {
     // Shared state — both contexts mutate / read from this object.
     const prefsState: PrefsState = { data: {} }
 
-    // Context A — make all four pref changes.
+    // Context A — make all three pref changes.
     const a = await newPage(browser, prefsState)
     try {
-      await a.page.goto('/settings')
+      await withNetRetry(() => a.page.goto('/settings'))
 
-      const bundleToggle = a.page.getByTestId('settings-markdown-bundle-images')
-      await expect(bundleToggle).toBeVisible()
+      const exportSection = a.page.locator('[data-section="markdown-export"]')
+      await expect(exportSection).toBeVisible()
 
       // 1. Theme → Dark. Wait for the PATCH AND for prefsState to
       // actually contain the new value before moving on — this absorbs
@@ -192,18 +192,18 @@ test.describe('G1 — preferences persist across browser contexts', () => {
       await patch
       await expect.poll(() => prefsState.data.keyboardMode, { timeout: 3000 }).toBe('vim')
 
-      // 3. Bundle images toggle → on.
+      // 3. Markdown export mode → Bundle Obsidian (unified key as of
+      // 2026-05-29). Scope to the Export section because "Obsidian"
+      // appears in the radio label. Use .click() instead of .check()
+      // because Playwright's .check() asserts aria-checked='true' on the
+      // SAME tick as the click, which races our controlled-component
+      // pipeline (Radix onValueChange → setMarkdownExportMode →
+      // mutation.mutate → next render flips aria-checked). We verify
+      // the post-click state via the PATCH log + expect.poll below.
       patch = waitForPrefsPatch(a.page)
-      await bundleToggle.click()
+      await exportSection.getByRole('radio', { name: 'Bundle Obsidian' }).click()
       await patch
-      await expect(bundleToggle).toBeChecked()
-      await expect.poll(() => prefsState.data.markdownBundleImages, { timeout: 3000 }).toBe(true)
-
-      // 4. Dialect → Obsidian.
-      patch = waitForPrefsPatch(a.page)
-      await a.page.locator('label:has-text("Obsidian")').click()
-      await patch
-      await expect.poll(() => prefsState.data.markdownDialect, { timeout: 3000 }).toBe('obsidian')
+      await expect.poll(() => prefsState.data.markdownExportMode, { timeout: 3000 }).toBe('bundle-obsidian')
     } finally {
       await a.context.close()
     }
@@ -215,7 +215,7 @@ test.describe('G1 — preferences persist across browser contexts', () => {
     // contract we're proving.
     const b = await newPage(browser, prefsState)
     try {
-      await b.page.goto('/settings')
+      await withNetRetry(() => b.page.goto('/settings'))
 
       // Theme: dark class on <html>.
       await expect(b.page.locator('html')).toHaveClass(/dark/)
@@ -223,14 +223,12 @@ test.describe('G1 — preferences persist across browser contexts', () => {
       await expect(
         b.page.locator('button[role="radio"][value="vim"]'),
       ).toHaveAttribute('data-state', 'checked')
-      // Bundle images: toggle on.
+      // Markdown export mode: Bundle Obsidian radio is checked.
       await expect(
-        b.page.getByTestId('settings-markdown-bundle-images'),
+        b.page
+          .locator('[data-section="markdown-export"]')
+          .getByRole('radio', { name: 'Bundle Obsidian' }),
       ).toBeChecked()
-      // Dialect: obsidian radio is checked.
-      await expect(
-        b.page.locator('button[role="radio"][value="obsidian"]'),
-      ).toHaveAttribute('data-state', 'checked')
     } finally {
       await b.context.close()
     }
@@ -247,7 +245,7 @@ test.describe('G1 — preferences persist across browser contexts', () => {
 
     const a = await newPage(browser, stateA)
     try {
-      await a.page.goto('/settings')
+      await withNetRetry(() => a.page.goto('/settings'))
       const patch = waitForPrefsPatch(a.page)
       await a.page.locator('label:has-text("Dark")').click()
       await patch
@@ -258,7 +256,7 @@ test.describe('G1 — preferences persist across browser contexts', () => {
 
     const b = await newPage(browser, stateB)
     try {
-      await b.page.goto('/settings')
+      await withNetRetry(() => b.page.goto('/settings'))
       // <html> must NOT have the dark class because stateB never
       // received a PATCH.
       const htmlClass = (await b.page.locator('html').getAttribute('class')) ?? ''

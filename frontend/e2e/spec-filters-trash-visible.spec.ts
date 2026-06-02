@@ -31,8 +31,8 @@
 //
 // NO APP CODE was read while writing this test.
 
-import { test, expect, type Locator } from './fixtures'
-import { makeSummary } from './fixtures'
+import { test, expect, type Locator, withNetRetry } from './fixtures'
+import { makeSummary, withNetRetry } from './fixtures'
 
 /**
  * Asserts that `target`'s bounding box is fully contained within the
@@ -128,7 +128,7 @@ test.describe('Manage Filters modal: trash icon visibility (canary)', () => {
       },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     const picker = page.getByTestId('active-filter-select')
     await picker.click()

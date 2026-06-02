@@ -9,8 +9,8 @@
  * Selection persists via /api/preferences PATCH; reload reflects it.
  */
 
-import { test, expect } from './fixtures'
-import { makeSummary } from './fixtures'
+import { test, expect, withNetRetry } from './fixtures'
+import { makeSummary, withNetRetry } from './fixtures'
 import type { FiltersState } from '../src/lib/filterEngine'
 
 const matchingConv = makeSummary({
@@ -68,7 +68,7 @@ test.describe('CF1 — active-filter picker', () => {
       preferences: { filters: filtersBlob },
     })
 
-    await page.goto('/')
+    await withNetRetry(() => page.goto('/'))
 
     // The exclude atom is active via its parent group -> matching row hidden.
     await expect(page.getByText('React refactor')).toBeVisible()
@@ -95,7 +95,7 @@ test.describe('CF1 — active-filter picker', () => {
 
     // Reload -> selection persists (mockBackend's prefs store survives the
     // navigation because page.route handlers stay registered for the page).
-    await page.reload()
+    await withNetRetry(() => page.reload())
     await expect(
       page.getByText('Scan Gmail for meeting invites and calendar invites')
     ).toHaveCount(0)

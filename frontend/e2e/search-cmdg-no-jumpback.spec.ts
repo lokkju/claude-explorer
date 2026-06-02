@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, PRIMARY_ORG, type Page, type Route } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, PRIMARY_ORG, type Page, type Route, withNetRetry } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -207,7 +207,7 @@ test.describe('Search — Cmd+G / card-click does NOT jump back (2026-05-24)', (
       }
     })()
 
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await expect(page.locator('[data-message-uuid="cm-0"]')).toBeVisible()
 
     const isMac = process.platform === 'darwin'
@@ -336,7 +336,7 @@ test.describe('Search — Cmd+G / card-click does NOT jump back (2026-05-24)', (
       })
     })
     await page.setViewportSize({ width: 1024, height: 800 })
-    await page.goto(`/conversations/${C}`)
+    await withNetRetry(() => page.goto(`/conversations/${C}`))
     await expect(page.locator('[data-message-uuid="c-m0"]')).toBeVisible()
 
     const isMac = process.platform === 'darwin'
@@ -393,7 +393,7 @@ test.describe('Search — Cmd+G / card-click does NOT jump back (2026-05-24)', (
     await mockSearchTwoConvs(page)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await page.goto(`/conversations/${A}`)
+    await withNetRetry(() => page.goto(`/conversations/${A}`))
     await expect(page.locator('[data-message-uuid="a-msg-1"]')).toBeVisible()
 
     const isMac = process.platform === 'darwin'
@@ -445,7 +445,7 @@ test.describe('Search — Cmd+G / card-click does NOT jump back (2026-05-24)', (
     await mockSearchTwoConvs(page)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await page.goto(`/conversations/${A}`)
+    await withNetRetry(() => page.goto(`/conversations/${A}`))
     await expect(page.locator('[data-message-uuid="a-msg-1"]')).toBeVisible()
 
     const isMac = process.platform === 'darwin'
