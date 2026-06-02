@@ -14,7 +14,7 @@
 
 > **Disclaimer**: This is an independent, community-built project. It is not affiliated with, endorsed by, sponsored by, or supported by Anthropic, PBC. "Claude" and "Claude Code" are trademarks of Anthropic, PBC. This project consumes Anthropic's products as a user would (via the same APIs and on-disk file formats the official clients use), but nothing here represents an Anthropic-sanctioned interface, and the formats this project depends on may change without notice. If they do, I'll update the project asap.
 
-![[Pasted image 20260527130701.png]]
+![](Attachments/Pasted%20image%2020260527130701.png)
 
 In the previous installation of this series, we covered the three moving parts that make this project work (capture → fetch → browse / export / query), plus the five reasons you'd actually want a unified local archive in the first place. If you missed that, make sure to go back and read [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) first.
 
@@ -113,7 +113,7 @@ The install's done and the first fetch is streaming in. Open the browser, and th
 The Conversation List makes the unified corpus visible: one list containing all three Claude session sources: Claude Desktop conversations, Claude Code sessions, and Claude Cowork sessions. All three are searchable the same way and export through the same Markdown / PDF pipeline. A few affordances make the list usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read! That was my intro a million years ago to the word "affordance". Anyone who works with UX/UI should read it.
 
 <div align="center">
-<img src="Pasted image 20260514121201.png" alt="The Claude Explorer Conversation List showing the source filter dropdown, project grouping, starred sessions, and the refresh button" width="300">
+<img src="Attachments/Pasted%20image%2020260514121201.png" alt="The Claude Explorer Conversation List showing the source filter dropdown, project grouping, starred sessions, and the refresh button" width="300">
 </div>
 
 ### Source filter and project grouping
@@ -144,7 +144,7 @@ Claude Code sometimes spawns sessions with only local-command scaffolding and no
 
 Just below the title-search box, the Conversation List carries a small *named-filter* picker for saving and reusing title-pattern filters. Each filter has a name plus a behavior (*hide matches* or *show only matches*) plus one or more patterns. A single `cron jobs` filter, for example, can carry every chore pattern you want gone; toggling it on hides them all.
 
-![[Pasted image 20260530170930.png]]
+![](Attachments/Pasted%20image%2020260530170930.png)
 
 You can also compose filters into groups that AND or OR other named filters together, handy when you want one filter that, e.g., hides cron jobs AND keeps client-A work without juggling two toggles.
 
@@ -160,7 +160,7 @@ Before we get to global search and keyboard navigation, let's look at how the vi
 
 The viewer hides tool-use and tool-result blocks by default, because tool output can dominate the screen and drown out the conversation. When you want them, click the **Show Tools** checkbox in the conversation toolbar. The default is the right one for *reading* a session ("what happened, in plain English?"); the checkbox is there for *auditing* one ("what did the assistant actually run, and what did it get back?").
 
-![[Pasted image 20260529175619.png]]
+![](Attachments/Pasted%20image%2020260529175619.png)
 
 Slash commands get the same careful treatment. When you ran `/coding "Help me trace this bug"`, the user's prompt renders as a normal message bubble with a small `/coding` badge above the body. When you ran `/exit`, `/clear`, or any argless command, the bubble collapses to a muted *"Session: /exit"* marker that's visually de-emphasized; it's excluded from search and Copy-as-Markdown for the same reason.
 
@@ -172,7 +172,7 @@ When the **Show Tools** checkbox is on there's a header button labeled **Expand*
 
 A sibling **Show Compactions** checkbox hides or shows `/compact` summary blocks the same way. Claude Code writes a compaction record whenever it summarizes the running conversation to free up room for new turns; the checkbox just hides or shows those summary cards, so your conversation stays exactly as it was and ticking the box back on brings the card right back. If you've invoked `/compact` manually with a prompt, Claude Explorer shows you that prompt.
 
-![[Pasted image 20260529183413.png]]
+![](Attachments/Pasted%20image%2020260529183413.png)
 
 <a id="searching-and-navigating-with-the-keyboard"></a>
 
@@ -184,7 +184,7 @@ Claude Explorer is really a three-pane app: the Conversation List, the Conversat
 
 One quick note on key labels: I write shortcuts with the **`⌘`** glyph because I'm on macOS; on Windows and Linux, use **`Ctrl`** instead. The same swap applies to the **`Option`** bindings below: press **`Alt`** wherever I write **`Option`**.
 
-![[Pasted image 20260514161227.png]]
+![](Attachments/Pasted%20image%2020260514161227.png)
 
 ### Overview and the focus model
 
@@ -209,7 +209,9 @@ If Vim is more your speed, you can opt in on the settings page. In Vim mode, **`
 
 A few bindings are specific to reading a conversation. In the Conversation Pane, **`u`** and **`a`** jump to the next user message and the next assistant message; **`U`** and **`A`** reverse direction. I like these because they let you skim by speaker. The UI also binds **`⌘+R`** to the refresh action so you don't accidentally reload the single-page app and lose your place. If you ever forget a binding, hit **`?`** to open the help page; it lists every binding for both modes, and shows which mode you're in.
 
-![[Pasted image 20260531093424.png|514]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531093424.png" alt="The keyboard-shortcuts help overlay" width="514">
+</div>
 
 One last bit of polish in the Conversation List: when you press **`Ctrl+P`** or **`Ctrl+N`** to step through sessions, the UI does not eagerly load each conversation. It blanks the Conversation Pane and renders a hint to hit **`Enter`** to load. Loading a heavy session is an explicit action, so you scan the list with your fingers on the keyboard and only commit to opening one when you actually want to read it.
 
@@ -217,7 +219,9 @@ One last bit of polish in the Conversation List: when you press **`Ctrl+P`** or 
 
 **`⌘+K`** opens the Search Pane and runs the query; the shortcut has become the standard across modern apps for *"I want a fast, global search"*. The pane slides in from the right so we can see the conversations list and the search hits list at the same time. The pane carries two tabs (Search and Bookmarks); **`⌘+K`** always lands on Search, and clicking the Bookmarks tab swaps the list view to your saved-message list (more on bookmarks in the Conversation Pane section). Each search hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text.
 
-![[Pasted image 20260531130608.png|400]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531130608.png" alt="The Search Pane with results" width="400">
+</div>
 
 Once results are in, the panel header carries a small inline "N of M matches" counter so you can see your position at a glance. If the count reads like `1 of 1000+`, you've hit the per-query cap; refine the query to narrow the results and see the rest. **`⌘+G`** jumps to the next match and **`⌘+Shift+G`** jumps to the previous one. **`⌘+G`** works across the whole result set, jumping between conversations as naturally as between matches in a single thread, so you can treat a result set like a playlist. If you prefer the mouse, clicking a hit loads the corresponding conversation and scrolls you precisely to the matching message.
 
@@ -241,11 +245,11 @@ Day-to-day, you'll write queries two ways, and the difference comes down to quot
 
 - **Multi-word, unquoted**, e.g. `comprehensive medium`. All words must appear in the same matched message, in any order, possibly with other words between them. This is the right tool when you remember a couple of distinctive words but have forgotten the exact phrasing.
 
-![[Pasted image 20260531093023.png]]
+![](Attachments/Pasted%20image%2020260531093023.png)
 
 - **Quoted phrase**, e.g. `"comprehensive medium"`. Wrap the whole query in double quotes and the words must appear in that exact sequence. This is the right tool when you remember a specific turn of phrase verbatim.
 
-![[Pasted image 20260531093051.png]]
+![](Attachments/Pasted%20image%2020260531093051.png)
 
 Either way, the snippet highlights every matched token (or phrase), so you can tell at a glance which words triggered the hit.
 
@@ -256,7 +260,7 @@ Every search runs through a scope you set ahead of time. A few controls decide w
 - **In the left Conversation List:** the **source dropdown** (`All Conversations` | `Claude Desktop` | `Claude Code` | `Claude Cowork`), the **workspace dropdown** (it appears only when your account spans more than one Claude workspace), and the **active filter** (any of your saved named filters).
 - **In the conversation header:** the **Show Tools** and **Show Compactions** checkboxes.
 
-![[Pasted image 20260531093153.png]]
+![](Attachments/Pasted%20image%2020260531093153.png)
 
 Together they set the scope, and both search surfaces run inside it: the Conversation List's title-search filters the list by title, and the Search Pane's full-text search matches text within whatever conversations remain. Each control you add narrows the results further, and the search re-runs itself whenever the scope changes, so previously hidden matches reappear without you re-typing the query.
 
@@ -268,7 +272,7 @@ Imagine hunting for a string you know is in a Claude Code session, but you've go
 
 Search defaults to global, but there's a complementary scope for when you've drilled into a specific session: *"search this conversation only"* or *"this project only"*. We call that a **pin**. There's a small `Search scope` button next to the conversation title with two entries: `Pin this conversation` and (when applicable) `Pin this project`. Click one and the Search Pane sprouts a small rounded scope tag (`In: <Conversation Title>`), and the Conversation List dims any rows that fall outside the scope. The pin is sticky and survives a full page reload because it's encoded in the URL, which makes it shareable too. It clears when you click the explicit unpin control or type in the Conversation List's title-search box. **`⌘+G`** honors the scope and wraps within it.
 
-![[Pasted image 20260529190103.png]]
+![](Attachments/Pasted%20image%2020260529190103.png)
 
 <a id="inside-the-conversation-pane"></a>
 
@@ -278,7 +282,7 @@ Now that we can find a conversation and step through it from the keyboard, the n
 
 When you select a conversation in the Conversation List (and hit **`Enter`**, because loading is explicit), the Conversation Pane renders the full session as a sequence of message bubbles.
 
-![[Pasted image 20260529175833.png]]
+![](Attachments/Pasted%20image%2020260529175833.png)
 
 ### Timestamps and content blocks
 
@@ -288,7 +292,7 @@ Each message shows a local timestamp on both sides of the conversation. That mat
 
 Images show up two ways, and the viewer matches each one. Claude Desktop attachments render as thumbnails: a single image at its natural aspect ratio, and two or more in a tidy two-column grid of square tiles, with a `+N` tile when a message carries more than five. Claude Code images are inline instead, so the viewer shows each one full-width at its natural shape, stacked in reading order with the surrounding text. Either way, click an image to open it full-screen.
 
-![[Pasted image 20260529183712.png]]
+![](Attachments/Pasted%20image%2020260529183712.png)
 
 Click any thumbnail and a full-screen lightbox opens; arrow keys move between images, **`Esc`** closes, **`d`** downloads, and **`o`** opens the original in a new tab. Both the thumbnail and the lightbox load from your own machine rather than the network, so the images always render, even offline and even once claude.ai no longer has them (more on how that local copy works next).
 
@@ -300,7 +304,7 @@ Images live in two places depending on which Claude they came from. Claude Deskt
 
 There's a *"View branches"* button on the conversation header. If you've ever edited an earlier message and regenerated from there, you've split that conversation into branches, and the version you're reading is only one path through it. Click *"View branches"* and a tree slides in showing every path; click any leaf to switch the Conversation Pane to that branch, so the work you did on a road you didn't end up taking is still one click away.
 
-![[Pasted image 20260530174755.png]]
+![](Attachments/Pasted%20image%2020260530174755.png)
 
 ### Bookmarks (message-level)
 
@@ -322,7 +326,9 @@ The theme has three settings: Light, Dark, and System. The default is System, wh
 
 The settings page is deliberately small. It has five sections: *Appearance* (theme), *Keyboard Navigation* (Emacs vs Vim), *Export* (default Markdown export mode), *Data* (data directory and conversation count), and *About*. Your settings follow you across browsers and Incognito windows on the same machine; pick `Dark` mode and Vim navigation in Chrome, then open the same address in Edge or Safari, and you get the same configuration without re-clicking anything.
 
-![[Pasted image 20260531093720.png|450]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531093720.png" alt="The Claude Explorer settings page" width="450">
+</div>
 
 <a id="exports-markdown-and-pdf"></a>
 

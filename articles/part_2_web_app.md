@@ -13,7 +13,7 @@
 
 > **Disclaimer**: This is an independent, community-built project. It is not affiliated with, endorsed by, sponsored by, or supported by Anthropic, PBC. "Claude" and "Claude Code" are trademarks of Anthropic, PBC. This project consumes Anthropic's products as a user would (via the same APIs and on-disk file formats the official clients use), but nothing here represents an Anthropic-sanctioned interface, and the formats this project depends on may change without notice. If they do, I'll update the project asap.
 
-![[Pasted image 20260527130644.png]]
+![](Attachments/Pasted%20image%2020260527130644.png)
 In the previous installation of this series, we covered the three moving parts that make this project work (capture → fetch → browse / export / query), plus the five reasons you'd actually want a unified local archive in the first place. If you missed that, make sure to go back and read [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) first; Part 1 explains why we have to "capture" a `sessionKey` to download Claude Desktop conversations, and that Claude Code sessions already live on disk under `~/.claude/projects/`.
 
 ## Contents
@@ -138,7 +138,7 @@ The install's done and the first fetch is streaming in. Open the browser, and th
 The Conversation List makes the unified corpus visible: one list containing all three Claude session sources side by side. Claude Desktop conversations (read from the fetched JSON files), Claude Code sessions (read live and cached from `~/.claude/projects/*.jsonl`), and Claude Cowork sessions (Desktop's "Cowork mode" local agent, whose append-only `audit.jsonl` logs live under `~/Library/Application Support/Claude/local-agent-mode-sessions/`). All three are indexed by the same full-text search and exported by the same Markdown / PDF pipeline. A few affordances make the list usable once you've got more than a couple dozen sessions. Special shout-out to Donald Norman for *The Design of Everyday Things*, which everyone should read! That was my intro to the word "affordance" a million years ago.
 
 <div align="center">
-<img src="Pasted image 20260514121201.png" alt="The Claude Explorer Conversation List showing the source filter dropdown, project grouping, starred sessions, and the refresh button" width="300">
+<img src="Attachments/Pasted%20image%2020260514121201.png" alt="The Claude Explorer Conversation List showing the source filter dropdown, project grouping, starred sessions, and the refresh button" width="300">
 </div>
 
 ### Source filter and project grouping
@@ -149,7 +149,9 @@ Just below that, you'll see the named filter dropdown. More on that in a bit.
 
 Next is a simple source filter dropdown: `All Conversations` | `Claude Desktop` | `Claude Code` | `Claude Cowork`. That sounds trivial, but it helps because your brain tends to remember context before content. Cowork sessions also pick up a "Show archived" toggle in the Conversation List (default-off) so the sessions you've archived in Desktop don't clutter the list until you ask for them.
 
-![[Pasted image 20260531095114.png|306]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531095114.png" alt="The source filter dropdown: All Conversations, Claude Desktop, Claude Code, Claude Cowork" width="306">
+</div>
 
 Claude Code sessions can also be grouped by project. The UI pulls the project name from the directory the session ran in, which is usually the git repo root (or at least somewhere inside it); it then renders a collapsible grouping so you can treat *"everything I did in repo `foo`"* as a first-class collection.
 
@@ -178,7 +180,7 @@ Claude Code sometimes spawns sessions with only local-command scaffolding and no
 
 Just below the title-search box, the Conversation List carries a small *named-filter* picker for saving and reusing title-pattern filters. Each filter has a name plus a behavior (*hide matches* or *show only matches*) plus one or more patterns. E.g., a single `cron jobs` filter can match every recurring job pattern you don't want cluttering up your view all the time, and toggling it on hides them all. The active selection is sticky across reloads, so tomorrow's view of the archive is whichever one you closed with today.
 
-![[Pasted image 20260530170930.png]]
+![](Attachments/Pasted%20image%2020260530170930.png)
 
 Filters can also be composed into groups that AND / OR other named filters together, which is handy when you want one filter that, e.g., hides cron jobs AND keeps client-A work without juggling two toggles. Exactly one filter is active at a time: select *Hide work-day chores* to narrow, select *All conversations* to broaden.
 
@@ -194,7 +196,7 @@ The viewer hides `tool_use` and `tool_result` blocks by default, because tool ou
 
 The default is the right one for *reading* a session ("what happened, in plain English?"), and the toggle is there for *auditing* one ("what did the assistant actually run, and what did it get back?"). Reconstructing a debugging thread, for example, we usually want the tool calls visible. Image attachments are deliberately *not* gated by that toggle; they're primary content.
 
-![[Pasted image 20260529175619.png]]
+![](Attachments/Pasted%20image%2020260529175619.png)
 
 Slash commands get the same careful treatment. When you ran `/coding "Help me trace this bug"` or `/plan <long prose>`, the user's prompt renders as a normal message bubble with a small `/command` badge above the body so the provenance is obvious.
 
@@ -208,7 +210,7 @@ When the **Show Tools** checkbox is on there's a header button labeled **Expand*
 
 A sibling checkbox, **Show Compactions**, controls whether `/compact` summary blocks render in the viewer. Claude Code emits a compaction whenever the running context is summarized to free room for new turns, and Cowork emits the same shape under a different on-disk marker; either way, the summary lives inside the conversation as a real message. The checkbox toggles its visibility while the conversation stays intact on disk; flipping the checkbox back on returns the summary card immediately.
 
-![[Pasted image 20260529183413.png]]
+![](Attachments/Pasted%20image%2020260529183413.png)
 
 The checkbox detects compactions across every source the corpus carries: Claude Code's native `isCompactSummary` flag for current-shape sessions, a text-prefix fallback for legacy CC sessions that pre-date that flag, and a parallel text-prefix detector for Cowork (which never carried `isCompactSummary` at all). The same checkbox also filters the title-leak case, where a session that opens on a compaction inherits a title auto-derived from that summary's first line (*"This session is being continued from a previous conversation that ran out of context…"*). One checkbox, every source.
 
@@ -222,7 +224,7 @@ Claude Explorer is really a three-pane app: the Conversation List, the Conversat
 
 One quick note on key labels: throughout this section I write shortcuts using the **`⌘`** glyph because I'm on macOS; on Windows and Linux, every place you see **`⌘`**, use **`Ctrl`** instead. The same swap applies to the **`Option`** bindings in the navigation list below: press **`Alt`** wherever I write **`Option`**. The code in `frontend/src/hooks/useKeyboardShortcuts.ts` accepts both modifiers (`metaKey || ctrlKey`), so the shortcuts work everywhere; only the labels are Mac-flavored.
 
-![[Pasted image 20260531092637.png]]
+![](Attachments/Pasted%20image%2020260531092637.png)
 ### Overview
 
 All of the search functions are bound to a small set of keyboard shortcuts. We'll get to the specifics under each binding's own section below.
@@ -270,7 +272,9 @@ The UI also binds **`⌘+R`** to the refresh action (the same one the Conversati
 
 If you ever forget a binding, hit **`?`** to open the help overlay. It lists every binding for both modes.
 
-![[Pasted image 20260531093424.png|514]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531093424.png" alt="The keyboard-shortcuts help overlay" width="514">
+</div>
 
 ### Running a search (`⌘+K`, `⌘+G`, `⌘+Shift+G`, `⌘+C`, `⌘+F`)
 
@@ -278,7 +282,9 @@ If you ever forget a binding, hit **`?`** to open the help overlay. It lists eve
 
 When you type a query and hit enter, the UI sends it to a full-text search endpoint; the back end runs the same query across both sources and returns a single list of hits. Each hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text.
 
-![[Pasted image 20260531130608.png|400]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531130608.png" alt="The Search Pane with results" width="400">
+</div>
 
 
 Once results are in, the Search Pane header carries a small inline "N of M matches" counter so you can see your position at a glance. When the result set hits the per-request cap (currently 1,000 messages, per the truncation-disclosure subsection a few paragraphs below), the counter appends a `+` to the total, so `1 of 1000+ matches` reads as "you're on hit 1; the true total is at least 1,000, and probably more." That `+` tells you at a glance that more matches exist; the footer beneath the results carries the full disclosure ("Showing first 1,000 of 12,400 message matches. Refine your query to see the rest"). **`⌘+G`** jumps to the next match and **`⌘+Shift+G`** jumps to the previous one. **`⌘+G`** works across the whole result set, jumping between conversations as naturally as between matches in a single thread; if match #7 is in one conversation and match #8 is in another, **`⌘+G`** takes you there anyway and **`⌘+Shift+G`** brings you back.
@@ -291,7 +297,9 @@ If you prefer the mouse, clicking a hit in the results list loads the correspond
 
 By default each hit shows a **snippet**: the ±150-character window around the match, with every matched token highlighted, so you can skim a long result list fast. When you want the surrounding context without leaving the Search Pane, the **Snippet / Full** toggle at the top of the results flips every card to its complete message body, rendered inline in a scrollable card. The choice is a preference, so it survives a panel close and a server restart. Full view paints fewer cards at a time than Snippet view, because a single full message can run tens of thousands of characters; if a broad query hides the hit you want behind the cap, narrow the query and it comes back.
 
-![[Pasted image 20260531132220.png|400]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531132220.png" alt="Search results with the Snippet / Full toggle" width="400">
+</div>
 
 #### What gets searched
 
@@ -313,11 +321,11 @@ Day-to-day, you'll write queries two ways, and the difference comes down to quot
 
 - **Multi-word, unquoted**, e.g. `this screenshot`. All words must appear in the same matched message, in any order, possibly with other words between them. This is the right tool when you remember a couple of distinctive words from a conversation but have forgotten the exact phrasing; an FTS5 index does the heavy lifting of finding messages where both tokens co-occur. 
 
-![[Pasted image 20260531093023.png]]
+![](Attachments/Pasted%20image%2020260531093023.png)
 
 - **Quoted phrase**, e.g. `"this screenshot"`. The words must appear in that exact sequence. This is the right tool when you remember a specific turn of phrase verbatim. Wrap the whole query in double quotes; the back end translates that to an FTS5 phrase clause, and the snippet only highlights matches of the full phrase.
 
-![[Pasted image 20260531093051.png]]
+![](Attachments/Pasted%20image%2020260531093051.png)
 
 Either way, the snippet highlights every matched token (or phrase), so you can tell at a glance which words triggered the hit.
 
@@ -333,7 +341,7 @@ Every query you run, whether you type it in the Conversation List or the Search 
   - the **Show Tools** checkbox
   - the **Show Compactions** checkbox
 
-![[Pasted image 20260531093153.png]]
+![](Attachments/Pasted%20image%2020260531093153.png)
 
 Together they set the scope, and both search surfaces run inside it: the Conversation List's title-search filters the visible list by title, and the Search Pane's full-text search matches text within whatever conversations remain. Each control you add narrows the result set further, and the search re-runs itself the moment any scope changes, so previously hidden matches reappear without you re-typing the query.
 
@@ -347,7 +355,7 @@ A per-conversation *pin* scope lives in the header too; the next section covers 
 
 Search defaults to global, which is the behavior most people expect; you opened the app to find something across the whole archive. There's also a complementary scope that matters whenever you've drilled into a specific session: *"search this conversation only"* (or *"this project only,"* for Claude Code sessions grouped under a `cwd`). In Claude Explorer, that's a **pin**.
 
-![[Pasted image 20260529190103.png]]
+![](Attachments/Pasted%20image%2020260529190103.png)
 
 There's a small `Search scope` button next to the conversation title with a dropdown carrying two entries: `Pin this conversation` and (when applicable) `Pin this project`. Click one and you're scoped; the Search Pane sprouts a small rounded scope tag that says `In: <Conversation Title>` (or the project name), and the Conversation List dims any rows that fall outside the scope so you can see at a glance what's currently in play.
 
@@ -371,7 +379,7 @@ With search and keyboard navigation covered, the rest of the work happens inside
 
 When you select a conversation in the Conversation List (and hit **`Enter`**, because loading is explicit), the Conversation Pane renders the full session as a sequence of message bubbles. The goal here is straightforward: preserve the structure of the original exchange, but make it easy to skim, search, and export. The scroll-to-match behavior from search lands here too: each message bubble carries a stable identifier, so clicking a search hit jumps the pane directly to that message, which keeps the *"search then read"* loop tight.
 
-![[Pasted image 20260529175833.png]]
+![](Attachments/Pasted%20image%2020260529175833.png)
 
 The first thing you'll probably notice is that it will show you the entire conversation, from the beginning. Anyone who has used Claude Code for more than a few days has gotten frustrated that `compact` operations make the summarized part of the disappear, seemingly forever. Turns out it's still on disk. Now, with Claude Explorer, you can get back to it again!
 
@@ -391,11 +399,11 @@ Images arrive two different ways, and the viewer renders each to match its sourc
 
 **Claude Code** inlines its images instead, as `[Image: source: …]` markers (or base64 content blocks) inside the message body, so the viewer renders each one in reading order between the surrounding text, full-width at its natural aspect ratio and capped to a readable height, rather than cropping it into the attachment grid.
 
-![[Pasted image 20260529183712.png]]
+![](Attachments/Pasted%20image%2020260529183712.png)
 
 Click any thumbnail and a full-screen lightbox opens; arrow keys move between images, **`Esc`** closes, **`d`** downloads, and **`o`** opens the original in a new tab.
 
-![[Pasted image 20260529183922.png]]
+![](Attachments/Pasted%20image%2020260529183922.png)
 
 The thumbnail and the lightbox both load through the same local backend proxy that handles your other Claude Desktop fetches, so images keep working even when you're offline from claude.ai itself. `/api/cc-image` and `/api/attachments` guard against path-traversal in different ways. `/api/cc-image` takes a raw filesystem path (Claude Code's image-cache sits outside the data dir), so it resolves the path and returns a `403` if the result lands outside the image-cache root, alongside an image-extension allow-list. `/api/attachments` never takes a raw path: it addresses files by `<org>/<file-uuid>/<variant>` segments in a fixed template, and its disk-cache fallback rejects glob metacharacters in the file UUID so a crafted `**` can't walk the tree. No clever URL crafting reads a file outside where each route is meant to look.
 
@@ -433,7 +441,7 @@ claude-explorer warm-cc-cache
 
 There's a *"View branches"* button on the conversation header. Claude can create branches when you edit an earlier message and regenerate from there; when branches exist, the UI renders a tree visualization so you can see the structure, and you can click any leaf to switch the Conversation Pane to that branch's path (the URL gains a `?leaf=<uuid>` so the choice is shareable and back-button friendly).
 
-![[Pasted image 20260530174755.png]]
+![](Attachments/Pasted%20image%2020260530174755.png)
 
 ### Bookmarks (message-level)
 
@@ -441,7 +449,7 @@ Stars in the Conversation List save a whole conversation; bookmarks save a singl
 
 The bookmark list lives in the **Bookmarks** tab of the Search Pane (the same pane that holds the search results; click the tab header to switch between them, and the choice persists across sessions). The list groups bookmarks by conversation, and each row shows a ~140-character snippet of the saved message, an optional note you can edit inline, and the timestamp. Click any row to navigate to that exact message in the Conversation Pane; that click counts as explicit navigation under the demonstrated-focus rule, same as a search-result card click, so the viewer moves to the bookmarked bubble. An edit icon opens the note field, and a trash icon deletes the bookmark.
 
-![[Pasted image 20260530171502.png]]
+![](Attachments/Pasted%20image%2020260530171502.png)
 
 A small **Export to Markdown** button at the top of the panel writes the whole bookmark set to a single `bookmarks-YYYY-MM-DD.md` file. Each entry includes the snippet and any note, grouped under its conversation, so the export reads cleanly outside the app. The back end persists everything atomically to `~/.claude-explorer/bookmarks.json`, so a `claude-explorer serve` restart never loses a bookmark.
 
@@ -457,7 +465,9 @@ Most of us spend enough time in tools like this that comfort earns its keep; if 
 
 Theme is a three-valued state: `'light' | 'dark' | 'system'`, and `'system'` is the default. (Skip ahead if the theming internals don't interest you.) When you pick `system`, the UI follows your OS preference via `matchMedia('(prefers-color-scheme: dark)')`, including changes mid-session; if you flip your system from light to dark while the app is open, the UI flips with it. The app applies the effective theme by toggling a `.dark` class on the document element, which keeps the CSS story straightforward and avoids the *"half the app is themed, half isn't"* problem.
 
-![[Pasted image 20260531100121.png|250]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531100121.png" alt="The Light / Dark / System theme toggle" width="250">
+</div>
 
 The toggle lives in the footer of the Conversation List, and it cycles Light → Dark → System. I like cyclical toggles for three-state theme because it's fast, it's discoverable, and it doesn't require a settings panel trip every time you're on a laptop in a bright cafe, but it's available in the Settings panel, too.
 
@@ -465,7 +475,9 @@ The toggle lives in the footer of the Conversation List, and it cycles Light →
 
 The settings page is deliberately small. It has five sections: *Appearance* (theme), *Keyboard Navigation* (Emacs vs Vim), *Export* (default Markdown export mode), *Data* (data directory and conversation count), and *About*. It's the place you go to make a deliberate choice; the main UI remains the Conversation List and the Conversation Pane.
 
-![[Pasted image 20260531093720.png|450]]
+<div align="center">
+<img src="Attachments/Pasted%20image%2020260531093720.png" alt="The Claude Explorer settings page" width="450">
+</div>
 
 
 Settings persist server-side rather than in browser localStorage. (Skip ahead if the persistence internals don't interest you.) When you change a setting, the front end `PATCH`es `/api/preferences`, and the back end writes the merged blob to `~/.claude-explorer/preferences.json` It uses atomic tmp-and-rename, `0600` permissions, a top-level merge per key so toggling one setting leaves the others intact, and a cleanup path that unlinks the `.tmp` if the write ever fails so the data dir stays clean after a botched write.
@@ -490,7 +502,7 @@ Copy affordances show up where you'd expect. Each content block shows a *"two ov
 
 Clicking *Markdown* in the conversation header opens a small dialog with three radios: **Inline** (a single `.md` file that references each image by URL), **Bundle CommonMark** (a `.zip` with `conversation.md` plus `images/` and `attachments/` folders, using standard `[name](path)` links), and **Bundle Obsidian** (the same zip layout but with `[[wikilink]]` syntax in `conversation.md` so it drops cleanly into an Obsidian vault). A *"Save as default"* checkbox saves the choice so the dialog pre-selects your last pick the next time you open it. Inline is great for pasting a thread into a pull request or a notes app; bundles are the right pick when you want a portable archive that survives without the local server running.
 
-![[Pasted image 20260530171126.png]]
+![](Attachments/Pasted%20image%2020260530171126.png)
 
 Bundles include every attachment in the conversation, of every kind. Image attachments (both Claude Desktop and Claude Code) land in `images/`; PDFs, text files, and anything else Claude Desktop accepted as a document land in `attachments/`. The Markdown links inside `conversation.md` are rewritten to point at the bundled paths, so the export remains internally consistent whether you're reading it in CommonMark, Obsidian, or unzipping it for a teammate.
 
@@ -504,7 +516,7 @@ Backend export also strips two `TOOL_PLACEHOLDER` strings Claude Desktop bakes i
 
 WeasyPrint handles PDF export. It needs a few system libraries (`pango`, `cairo`, `libffi`); if you ran the optional `brew install` line up in the install section, you're set. PDF export then works the way you'd expect: you click export, you get a PDF representation of the conversation. Just like the Markdown export, the PDF inherits both header checkboxes; whether tool calls appear and whether `/compact` summaries render in full both follow the same Show Tools and Show Compactions preferences the viewer uses.
 
-![[Pasted image 20260530171208.png]]
+![](Attachments/Pasted%20image%2020260530171208.png)
 
 Skip ahead if the PDF generation internals don't interest you.
 
