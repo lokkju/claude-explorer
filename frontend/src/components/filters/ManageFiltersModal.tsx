@@ -68,7 +68,7 @@ import {
   type ReactNode,
 } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -374,6 +374,9 @@ export function ManageFiltersModal({ isOpen, onClose }: ManageFiltersModalProps)
       <DialogContent className="sm:max-w-4xl" aria-label="Manage filters">
         <DialogHeader>
           <DialogTitle>Manage filters</DialogTitle>
+          <DialogDescription>
+            Create, edit, and combine saved title-pattern filters for the conversation list.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-1 sm:grid-cols-[18rem_minmax(0,1fr)] gap-4 min-h-[24rem]">
