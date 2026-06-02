@@ -205,6 +205,48 @@ It's cheap and orthogonal to the static checks.
 - See the `ManageFiltersModal.tsx` ScrollArea for the canonical
   application + comment.
 
+### Radix `<RadioGroup>` `.check()` races controlled-component re-renders
+
+- Playwright's `.check()` clicks the radio AND asserts
+  `aria-checked="true"` before returning. Radix `<RadioGroupItem>`
+  flips `aria-checked` only once the parent `<RadioGroup>`'s `value`
+  prop changes, which requires the consumer's `onValueChange` handler
+  to fire, the React state setter to run, and a re-render to land.
+  When the setter routes through TanStack Query's `useMutation` (e.g.
+  `usePreferences`), the re-render lands on a microtask that often
+  loses the race against `.check()`'s post-assertion under
+  parallel-worker load.
+- Symptom: `Error: locator.check: Clicking the checkbox did not
+  change its state`, with the locator log showing
+  `aria-checked="false" data-state="unchecked"` AFTER the click
+  action succeeded. The test passes on retry, so it surfaces as
+  "flaky" not "failed". Easy to miss until the suite runs
+  often enough that the retry budget runs out.
+- Fix: use `.click()` and verify state via the durable side effect
+  you actually care about (the PATCH body, a downstream DOM change,
+  or a post-`waitForResponse` aria-checked assertion). Pattern:
+  ```ts
+  // WRONG: races the controlled-component update
+  await radioGroup.getByRole('radio', { name: 'Bundle Obsidian' }).check()
+
+  // RIGHT: click, then verify via the durable signal
+  const patch = page.waitForResponse((r) =>
+    r.url().endsWith('/api/preferences') && r.request().method() === 'PATCH'
+  )
+  await radioGroup.getByRole('radio', { name: 'Bundle Obsidian' }).click()
+  await patch
+  await expect(radioGroup.getByRole('radio', { name: 'Bundle Obsidian' })).toBeChecked()
+  ```
+- The rule applies to every Radix primitive wrapping a controlled
+  component whose state setter runs asynchronously (`RadioGroup`,
+  `Switch`, controlled `Checkbox`). Native HTML
+  `<input type="checkbox">` updates synchronously and stays safe with
+  `.check()`. When the radio's state lives in plain `useState` with
+  no async mutation, `.check()` may work, but `.click()` plus a
+  post-assertion is the lower-foot-gun default.
+- Project sites already on the fix: `preferences-cross-context.spec.ts`,
+  `settings.spec.ts`, `markdown-export-mode-unified.spec.ts`.
+
 ### Strict-mode locator collisions
 
 Playwright runs locators in strict mode by default; if a query matches

@@ -6,7 +6,7 @@ All UX flows and rules are documented in [UX.md](./UX.md). Code changes that aff
 
 ## Testing Rules
 
-When writing or reviewing tests (Playwright, pytest, vitest), read [CLAUDE-TESTING.md](./CLAUDE-TESTING.md). It codifies black-box / spec-driven discipline, bidirectional verification, Playwright-specific gotchas (overflow-clipping, shadcn `<Select>`, Radix `<ScrollArea>`), fixture-design rules, and a pre-flight checklist. Other agents (pure feature work, refactors, deployments) can skip it.
+When writing or reviewing tests (Playwright, pytest, vitest), read [CLAUDE-TESTING.md](./CLAUDE-TESTING.md). It codifies black-box / spec-driven discipline, bidirectional verification, Playwright-specific gotchas (overflow-clipping, shadcn `<Select>`, Radix `<ScrollArea>`, Radix `<RadioGroup>` `.check()` race), fixture-design rules, and a pre-flight checklist. Other agents (pure feature work, refactors, deployments) can skip it.
 
 ## Performance Work
 
@@ -335,6 +335,36 @@ command line as shown above — the server doesn't go through conftest.
 - TypeScript: Strict mode, prefer functional components
 - Commits: Conventional commit messages, no AI attribution lines
 
+## Static-analysis tooling
+
+Three layers run alongside the manual pre-push checklist. Neither replaces it — they cover different failure modes (greps find leaked credentials; LLM/AST tools find logic bugs).
+
+### React Doctor (`millionco/react-doctor`)
+
+Oxlint-based AST scanner for React (~250 rules across architecture, state-and-effects, performance, a11y, correctness). Catches things `eslint-plugin-react-hooks` doesn't, e.g. inline `<Provider value={{...}}>` literals via `jsx-no-constructed-context-values` — directly relevant to the [[Performance Work]] invariant #2.
+
+Two npm scripts:
+
+```bash
+cd frontend
+npm run lint:react        # full-codebase informational scan; never fails CI
+npm run lint:react:diff   # pre-push gate: scan files changed vs main, fail on errors
+```
+
+**Baseline as of 2026-05-27**: 71/100, 346 issues (4 architecture errors + 2 state-and-effects errors + 340 warnings across a11y/perf/correctness). Do not block a push on pre-existing baseline. Pre-push gate is `lint:react:diff` — fails only if YOUR change introduces a new error.
+
+Known gap: React Doctor does NOT catch [[Performance Work]] invariant #1 (`useContext` of churning provider in list-rendered components). No public linter does — that one stays a human-review / postmortem rule.
+
+### `security-guidance` plugin (Anthropic, user-scope)
+
+Real-time `PreToolUse` hook that intercepts `Write`/`Edit`/`MultiEdit` and warns about `eval`, `pickle`, `dangerouslySetInnerHTML`, `child_process.exec`, GHA injection, command injection patterns. Free; runs at the harness level (~0 token cost). Installed via `claude plugin install security-guidance@claude-plugins-official`. Verify with `claude plugin list`.
+
+If a hook fires during normal editing, READ the warning — don't paper over it with a config override. The hook fires on a curated list of known-bad patterns, not on style preferences.
+
+### `/security-review` slash command (built-in)
+
+Diff-based LLM security review of pending changes on the current branch. Same engine as the `anthropics/claude-code-security-review` GitHub Action. Covers SQLi, XSS, authn/authz, IDOR, SSRF, weak crypto, RCE/deserialization, hardcoded secrets, supply-chain. Manual invocation only — see the pre-push checklist.
+
 ## Pre-push checklist (runs before every push that affects the public repo)
 
 Public-flip is a one-way door: once a commit is on `origin/main` and the repo is public, secrets, personal paths, and AI attribution become permanently public-cached (search-indexed, mirrored by archivers, scraped by training-data crawlers). Run this scan before pushing to a public repo. **Every step MUST return clean (or only known-OK matches the maintainer has eyeballed) before push.**
@@ -374,6 +404,12 @@ git grep -nE '(internal\.|\.local/|linear\.app/|slack\.com/archives|grafana\.|da
 
 # 10. TODO/FIXME/XXX in user-facing code (samples below should be intentional documented tech debt only)
 git grep -nE 'TODO|FIXME|XXX' -- 'frontend/src/' 'backend/' ':!**/tests/**'
+
+# 11. React Doctor diff-gate — fails on NEW errors in files changed vs main
+(cd frontend && npm run lint:react:diff)
+
+# 12. LLM security review of the diff (built-in slash command; run inside Claude Code)
+#     /security-review
 ```
 
 **Known-OK matches** (won't fail the scan but worth re-eyeballing):

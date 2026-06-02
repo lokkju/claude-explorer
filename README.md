@@ -653,8 +653,8 @@ Reports the current `cleanupPeriodDays` value in `~/.claude/settings.json` and (
 # Report only
 python3 scripts/check-cleanup-period.py
 
-# Effectively disable auto-cleanup (~10 years)
-python3 scripts/check-cleanup-period.py --set 3650
+# Effectively disable auto-cleanup (~100 years)
+python3 scripts/check-cleanup-period.py --set 36500
 ```
 
 Refuses to set `0` (which silently disables conversation persistence — Claude Code [issue #23710](https://github.com/anthropics/claude-code/issues/23710)). Warns if you set anything shorter than 30 or 365 days.
