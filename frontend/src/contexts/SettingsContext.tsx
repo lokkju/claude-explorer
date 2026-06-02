@@ -1,11 +1,36 @@
-/* eslint-disable react-refresh/only-export-components -- safe: context Provider, hook, and three runtime predicates (isTheme/isKeyboardMode/isMarkdownDialect) co-located by intent. The predicates pair-narrow the Settings unions; splitting them into a separate file would force every consumer to track two imports. HMR fast refresh falls back to full reload for this file; no runtime impact. */
-import { createContext, useCallback, useContext, useState, useEffect, useMemo, type ReactNode } from 'react'
+/* eslint-disable react-refresh/only-export-components -- safe: context Provider, hook, and three runtime predicates (isTheme/isKeyboardMode/isMarkdownExportMode) co-located by intent. The predicates pair-narrow the Settings unions; splitting them into a separate file would force every consumer to track two imports. HMR fast refresh falls back to full reload for this file; no runtime impact. */
+import { createContext, use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { SortField, SortOrder } from '@/lib/types'
 import { usePreferences } from '@/hooks/usePreferences'
 
+// P1.1 (2026-05-30) — One-shot tombstone migration for orphan markdown
+// preference keys. The 2026-05-29 MarkdownExportMode unification deleted
+// `markdownBundleImages` (boolean) and `markdownDialect` (string) from
+// SettingsContext, SettingsPage, and MarkdownExportDialog. The new code
+// never reads or writes them, but existing users still carry those keys
+// in `~/.claude-explorer/preferences.json`. Silently abandoning them
+// forecloses ever reusing the same key names (a V2 string-valued
+// `markdownBundleImages` would be ambiguous with the old boolean shape).
+// One PATCH at first mount with the new code tombstones them to `null`
+// and flips a sentinel mirroring the `FilterContext._migratedV1` pattern
+// so future mounts skip the work.
+const ORPHAN_MIGRATION_SENTINEL_KEY = '_migratedOrphanKeysV1'
+const ORPHAN_KEYS = ['markdownBundleImages', 'markdownDialect'] as const
+
 export type Theme = 'light' | 'dark' | 'system'
 export type KeyboardMode = 'emacs' | 'vim'
-export type MarkdownDialect = 'commonmark' | 'obsidian'
+
+// Markdown export mode — the SINGLE source of truth for how the
+// Markdown export should be packaged. Before unification (2026-05-29)
+// this lived only in MarkdownExportDialog and was shadowed by orphan
+// `markdownBundleImages` + `markdownDialect` keys the Settings page
+// wrote but nothing else read. Now the Settings Export section and
+// the dialog's "Save as default" both write/read this same key.
+export type MarkdownExportMode =
+  | 'inline'
+  | 'bundle-commonmark'
+  | 'bundle-obsidian'
 
 // Runtime predicates for the closed string unions above. Radix
 // `RadioGroup.onValueChange` hands callers a `string`, not the
@@ -15,7 +40,11 @@ export type MarkdownDialect = 'commonmark' | 'obsidian'
 // unknown values instead of writing garbage to a typed setter.
 const THEMES: readonly Theme[] = ['light', 'dark', 'system']
 const KEYBOARD_MODES: readonly KeyboardMode[] = ['emacs', 'vim']
-const MARKDOWN_DIALECTS: readonly MarkdownDialect[] = ['commonmark', 'obsidian']
+const MARKDOWN_EXPORT_MODES: readonly MarkdownExportMode[] = [
+  'inline',
+  'bundle-commonmark',
+  'bundle-obsidian',
+]
 
 export function isTheme(v: unknown): v is Theme {
   return typeof v === 'string' && (THEMES as readonly string[]).includes(v)
@@ -25,8 +54,11 @@ export function isKeyboardMode(v: unknown): v is KeyboardMode {
   return typeof v === 'string' && (KEYBOARD_MODES as readonly string[]).includes(v)
 }
 
-export function isMarkdownDialect(v: unknown): v is MarkdownDialect {
-  return typeof v === 'string' && (MARKDOWN_DIALECTS as readonly string[]).includes(v)
+export function isMarkdownExportMode(v: unknown): v is MarkdownExportMode {
+  return (
+    typeof v === 'string' &&
+    (MARKDOWN_EXPORT_MODES as readonly string[]).includes(v)
+  )
 }
 
 interface SettingsContextType {
@@ -60,11 +92,11 @@ interface SettingsContextType {
   // Right-pane tab
   rightPaneTab: 'search' | 'bookmarks'
   setRightPaneTab: (tab: 'search' | 'bookmarks') => void
-  // Markdown export bundle settings (Issue #4)
-  markdownBundleImages: boolean
-  setMarkdownBundleImages: (bundle: boolean) => void
-  markdownDialect: MarkdownDialect
-  setMarkdownDialect: (dialect: MarkdownDialect) => void
+  // Markdown export mode — unified 2026-05-29. Drives both the
+  // Settings page Export section AND the conversation dialog's
+  // pre-selected radio + "Save as default" write.
+  markdownExportMode: MarkdownExportMode
+  setMarkdownExportMode: (mode: MarkdownExportMode) => void
 }
 
 const SettingsContext = createContext<SettingsContextType | null>(null)
@@ -116,13 +148,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     'rightPaneTab',
     'search',
   )
-  const [markdownBundleImages, setMarkdownBundleImages] = usePreferences<boolean>(
-    'markdownBundleImages',
-    false,
-  )
-  const [markdownDialect, setMarkdownDialect] = usePreferences<MarkdownDialect>(
-    'markdownDialect',
-    'commonmark',
+  const [markdownExportMode, setMarkdownExportMode] = usePreferences<MarkdownExportMode>(
+    'markdownExportMode',
+    'inline',
   )
   const [sortField, setSortFieldRaw] = usePreferences<SortField>(
     'sortField',
@@ -154,6 +182,63 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     },
     [setSortFieldRaw, setSortOrder],
   )
+
+  // P1.1: orphan-key migration. We need the raw envelope (NOT a sliced
+  // value from usePreferences) to decide whether to fire — both to read
+  // the sentinel and to detect whether either orphan key is non-null on
+  // disk. Subscribing via useQuery here is cheap: the query is already
+  // cached under `['preferences']` by every usePreferences consumer, so
+  // we share its fetched envelope without re-issuing the GET.
+  //
+  // Mirrors the `FilterContext._migratedV1` pattern: ref guards within
+  // a single mount; the on-disk sentinel guards future mounts. Failure
+  // resets the ref so the next mount retries — silent server unavail
+  // doesn't permanently strand the orphan keys.
+  const qc = useQueryClient()
+  const didMigrateOrphanKeysRef = useRef(false)
+  const { data: prefsEnvelope } = useQuery<{ version: number; data: Record<string, unknown> }>({
+    queryKey: ['preferences'],
+    queryFn: async ({ signal }) => {
+      const r = await fetch('/api/preferences', { signal })
+      if (!r.ok) throw new Error(`prefs GET ${r.status}`)
+      return r.json() as Promise<{ version: number; data: Record<string, unknown> }>
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  })
+  useEffect(() => {
+    if (didMigrateOrphanKeysRef.current) return
+    if (!prefsEnvelope) return
+    const data = prefsEnvelope.data
+    if (data[ORPHAN_MIGRATION_SENTINEL_KEY] === true) return
+    // Only fire if at least one orphan key is present and non-null on
+    // disk — a fresh install with neither key shouldn't be charged a
+    // PATCH just to write the sentinel.
+    const hasOrphanData = ORPHAN_KEYS.some((k) => data[k] !== undefined && data[k] !== null)
+    if (!hasOrphanData) return
+
+    didMigrateOrphanKeysRef.current = true
+    void (async () => {
+      const payload: Record<string, unknown> = {
+        [ORPHAN_MIGRATION_SENTINEL_KEY]: true,
+      }
+      for (const k of ORPHAN_KEYS) payload[k] = null
+      try {
+        await fetch('/api/preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: payload }),
+        })
+      } catch {
+        /* best effort — next mount will retry */
+        didMigrateOrphanKeysRef.current = false
+        return
+      }
+      // Invalidate so the cache reflects the tombstoned values + sentinel
+      // without a hard refresh.
+      qc.invalidateQueries({ queryKey: ['preferences'] })
+    })()
+  }, [prefsEnvelope, qc])
 
   const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -210,10 +295,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setKeyboardMode,
       rightPaneTab,
       setRightPaneTab,
-      markdownBundleImages,
-      setMarkdownBundleImages,
-      markdownDialect,
-      setMarkdownDialect,
+      markdownExportMode,
+      setMarkdownExportMode,
     }),
     [
       showToolCalls,
@@ -237,10 +320,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setKeyboardMode,
       rightPaneTab,
       setRightPaneTab,
-      markdownBundleImages,
-      setMarkdownBundleImages,
-      markdownDialect,
-      setMarkdownDialect,
+      markdownExportMode,
+      setMarkdownExportMode,
     ],
   )
 
@@ -252,7 +333,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 }
 
 export function useSettings() {
-  const context = useContext(SettingsContext)
+  // Phase 3: React 19 use() replaces useContext().
+  const context = use(SettingsContext)
   if (!context) {
     throw new Error('useSettings must be used within a SettingsProvider')
   }
