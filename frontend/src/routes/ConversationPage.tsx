@@ -1,38 +1,36 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useTransition, useDeferredValue } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { FileText, FileType, GitBranch, Copy, Check, Wrench, Terminal, MessageSquare, FolderCode, ChevronsUpDown, ChevronDown, ChevronUp, Scissors, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { errorToast } from '@/lib/errorToast'
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/queryClient'
 import { useConversation } from '@/hooks/useConversations'
 import { useSettings } from '@/contexts/SettingsContext'
-import { useKeyboardNavigation, type MessageInfo, type FocusArea } from '@/contexts/KeyboardNavigationContext'
+import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import {
   MANUAL_SCROLL_SENTINEL_UUID,
   useSearchPanel,
 } from '@/contexts/SearchPanelContext'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { MessageBubble } from '@/components/message/MessageBubble'
-import { ConversationLightboxProvider } from '@/contexts/ConversationLightboxContext'
-import { CompactMarker } from '@/components/conversation/CompactMarker'
 import { useBookmarks } from '@/contexts/BookmarkContext'
 import { TreeViewModal } from '@/components/branch/TreeViewModal'
-import { PinScopeButton } from '@/components/search/PinScopeButton'
 import { MarkdownExportDialog } from '@/components/conversation/MarkdownExportDialog'
-import { SessionPreludeAffordance } from '@/components/conversation/SessionPreludeAffordance'
-import { cn, formatFullDate, sanitizeFilename, downloadBlob, conversationToMarkdown, messageHasVisibleContent, computeVisibleMessages } from '@/lib/utils'
+import { ConversationToolbar } from '@/components/conversation/ConversationToolbar'
+import { ConversationViewerScrollControls } from '@/components/conversation/ConversationViewerScrollControls'
+import { ConversationHeader } from '@/components/conversation/ConversationHeader'
+import { ConversationMessageStream } from '@/components/conversation/ConversationMessageStream'
+import { cn, computeVisibleMessages } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { ApiError } from '@/lib/types'
-import type { Message, ConversationDetail, CompactMarker as CompactMarkerType } from '@/lib/types'
 import { scrollBubbleIntoView } from '@/lib/scrollBubbleIntoView'
 import { useUnmountSafeTimer } from '@/hooks/useUnmountSafeTimer'
-import {
-  expandAllToolsButtonLabel,
-  computeScrollAnchorAdjustment,
-} from '@/components/conversation/expandAllToolsLabel'
+import { useBracketCompactNav } from '@/hooks/useBracketCompactNav'
+import { useScrollToHighlight } from '@/hooks/useScrollToHighlight'
+import { useSearchMatchHighlighting } from '@/hooks/useSearchMatchHighlighting'
+import { useConversationCopyAndExports } from '@/hooks/useConversationCopyAndExports'
+import { useExpandAllToolsAnchor } from '@/hooks/useExpandAllToolsAnchor'
+import { useMessageNavigationRegistry } from '@/hooks/useMessageNavigationRegistry'
+import { useBookmarkHotkey } from '@/hooks/useBookmarkHotkey'
 
 export function ConversationPage() {
   const { uuid } = useParams<{ uuid: string }>()
@@ -73,36 +71,18 @@ export function ConversationPage() {
     markDemonstratedFocus,
     clearDemonstratedFocus,
   } = useSearchPanel()
-  // 2026-05-24 search-highlight fix: the active-match UUID is the
-  // sidebar's currently-selected match (Cmd+G / card-click / auto-
-  // promote). It's STABLE while the user is reading — it only changes
-  // on the next search navigation. We use it (not `highlightMessageId`,
-  // which is the ephemeral `?highlight=` URL param cleared after 2 s)
-  // to gate which bubble gets the live `searchQuery` for inline `<mark>`
-  // decoration. Result: matching tokens stay yellow inside the bubble
-  // the user just scrolled to, even after the URL cleanup fires.
-  //
-  // Perf preservation: only ONE bubble (the active match) gets non-
-  // empty searchQuery; every other bubble gets '' (referentially
-  // stable empty string → React.memo bailout still works → no all-
-  // bubbles-rerender storm per keystroke).
-  const activeMatchUuid =
-    activeMatchIndex >= 0 && activeMatchIndex < flatMatches.length
-      ? flatMatches[activeMatchIndex]?.messageUuid ?? null
-      : null
-  // Issue 3 fix (2026-05-20): an earlier iteration (c6c31b7) had every
-  // MessageBubble subscribe to SearchPanelContext directly via
-  // `useSearchPanelOptional()` so it could highlight the live query
-  // inline. On a 15K-message conversation, the resulting
-  // ALL-bubbles-re-render-per-keystroke storm locked the main thread
-  // for multiple seconds and starved the smooth-scroll animation that
-  // search-hit navigation depends on. Read `query` once HERE (one
-  // context subscription), defer it (lets React deprioritize the bulk
-  // re-render), and thread it down as a prop. MessageBubble's memo
-  // comparator now includes `searchQuery` so the deferred-value flip
-  // actually short-circuits unchanged subtrees, and scrollIntoView
-  // wins its animation frame.
-  const deferredSearchQuery = useDeferredValue(searchPanelQuery)
+  // 2026-05-24 + 2026-05-31 (Commit 3 of decomposition plan): derive
+  // the active-match UUID + deferred query in useSearchMatchHighlighting.
+  // The hook reads its inputs from the page's already-extant
+  // useSearchPanel() destructure rather than calling useSearchPanel()
+  // itself, so the page still has exactly ONE subscription to the
+  // SearchPanel provider. See the hook's docstring for the perf rationale
+  // (active-match-only gating prevents the 15K-msg re-render storm).
+  const { activeMatchUuid, deferredSearchQuery } = useSearchMatchHighlighting({
+    query: searchPanelQuery,
+    activeMatchIndex,
+    flatMatches,
+  })
   const {
     setMessages,
     setMessagesAndPinSelection,
@@ -116,17 +96,28 @@ export function ConversationPage() {
   } = useKeyboardNavigation()
   const [isTreeOpen, setIsTreeOpen] = useState(false)
   const [markdownDialogOpen, setMarkdownDialogOpen] = useState(false)
-  const [copiedAll, setCopiedAll] = useState(false)
-  const [copiedUuid, setCopiedUuid] = useState(false)
-  const [copiedPath, setCopiedPath] = useState(false)
-  // S5 T2d (2026-05-20): unmount-safe scheduling for the 2s copy-feedback
-  // flag clears. Bare setTimeout left orphan timers when the user clicked
-  // Copy then navigated away before the 2s elapsed; React 18 silently
-  // no-op'd the setState, but the warning surfaced in dev and React 19's
-  // stricter semantics would surface it harder.
-  const scheduleCopiedAllClear = useUnmountSafeTimer()
-  const scheduleCopiedUuidClear = useUnmountSafeTimer()
-  const scheduleCopiedPathClear = useUnmountSafeTimer()
+  // 2026-05-31 (Commit 4 of decomposition plan): copy/export side-effects
+  // moved into useConversationCopyAndExports (clipboard flags + 2 s timer
+  // resets, PDF export pipeline with abort + spinner toast). The hook
+  // returns the same prop names the existing ConversationToolbar already
+  // consumes (`copiedAll`, `handleCopyAll`, `handleExportPdf`,
+  // `isExportingPdf`) plus the details-collapsible callbacks
+  // (`copiedUuid`, `copiedPath`, `onCopyUuid`, `onCopyPath`) that
+  // Commit 5's ConversationHeader will consume.
+  const {
+    copiedAll,
+    copiedUuid,
+    copiedPath,
+    handleCopyAll,
+    onCopyUuid,
+    onCopyPath,
+    handleExportPdf,
+    isExportingPdf,
+  } = useConversationCopyAndExports({
+    conversation,
+    showToolCalls,
+    includeCompactInExports,
+  })
   // The highlight-clear timer (sets the URL parameter after the
   // ring-flash animation completes) is scheduled from inside the
   // highlight useEffect — see below.
@@ -143,6 +134,7 @@ export function ConversationPage() {
   const [showPrelude, setShowPrelude] = useState(false)
   // Reset the toggle when navigating between conversations so the next
   // CC session also opens with the prelude hidden.
+  // oxlint-disable-next-line react-doctor/no-derived-state-effect -- The "use a key prop instead" recommendation would unmount/remount the ENTIRE ConversationPage subtree on every uuid navigation. That would discard the virtualizer's measurement cache, the scroll position, every memoized bubble, and every open dialog. Resetting one boolean is cheaper than nuking the page. See PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md for the perf cost of avoidable re-renders on this surface.
   useEffect(() => {
     setShowPrelude(false)
   }, [uuid])
@@ -189,70 +181,22 @@ export function ConversationPage() {
     return fn
   }, [])
 
-  // Issue 2 + 3 (2026-05-20) — "Expand/Collapse all tools" UX.
-  //
-  // Issue 2: setExpandAllTools cascades a synchronous re-render through
-  // every ToolUseBlock / ToolResultBlock. On a long conversation that
-  // takes hundreds of ms with no feedback — the click feels broken.
-  // useTransition marks the update as non-blocking; isExpandPending
-  // drives a button-label swap to "Expanding…" / "Collapsing…" so the
-  // user sees instant acknowledgement.
-  //
-  // Issue 3: when a message has focus from a search hit (URL
-  // `?highlight=<uuid>` scrolled it to viewport center), expanding the
-  // tool bubbles ABOVE it pushes the focused message down off-screen —
-  // and collapse pulls it up. Capture the focused element's viewport
-  // top in handleToggleExpandAll BEFORE the transition fires; restore
-  // scrollTop by the delta in a useLayoutEffect after the new layout
-  // commits.
-  const [isExpandPending, startExpandTransition] = useTransition()
-  const expandAnchorBeforeRef = useRef<{ uuid: string; top: number } | null>(null)
-  const handleToggleExpandAll = useCallback(() => {
-    // Capture anchor position synchronously BEFORE the transition queues
-    // the state change. Prefer the keyboard-selected message (the one
-    // the user actually has focus on); fall back to first message whose
-    // top is >= scroll container's top (i.e., first fully visible row).
-    const selectedId = getSelectedMessageId()
-    let anchorUuid: string | null = selectedId ?? null
-    if (!anchorUuid && scrollAreaRef.current) {
-      const containerTop = scrollAreaRef.current.getBoundingClientRect().top
-      for (const [uuid, el] of messageRefs.current.entries()) {
-        if (el.getBoundingClientRect().top >= containerTop) {
-          anchorUuid = uuid
-          break
-        }
-      }
-    }
-    if (anchorUuid) {
-      const el = messageRefs.current.get(anchorUuid)
-      if (el) {
-        expandAnchorBeforeRef.current = { uuid: anchorUuid, top: el.getBoundingClientRect().top }
-      }
-    }
-    startExpandTransition(() => {
-      setExpandAllTools(!expandAllTools)
-    })
-  }, [expandAllTools, setExpandAllTools, getSelectedMessageId])
-
-  // Restore the captured anchor's viewport top after the transition
-  // commits the new layout. useLayoutEffect runs synchronously after
-  // DOM mutations and BEFORE the browser paints, so the user never
-  // sees the intermediate (drifted) scroll position.
-  useLayoutEffect(() => {
-    const before = expandAnchorBeforeRef.current
-    if (!before || !scrollAreaRef.current) return
-    const el = messageRefs.current.get(before.uuid)
-    if (!el) {
-      expandAnchorBeforeRef.current = null
-      return
-    }
-    const newTop = el.getBoundingClientRect().top
-    const delta = computeScrollAnchorAdjustment(before.top, newTop)
-    if (delta !== 0) {
-      scrollAreaRef.current.scrollTop += delta
-    }
-    expandAnchorBeforeRef.current = null
-  }, [expandAllTools])
+  // Expand/Collapse-all-tools transition + scroll-anchor restoration
+  // extracted into useExpandAllToolsAnchor (2026-05-31, Commit 6 of
+  // decomposition plan). The hook owns the useTransition, the
+  // expandAnchorBeforeRef anchor capture in `handleToggleExpandAll`,
+  // AND the useLayoutEffect that restores scroll position via delta
+  // math. See the hook docstring for the Issue 2 (long re-render) +
+  // Issue 3 (anchor drift) UX rationale; the two-step protocol MUST
+  // stay co-located inside the hook to preserve the layout-effect
+  // timing relative to the anchor capture.
+  const { handleToggleExpandAll, isExpandPending } = useExpandAllToolsAnchor({
+    expandAllTools,
+    setExpandAllTools,
+    scrollAreaRef,
+    messageRefs,
+    getSelectedMessageId,
+  })
 
   // Header-toggle scroll-pin (Show Tools / Show Compactions,
   // 2026-05-25). Defense-in-depth: under Chromium's CSS scroll-
@@ -343,24 +287,6 @@ export function ConversationPage() {
   // The post-toggle recenter effect was relocated below `visibleMessages`
   // and `virtualizer` definitions so the refs that read those values can
   // see them at first render. See `recenterEffect` block further down.
-
-  // Task A5 — PDF export spinner toast state.
-  // `isExportingPdf` drives the `disabled` attribute on the button (needs
-  // to trigger re-render). `isExportingPdfRef` is a synchronous re-entry
-  // guard against rapid double-clicks before React commits the state.
-  // `exportPdfAbortRef` lets us cancel the in-flight fetch on unmount —
-  // otherwise the browser holds the connection slot and the backend
-  // continues spending CPU on WeasyPrint for up to 30s after the user
-  // navigates away. See PLANS/2026.05.18-perf-polish.md task A5.
-  const [isExportingPdf, setIsExportingPdf] = useState(false)
-  const isExportingPdfRef = useRef(false)
-  const exportPdfAbortRef = useRef<AbortController | null>(null)
-
-  useEffect(() => {
-    return () => {
-      exportPdfAbortRef.current?.abort()
-    }
-  }, [])
 
   const compactMarkers = useMemo(
     () => (hideCompactMarkers ? [] : conversation?.compact_markers ?? []),
@@ -637,236 +563,63 @@ export function ConversationPage() {
     return () => cancelAnimationFrame(rafId)
   }, [hideCompactMarkers, showToolCalls, isJsdom])
 
-  // Reset message index when a new conversation is opened
-  const prevUuidRef = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    if (uuid && uuid !== prevUuidRef.current) {
-      prevUuidRef.current = uuid
-      setSelectedMessageIndex(0)
-    }
-  }, [uuid, setSelectedMessageIndex])
+  // Keyboard-navigation registry + selection-driven auto-scroll extracted
+  // into useMessageNavigationRegistry (2026-05-31, Commit 7a of decomposition
+  // plan). Owns the three coupled effects: (1) reset selectedMessageIndex
+  // when uuid changes, (2) rebuild the kbd-nav context on
+  // conversation/showPrelude/showToolCalls change, (3) auto-scroll to the
+  // selected message via ref-lookup + virtualizer fallback for off-screen
+  // rows. See the hook docstring for the virtualization-recovery rationale.
+  useMessageNavigationRegistry({
+    uuid,
+    conversation,
+    visibleMessages,
+    showPrelude,
+    showToolCalls,
+    focusArea,
+    messageRefs,
+    virtualizer,
+    getSelectedMessageId,
+    selectedMessageIndex,
+    setSelectedMessageIndex,
+    setMessages,
+    setMessagesAndPinSelection,
+  })
 
-  // Register visible messages with keyboard navigation context.
-  // Issue #2: when the list size changes (e.g. the user toggled the
-  // Tools button so tool-only messages appear/disappear), we use the
-  // pin-selection variant so the selected message UUID stays the
-  // same across the resize instead of drifting to a different
-  // message at the same numeric index.
-  useEffect(() => {
-    if (conversation?.messages) {
-      // V1 polish (2026-05-12, council round 2): also exclude `is_prelude`
-      // messages when the prelude is collapsed, so arrow-key navigation
-      // doesn't try to focus a hidden bubble. When the user clicks "show"
-      // the affordance, showPrelude flips and this re-runs, re-including
-      // the prelude rows.
-      const messageInfos: MessageInfo[] = conversation.messages
-        .filter((msg) => {
-          if (!showPrelude && msg.is_prelude) return false
-          return messageHasVisibleContent(msg, showToolCalls)
-        })
-        .map((msg) => ({
-          uuid: msg.uuid,
-          sender: msg.sender,
-        }))
-      setMessagesAndPinSelection(messageInfos)
-    }
-    return () => {
-      setMessages([])
-    }
-  }, [conversation?.messages, showToolCalls, showPrelude, setMessages, setMessagesAndPinSelection])
+  // Keyboard: 'b' toggles bookmark on the focused message. Extracted
+  // into useBookmarkHotkey (2026-05-31, Commit 7b of decomposition plan).
+  useBookmarkHotkey({ conversation, getSelectedMessageId, toggleBookmark })
 
-  // Auto-scroll to selected message
-  useEffect(() => {
-    if (focusArea === 'detail' && conversation?.messages) {
-      const selectedId = getSelectedMessageId()
-      if (selectedId) {
-        const element = messageRefs.current.get(selectedId)
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }
-      }
-    }
-  }, [selectedMessageIndex, focusArea, conversation?.messages, getSelectedMessageId])
+  // Keyboard: '[' / ']' navigate compact markers within the open
+  // conversation. Extracted into useBracketCompactNav (P1.4 Commit A,
+  // 2026-05-30) so this route loses ~25 lines of listener wiring. See
+  // the hook for the Phase 2 perf rationale (useEffectEvent).
+  useBracketCompactNav({
+    compactMarkers,
+    activeCompactIdx,
+    focusCompactMarker,
+  })
 
-  // Keyboard: 'b' toggles bookmark on the focused message.
-  useEffect(() => {
-    if (!conversation) return
-    const handler = (e: KeyboardEvent) => {
-      // Hunt #2: e.target is EventTarget; reading .tagName /
-      // .isContentEditable needs an HTMLElement narrowing.
-      if (
-        e.target instanceof HTMLElement &&
-        (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)
-      ) {
-        return
-      }
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.key !== 'b' && e.key !== 'B') return
-      const selectedId = getSelectedMessageId()
-      if (!selectedId) return
-      const msg = conversation.messages.find((m) => m.uuid === selectedId)
-      if (!msg) return
-      e.preventDefault()
-      toggleBookmark({
-        conversation_id: conversation.uuid,
-        message_uuid: msg.uuid,
-        source: conversation.source === 'CLAUDE_AI' ? 'claude_desktop' : 'claude_code',
-        note: '',
-        snippet: (msg.text || '').slice(0, 140),
-      })
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [conversation, getSelectedMessageId, toggleBookmark])
-
-  // Keyboard: '[' / ']' navigate compact markers within the open conversation.
-  useEffect(() => {
-    if (compactMarkers.length === 0) return
-    const handler = (e: KeyboardEvent) => {
-      // Hunt #2: see [/] handler above.
-      if (
-        e.target instanceof HTMLElement &&
-        (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)
-      ) {
-        return
-      }
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.key === ']') {
-        e.preventDefault()
-        focusCompactMarker(activeCompactIdx === null ? 0 : activeCompactIdx + 1)
-      } else if (e.key === '[') {
-        e.preventDefault()
-        focusCompactMarker(activeCompactIdx === null ? compactMarkers.length - 1 : activeCompactIdx - 1)
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [compactMarkers, activeCompactIdx, focusCompactMarker])
-
-  // Scroll to highlighted message, select it, and focus detail pane.
-  //
-  // 2026-05-23 virtualization landing: target bubbles deep in the
-  // conversation (e.g. idx 550/600 of the search-hit-scroll fixture)
-  // are NOT mounted on initial page load. Pre-virt, all bubbles were
-  // mounted eagerly, so the 100 ms setTimeout was enough for React to
-  // commit and `querySelector` to find them. Post-virt, the target
-  // exists only as virtualizer state until we tell it to bring the row
-  // into view.
-  //
-  // New flow:
-  //   1. Locate the target's index in `visibleMessages`.
-  //   2. Call `virtualizer.scrollToIndex(idx, { align: 'center' })` to
-  //      mount the row at viewport center. This is the same
-  //      virtualizer used by the Jump buttons; instant (no 'smooth')
-  //      so measureElement adjustments don't fight a smooth animation.
-  //   3. rAF-poll up to ~600 ms (40 frames @ 16 ms) for `querySelector`
-  //      to find the freshly-mounted bubble.
-  //   4. Once mounted, run the EXISTING logic: scrollBubbleIntoView for
-  //      lazy-image-aware post-settle correction, ring-flash, focus,
-  //      URL cleanup on a 2 s timer.
-  //
-  // Why polling instead of a component mount-effect (Option A "pure"
-  // from the council): the cleanup callback (URL `setSearchParams`)
-  // belongs to the parent's URL state, and the highlight target may be
-  // either MessageBubble OR CompactMarker — threading symmetric props
-  // + cleanup callbacks through both component types is broader-diff
-  // than the polling approach with no functional benefit. The polling
-  // window is bounded (600 ms ≪ the 2 s ring-flash duration) and only
-  // runs when `highlightMessageId` is truthy (Cmd+G hits and deep-link
-  // navigation; not the typing hot path).
-  useEffect(() => {
-    if (!highlightMessageId || !conversation || isLoading) return
-    // Focus the detail pane and select the highlighted message
-    setFocusArea('detail')
-    const msgIdx = messages.findIndex((m) => m.uuid === highlightMessageId)
-    if (msgIdx !== -1) {
-      setSelectedMessageIndex(msgIdx)
-    }
-
-    // Step 1: tell the virtualizer to mount the target's row. If the
-    // target isn't in visibleMessages (e.g. filtered by Tools toggle),
-    // we still try the querySelector path below — it'll just no-op.
-    const visIdx = visibleMessages.findIndex((m) => m.uuid === highlightMessageId)
-    if (visIdx !== -1 && !isJsdom) {
-      virtualizer.scrollToIndex(visIdx, { align: 'center' })
-    }
-
-    // Step 2-4: poll for mount, then apply the existing highlight UX.
-    // Cancelable via the cleanup return so a fast subsequent
-    // navigation supersedes this one.
-    let cancelled = false
-    let rafId = 0
-    const startedAt = performance.now()
-    const POLL_BUDGET_MS = 600
-    const tryFindAndApply = () => {
-      if (cancelled) return
-      const element = document.querySelector<HTMLElement>(
-        `[data-message-uuid="${highlightMessageId}"]`,
-      )
-      if (element) {
-        // Distance-gated scroll + post-settle correction. See
-        // `scrollBubbleIntoView` docstring for the 15K-msg lazy-image
-        // layout-shift bug this fixes. Still runs post-virtualization
-        // because virtualizer.scrollToIndex doesn't compensate for
-        // images decoding into the swept region post-scroll.
-        scrollBubbleIntoView(element)
-        element.classList.add('ring-2', 'ring-yellow-400', 'ring-offset-2')
-        // Cross-conversation Enter: see commit 113da97 council note.
-        // The highlight effect runs after the new ConversationPage
-        // mounts, so this is the safe place to move keyboard focus
-        // too. Bubbles have tabIndex={-1}.
-        //
-        // 2026-05-23: gated on `?focus=0` opt-out. The search auto-
-        // promote effect (live-preview UX) uses `&focus=0` so the
-        // user can keep typing in the search input without focus
-        // being stolen. User-initiated nav (Cmd+G / Enter / card-
-        // click) omits the param and still focuses the bubble.
-        if (shouldFocusOnHighlight) {
-          element.focus()
-        }
-        scheduleHighlightClear(() => {
-          element.classList.remove('ring-2', 'ring-yellow-400', 'ring-offset-2')
-          // Clear highlight/m/focus params from URL but preserve
-          // everything else. 2026-05-23 race guard (council Q4):
-          // if a newer navigation already replaced the highlight
-          // target while our 2s timer was pending, only clean up
-          // the params if the CURRENT URL still references the
-          // bubble we just flashed. Otherwise the cleanup would
-          // wipe the newer navigation's `highlight=` and the next
-          // navigation's ConversationPage effect would never fire.
-          setSearchParams((prev) => {
-            const stillOurs =
-              prev.get('highlight') === highlightMessageId ||
-              prev.get('m') === highlightMessageId
-            if (!stillOurs) {
-              return prev
-            }
-            const next = new URLSearchParams(prev)
-            next.delete('highlight')
-            next.delete('m')
-            next.delete('focus')
-            return next
-          }, { replace: true })
-        }, 2000)
-        return
-      }
-      if (performance.now() - startedAt > POLL_BUDGET_MS) {
-        // Bounded polling — give up rather than spin. Dev-only warn
-        // would be noisy; the URL cleanup will still fire on the next
-        // navigation. Silent no-op matches the pre-virt behavior when
-        // the bubble wasn't findable.
-        return
-      }
-      rafId = requestAnimationFrame(tryFindAndApply)
-    }
-    rafId = requestAnimationFrame(tryFindAndApply)
-
-    return () => {
-      cancelled = true
-      cancelAnimationFrame(rafId)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- scheduleHighlightClear is the return value of useUnmountSafeTimer(), which is a fresh closure each render (no useCallback). Including it would re-fire this whole highlight/scroll/focus effect on every render while highlightMessageId is truthy, causing repeated scrollBubbleIntoView calls + URL mutations. The timer callback closes over `element` (DOM ref) and `setSearchParams` (already a dep); the schedule call itself is fire-and-forget. Same pattern as FilterContext.tsx:291, ManageFiltersModal.tsx:603, SearchPanel.tsx:109.
-  }, [highlightMessageId, conversation, isLoading, setSearchParams, setFocusArea, messages, setSelectedMessageIndex, visibleMessages, virtualizer, isJsdom, shouldFocusOnHighlight])
+  // Scroll-to-highlight orchestration extracted into useScrollToHighlight
+  // (P1.4 Commit B, 2026-05-30). The hook owns the 5-stage pipeline
+  // (focus area + message index + virtualizer scrollToIndex + DOM rAF-poll +
+  // ring-flash + 2s URL cleanup with race guard) plus the eslint-disable
+  // rationale that previously bracketed this site. See the hook for the
+  // virtualization-landing context and the council Q4 race-guard story.
+  useScrollToHighlight({
+    highlightMessageId,
+    conversation,
+    isLoading,
+    setSearchParams,
+    setFocusArea,
+    messages,
+    setSelectedMessageIndex,
+    visibleMessages,
+    virtualizer,
+    isJsdom,
+    shouldFocusOnHighlight,
+    scheduleHighlightClear,
+  })
 
   // When sidebar has focus and keyboard selection differs from displayed conversation,
   // show a hint instead of the (stale) conversation content
@@ -894,97 +647,6 @@ export function ConversationPage() {
         </div>
       </div>
     )
-  }
-
-  const handleExportPdf = async () => {
-    // Task A5 — spinner toast UX during PDF export.
-    //
-    // Why all the moving parts:
-    //   * `isExportingPdfRef` is a synchronous re-entry guard. The
-    //     button is `disabled` on `isExportingPdf` state, but rapid
-    //     double-clicks can fire before React commits the state.
-    //   * `toastId` from `toast.loading()` is sonner's auto-generated
-    //     unique id — passing it back into subsequent `toast.loading()`
-    //     calls replaces the toast in place, and avoids collisions if
-    //     the user has two browser tabs of the same conversation open.
-    //   * The JSX body wraps the elapsed-seconds counter in
-    //     `aria-hidden="true"` so screen readers only announce
-    //     "Generating PDF…" once, not every tick.
-    //   * `lastSec` throttles `toast.loading()` to once per visible
-    //     change; the 250 ms interval ticks faster only to catch the
-    //     second boundary promptly when the user clicks mid-second.
-    //   * `AbortController` cancels the in-flight fetch on unmount.
-    if (isExportingPdfRef.current) return
-    isExportingPdfRef.current = true
-    setIsExportingPdf(true)
-
-    const controller = new AbortController()
-    exportPdfAbortRef.current = controller
-
-    const toastId = toast.loading(
-      <span>
-        Generating PDF… <span aria-hidden="true">0s</span>
-      </span>,
-      { duration: Infinity },
-    )
-
-    const startedAt = Date.now()
-    let lastSec = 0
-    const interval = window.setInterval(() => {
-      const sec = Math.floor((Date.now() - startedAt) / 1000)
-      if (sec === lastSec) return
-      lastSec = sec
-      toast.loading(
-        <span>
-          Generating PDF… <span aria-hidden="true">{sec}s</span>
-        </span>,
-        { id: toastId, duration: Infinity },
-      )
-    }, 250)
-
-    try {
-      const response = await api.exportPdf(
-        conversation.uuid,
-        showToolCalls,
-        controller.signal,
-        includeCompactInExports,
-      )
-      clearInterval(interval)
-      if (!response.ok) {
-        toast.dismiss(toastId)
-        if (response.status === 504) {
-          // Backend wraps WeasyPrint in `asyncio.to_thread(...)` with a
-          // 30-second timeout (commit 0be9395) and returns 504 on
-          // overrun. Surface a user-readable workaround (Markdown
-          // export still works for huge conversations).
-          errorToast(
-            'PDF generation timed out (>30s). The conversation may be too large to render. Try exporting Markdown instead.',
-          )
-        } else {
-          errorToast(`PDF export failed (${response.status}).`)
-        }
-        return
-      }
-      const blob = await response.blob()
-      toast.dismiss(toastId)
-      downloadBlob(blob, `${sanitizeFilename(conversation.name)}.pdf`)
-    } catch (err) {
-      clearInterval(interval)
-      toast.dismiss(toastId)
-      // AbortError surfaces here when the component unmounts (cleanup
-      // effect calls controller.abort()). That's intentional — no toast.
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        return
-      }
-      errorToast('PDF export failed: network error.')
-    } finally {
-      clearInterval(interval)
-      isExportingPdfRef.current = false
-      setIsExportingPdf(false)
-      if (exportPdfAbortRef.current === controller) {
-        exportPdfAbortRef.current = null
-      }
-    }
   }
 
   const handleForceRefetch = async () => {
@@ -1024,24 +686,13 @@ export function ConversationPage() {
     }
   }
 
-  const handleCopyAll = async () => {
-    const markdown = conversationToMarkdown(
-      conversation.name,
-      conversation.messages,
-      showToolCalls
-    )
-    // LOW-1 (council follow-up): see MessageBubble.handleCopyMessage.
-    // Flip the success affordance only on a resolved promise.
-    try {
-      await navigator.clipboard.writeText(markdown)
-      setCopiedAll(true)
-      scheduleCopiedAllClear(() => setCopiedAll(false), 2000)
-    } catch {
-      errorToast('Failed to copy conversation to clipboard.')
-    }
-  }
-
+  // Phase 1 a11y: same passive-focus-area pattern as Sidebar. Clicking
+  // anywhere in the detail pane marks 'detail' as the active focus
+  // area for keyboard shortcuts. Tab-ing into the inner controls
+  // (header buttons, bubbles, search panel) achieves the same routing
+  // via their own focus handlers. No tabIndex on the wrapper.
   return (
+    /* react-doctor-disable-next-line react-doctor/click-events-have-key-events,react-doctor/no-static-element-interactions */
     <div
       onClick={() => setFocusArea('detail')}
       className={cn(
@@ -1059,412 +710,72 @@ export function ConversationPage() {
           the action buttons; the buttons get their own row that
           `flex-wrap`s to a second line if it still overflows. */}
       <header className="flex flex-col gap-3 border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="truncate text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-              {conversation.name || 'Untitled'}
-            </h1>
-            <PinScopeButton
-              conversationUuid={conversation.uuid}
-              conversationName={conversation.name || 'Untitled'}
-              projectPath={conversation.project_path}
-              projectName={conversation.project_path?.split('/').filter(Boolean).pop() || null}
-            />
-          </div>
-          <div className="mt-1 flex items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
-            {conversation.source === 'CLAUDE_CODE' ? (
-              <Badge variant="secondary" className="flex items-center gap-1 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
-                <Terminal className="h-3 w-3" />
-                Code
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="flex items-center gap-1 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
-                <MessageSquare className="h-3 w-3" />
-                Desktop
-              </Badge>
-            )}
-            <Badge variant="secondary">{conversation.model}</Badge>
-            <span>{formatFullDate(conversation.created_at)}</span>
-            <span>{conversation.message_count} messages</span>
-            {conversation.has_branches && (
-              <button
-                onClick={() => setIsTreeOpen(true)}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950"
-              >
-                <GitBranch className="h-3 w-3" />
-                View branches
-              </button>
-            )}
-          </div>
-          <details open className="group mt-1 grid grid-cols-[auto_1fr] items-start gap-x-3">
-            <summary
-              className="flex cursor-pointer list-none items-center gap-1 text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 [&::-webkit-details-marker]:hidden"
-              title="Show conversation details"
-            >
-              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-0 -rotate-90" />
-              <span>Details</span>
-            </summary>
-            <div className="space-y-0.5">
-              {conversation.source === 'CLAUDE_CODE' && conversation.project_path && (
-                <div className="flex items-center gap-1 text-xs text-zinc-400 dark:text-zinc-500">
-                  <FolderCode className="h-3 w-3" />
-                  <span className="font-mono">{conversation.project_path}</span>
-                  {conversation.git_branch && (
-                    <>
-                      <GitBranch className="ml-2 h-3 w-3" />
-                      <span className="font-mono">{conversation.git_branch}</span>
-                    </>
-                  )}
-                </div>
-              )}
-              {/* D10 (Cowork): label cwd as "Sandbox path" — it's
-                  typically /sessions/<vm>, not a host filesystem path,
-                  so don't render as a clickable link. */}
-              {conversation.source === 'CLAUDE_COWORK' && conversation.sandbox_path && (
-                <div
-                  className="flex items-center gap-1 text-xs text-zinc-400 dark:text-zinc-500"
-                  data-testid="cowork-sandbox-path"
-                >
-                  <FolderCode className="h-3 w-3" />
-                  <span className="text-zinc-500">Sandbox path:</span>
-                  <span className="font-mono">{conversation.sandbox_path}</span>
-                </div>
-              )}
-              <button
-                onClick={async () => {
-                  // LOW-1 (council follow-up): see MessageBubble.handleCopyMessage.
-                  try {
-                    await navigator.clipboard.writeText(conversation.uuid)
-                    setCopiedUuid(true)
-                    scheduleCopiedUuidClear(() => setCopiedUuid(false), 2000)
-                  } catch {
-                    errorToast('Failed to copy UUID to clipboard.')
-                  }
-                }}
-                className="flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
-                title="Click to copy UUID"
-              >
-                {copiedUuid ? (
-                  <Check className="h-3 w-3 text-green-500" />
-                ) : (
-                  <Copy className="h-3 w-3" />
-                )}
-                <span>{conversation.uuid}</span>
-              </button>
-              {conversation.file_path && (
-                <button
-                  onClick={async () => {
-                    // Hunt #2: the surrounding `conversation.file_path &&`
-                    // gates rendering, but the closure captures
-                    // `conversation` not the narrowed value, so TS
-                    // doesn't carry the narrowing into the async
-                    // callback. Capture an explicit local instead of
-                    // the old `conversation.file_path!`.
-                    const filePath = conversation.file_path
-                    if (!filePath) return
-                    // LOW-1 (council follow-up): see MessageBubble.handleCopyMessage.
-                    try {
-                      await navigator.clipboard.writeText(filePath)
-                      setCopiedPath(true)
-                      scheduleCopiedPathClear(() => setCopiedPath(false), 2000)
-                    } catch {
-                      errorToast('Failed to copy file path to clipboard.')
-                    }
-                  }}
-                  className="flex items-center gap-1 font-mono text-xs text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300"
-                  title="Click to copy file path"
-                >
-                  {copiedPath ? (
-                    <Check className="h-3 w-3 text-green-500" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                  <span className="truncate max-w-lg">{conversation.file_path}</span>
-                </button>
-              )}
-            </div>
-          </details>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {/* 2026-05-24 UX fix: the Tools toggle used to be a Button with
-              `variant={showToolCalls ? 'default' : 'outline'}`. The
-              variant difference is too subtle for users to tell whether
-              the toggle is ON or OFF at a glance. Native checkbox with
-              an inline label removes the ambiguity. */}
-          <label
-            className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-200"
-            title={showToolCalls ? 'Hide tool calls' : 'Show tool calls'}
-            data-testid="header-show-tools-control"
-          >
-            <input
-              type="checkbox"
-              checked={showToolCalls}
-              onChange={(e) => {
-                markPendingRecenter()
-                setShowToolCalls(e.target.checked)
-              }}
-              className="h-4 w-4 cursor-pointer rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 dark:border-zinc-600"
-              data-testid="header-show-tools-checkbox"
-            />
-            <Wrench className="h-4 w-4" />
-            <span>Show Tools</span>
-          </label>
-          {showToolCalls && (
-            <Button
-              variant={expandAllTools ? 'default' : 'outline'}
-              size="sm"
-              onClick={handleToggleExpandAll}
-              title={expandAllTools ? 'Collapse all tools' : 'Expand all tools'}
-              disabled={isExpandPending}
-            >
-              <ChevronsUpDown className={cn('h-4 w-4', isExpandPending && 'animate-pulse')} />
-              <span className="ml-2">{expandAllToolsButtonLabel(expandAllTools, isExpandPending)}</span>
-            </Button>
-          )}
-          {conversation.source === 'CLAUDE_AI' && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
-              onClick={handleForceRefetch}
-              disabled={isRefetching}
-              title="Re-download this conversation from Anthropic"
-              aria-label="Re-download this conversation"
-            >
-              <Download className={cn('h-4 w-4', isRefetching && 'animate-pulse')} />
-            </Button>
-          )}
-          {hasCompactMarkers && (
-            // 2026-05-24 UX fix: same rationale as Show Tools — the
-            // variant-toggle Button hid the enabled state and the
-            // semantic inversion ("Show compact markers" label appearing
-            // when `hideCompactMarkers=true`) compounded the confusion.
-            // The checkbox reads as plain English: checked = compactions
-            // are visible.
-            <label
-              className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-200"
-              title={hideCompactMarkers ? 'Show compact markers' : 'Hide compact markers'}
-            >
-              <input
-                type="checkbox"
-                checked={!hideCompactMarkers}
-                onChange={(e) => {
-                  markPendingRecenter()
-                  setHideCompactMarkers(!e.target.checked)
-                }}
-                className="h-4 w-4 cursor-pointer rounded border-zinc-300 text-zinc-900 focus:ring-zinc-500 dark:border-zinc-600"
-                data-testid="header-show-compactions-checkbox"
-              />
-              <Scissors className="h-4 w-4" />
-              <span>Show Compactions</span>
-            </label>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCopyAll}
-            title="Copy conversation as Markdown"
-            aria-label="Copy as Markdown"
-          >
-            {copiedAll ? (
-              <Check className="h-4 w-4 text-green-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-            <span className="ml-2">Copy as Markdown</span>
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setMarkdownDialogOpen(true)}>
-            <FileText className="h-4 w-4" />
-            <span className="ml-2">Markdown</span>
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportPdf}
-            disabled={isExportingPdf}
-            aria-busy={isExportingPdf}
-          >
-            <FileType className="h-4 w-4" />
-            <span className="ml-2">PDF</span>
-          </Button>
-        </div>
+        <ConversationHeader
+          conversation={conversation}
+          copiedUuid={copiedUuid}
+          copiedPath={copiedPath}
+          onCopyUuid={onCopyUuid}
+          onCopyPath={onCopyPath}
+          onOpenTree={() => setIsTreeOpen(true)}
+        />
+        <ConversationToolbar
+          showToolCalls={showToolCalls}
+          setShowToolCalls={setShowToolCalls}
+          markPendingRecenter={markPendingRecenter}
+          expandAllTools={expandAllTools}
+          handleToggleExpandAll={handleToggleExpandAll}
+          isExpandPending={isExpandPending}
+          conversationSource={conversation.source}
+          handleForceRefetch={handleForceRefetch}
+          isRefetching={isRefetching}
+          hasCompactMarkers={hasCompactMarkers}
+          hideCompactMarkers={hideCompactMarkers}
+          setHideCompactMarkers={setHideCompactMarkers}
+          copiedAll={copiedAll}
+          handleCopyAll={handleCopyAll}
+          setMarkdownDialogOpen={setMarkdownDialogOpen}
+          handleExportPdf={handleExportPdf}
+          isExportingPdf={isExportingPdf}
+        />
       </header>
 
-      {/* D9 (Cowork): session-error banner. Cowork's audit log can
-          end with a session-level fault recorded in sidecar.error
-          (e.g. "The session ended unexpectedly."). Render once
-          above the message stream so the reader knows the
-          transcript is incomplete. */}
-      {conversation.error && (
-        <div
-          data-testid="cowork-error-banner"
-          role="alert"
-          className="border-b border-amber-300 bg-amber-50 px-6 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
-        >
-          <span className="font-medium">Session ended with an error:</span>{' '}
-          <span>{conversation.error}</span>
-        </div>
-      )}
-
-      {/* Messages */}
-      <ConversationLightboxProvider messages={conversation.messages}>
-      <div className="relative flex-1 overflow-hidden">
-        <div
-          ref={scrollAreaRef}
-          data-testid="message-stream"
-          className="h-full overflow-y-auto p-6"
-          onScroll={handleScroll}
-          // Bug 3 (2026-05-26) — manual scroll demonstrates focus, so a
-          // subsequent search refetch (e.g. Show Compactions toggle)
-          // does NOT auto-promote the viewer back to the first match.
-          // Listen to wheel + touchstart (user-initiated) and NOT to
-          // scroll (fires on programmatic scrollIntoView too — would
-          // false-positive on the search-hit landing path). Use Capture
-          // variants so nested scroll regions (CompactMarker's expanded
-          // body, etc.) don't swallow the event before we see it.
-          onWheelCapture={() =>
-            markDemonstratedFocus(MANUAL_SCROLL_SENTINEL_UUID)
-          }
-          onTouchStartCapture={() =>
-            markDemonstratedFocus(MANUAL_SCROLL_SENTINEL_UUID)
-          }
-        >
-          <div className="mx-auto max-w-3xl">
-            <SessionPreludeAffordance
-              hiddenCount={preludeHiddenCount}
-              expanded={showPrelude}
-              onToggle={() => setShowPrelude((v) => !v)}
-            />
-            {isJsdom ? (
-              // jsdom fallback path (vitest only): render all bubbles
-              // non-virtualized so the existing 386 vitest tests that
-              // mount ConversationPage still work. The `space-y-6`
-              // visual gap that the pre-virt code relied on is supplied
-              // back here. Real browsers take the virtualized branch
-              // below.
-              <div className="space-y-6">
-                {visibleMessages.map((message) =>
-                  renderBubbleRow(message, {
-                    getSetRef,
-                    getSelectedMessageId,
-                    focusArea,
-                    compactMarkerByUuid,
-                    compactMarkers,
-                    activeCompactIdx,
-                    focusCompactMarker,
-                    highlightMessageId,
-                    activeMatchUuid,
-                    deferredSearchQuery,
-                    conversation,
-                    showToolCalls,
-                    expandAllTools,
-                    messages,
-                    setSelectedMessageIndex,
-                    markDemonstratedFocus,
-                  }),
-                )}
-              </div>
-            ) : (
-              // Virtualized path (production / Playwright). Each rendered
-              // row gets a combined ref that runs BOTH
-              // `virtualizer.measureElement` (ResizeObserver-driven
-              // height correction) AND our cached-per-id `getSetRef`
-              // (anchor capture in Expand/Collapse all tools). Row
-              // wrappers are absolutely positioned inside the total-size
-              // spacer at the virtualizer-computed `translateY`.
-              //
-              // `space-y-6` is dropped because absolute-positioned
-              // siblings ignore margin collapsing; each row's bottom
-              // padding (`pb-6`) carries the 24 px gap into its measured
-              // height instead — measureElement picks that up correctly.
-              <div
-                style={{
-                  height: `${virtualizer.getTotalSize()}px`,
-                  width: '100%',
-                  position: 'relative',
-                }}
-              >
-                {virtualizer.getVirtualItems().map((vi) => {
-                  const message = visibleMessages[vi.index]
-                  if (!message) return null
-                  // Combined ref: forward the DOM node to BOTH the
-                  // virtualizer (so it measures the row) and getSetRef
-                  // (so anchor capture / Expand-all-tools still has the
-                  // wrapper ref).
-                  const cachedSetRef = getSetRef(message.uuid)
-                  const combinedRef = (el: HTMLDivElement | null) => {
-                    virtualizer.measureElement(el)
-                    cachedSetRef(el)
-                  }
-                  return (
-                    <div
-                      key={vi.key}
-                      data-index={vi.index}
-                      ref={combinedRef}
-                      className="pb-6"
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        transform: `translateY(${vi.start}px)`,
-                      }}
-                    >
-                      {renderBubbleRow(message, {
-                        getSetRef: null, // already attached on wrapper above
-                        getSelectedMessageId,
-                        focusArea,
-                        compactMarkerByUuid,
-                        compactMarkers,
-                        activeCompactIdx,
-                        focusCompactMarker,
-                        highlightMessageId,
-                        activeMatchUuid,
-                        deferredSearchQuery,
-                        conversation,
-                        showToolCalls,
-                        expandAllTools,
-                        messages,
-                        setSelectedMessageIndex,
-                        markDemonstratedFocus,
-                        unwrapped: true, // suppress the inner ref-wrapper div
-                      })}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        </div>
-
-        <div
-          className="absolute bottom-6 flex flex-col gap-2 transition-[right] duration-200"
-          style={{ right: isSearchPanelOpen ? '25rem' : '1.5rem' }}
-        >
-          {showTopButton && (
-            <button
-              onClick={scrollToTop}
-              aria-label="Jump to top"
-              title="Jump to top"
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900/80 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-zinc-900 dark:bg-zinc-100/80 dark:text-zinc-900 dark:hover:bg-zinc-100"
-            >
-              <ChevronUp className="h-5 w-5" />
-            </button>
-          )}
-          {showScrollButton && (
-            <button
-              onClick={scrollToBottom}
-              aria-label="Jump to bottom"
-              title="Jump to bottom"
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-900/80 text-white shadow-lg backdrop-blur-sm transition-all hover:bg-zinc-900 dark:bg-zinc-100/80 dark:text-zinc-900 dark:hover:bg-zinc-100"
-            >
-              <ChevronDown className="h-5 w-5" />
-            </button>
-          )}
-        </div>
-      </div>
-      </ConversationLightboxProvider>
+      <ConversationMessageStream
+        conversation={conversation}
+        visibleMessages={visibleMessages}
+        messages={messages}
+        scrollAreaRef={scrollAreaRef}
+        messagesEndRef={messagesEndRef}
+        virtualizer={virtualizer}
+        isJsdom={isJsdom}
+        getSetRef={getSetRef}
+        handleScroll={handleScroll}
+        markDemonstratedFocus={markDemonstratedFocus}
+        manualScrollSentinelUuid={MANUAL_SCROLL_SENTINEL_UUID}
+        preludeHiddenCount={preludeHiddenCount}
+        showPrelude={showPrelude}
+        onTogglePrelude={() => setShowPrelude((v) => !v)}
+        getSelectedMessageId={getSelectedMessageId}
+        focusArea={focusArea}
+        compactMarkerByUuid={compactMarkerByUuid}
+        compactMarkers={compactMarkers}
+        activeCompactIdx={activeCompactIdx}
+        focusCompactMarker={focusCompactMarker}
+        highlightMessageId={highlightMessageId}
+        activeMatchUuid={activeMatchUuid}
+        deferredSearchQuery={deferredSearchQuery}
+        showToolCalls={showToolCalls}
+        expandAllTools={expandAllTools}
+        setSelectedMessageIndex={setSelectedMessageIndex}
+        scrollControls={
+          <ConversationViewerScrollControls
+            showScrollButton={showScrollButton}
+            showTopButton={showTopButton}
+            scrollToTop={scrollToTop}
+            scrollToBottom={scrollToBottom}
+            isSearchPanelOpen={isSearchPanelOpen}
+          />
+        }
+      />
 
       <MarkdownExportDialog
         open={markdownDialogOpen}
@@ -1490,167 +801,6 @@ export function ConversationPage() {
           }}
         />
       )}
-    </div>
-  )
-}
-
-// Shared renderer for a single bubble row. Used by both the virtualized
-// path (production / Playwright) and the jsdom fallback path (vitest).
-// Keeping a single source of truth for the row JSX prevents the two
-// paths from drifting in subtle ways (search-hit gate, selection click
-// handler, compact-marker prop wiring).
-//
-// `unwrapped: true` skips the inner ref-wrapper div because the
-// virtualized path already wraps each row in an absolute-positioned
-// translateY container. `getSetRef` is set to `null` in that case
-// because the cached ref is attached on the outer wrapper.
-interface RenderBubbleRowDeps {
-  getSetRef: ((uuid: string) => (el: HTMLDivElement | null) => void) | null
-  getSelectedMessageId: () => string | null
-  focusArea: FocusArea
-  compactMarkerByUuid: Map<string, { marker: CompactMarkerType; index: number }>
-  compactMarkers: readonly CompactMarkerType[]
-  activeCompactIdx: number | null
-  focusCompactMarker: (index: number) => void
-  highlightMessageId: string | null
-  /** UUID of the message owning the search-panel's active match
-   *  (Cmd+G / card-click / auto-promote target). Stable while the
-   *  user is reading; only the bubble matching this UUID gets the
-   *  live searchQuery for inline <mark> decoration. See the
-   *  activeMatchUuid comment on the consumer side for full rationale. */
-  activeMatchUuid: string | null
-  deferredSearchQuery: string
-  conversation: ConversationDetail
-  showToolCalls: boolean
-  expandAllTools: boolean
-  messages: { uuid: string; sender: string }[]
-  setSelectedMessageIndex: (i: number) => void
-  /** Bug 2 (2026-05-26) / Bug 3 (2026-05-26): when the user clicks a
-   *  bubble, record the UUID via this callback so the next post-toggle
-   *  recenter (`markPendingRecenter`) targets THIS bubble — not a
-   *  stale `activeMatchUuid`. Lives in `SearchPanelContext` so the
-   *  same signal also gates the auto-promote effect (Bug 3 suppression
-   *  of refetch-driven yank-back). Synchronous (ref-backed) write
-   *  inside the callback dodges the React batching race the alternative
-   *  state-based fix would have introduced. */
-  markDemonstratedFocus: (uuid: string | null) => void
-  unwrapped?: boolean
-}
-
-function renderBubbleRow(message: Message, deps: RenderBubbleRowDeps) {
-  const {
-    getSetRef,
-    getSelectedMessageId,
-    focusArea,
-    compactMarkerByUuid,
-    compactMarkers,
-    activeCompactIdx,
-    focusCompactMarker,
-    highlightMessageId,
-    activeMatchUuid,
-    deferredSearchQuery,
-    conversation,
-    showToolCalls,
-    expandAllTools,
-    messages,
-    setSelectedMessageIndex,
-    markDemonstratedFocus,
-    unwrapped,
-  } = deps
-
-  const selectedId = getSelectedMessageId()
-  const isSelected = focusArea === 'detail' && message.uuid === selectedId
-  const compactEntry = compactMarkerByUuid.get(message.uuid)
-
-  if (compactEntry) {
-    const { marker, index } = compactEntry
-    const child = (
-      <CompactMarker
-        marker={marker}
-        index={index}
-        total={compactMarkers.length}
-        isActive={activeCompactIdx === index}
-        onPrev={() => focusCompactMarker(index - 1)}
-        onNext={() => focusCompactMarker(index + 1)}
-        // 2026-05-22: auto-expand when a search-hit highlight is
-        // targeting this marker. Users who clicked through to a search
-        // match inside a compact bubble's summary text would otherwise
-        // land on the collapsed pill and see nothing. Survives
-        // virtualization because the `useEffect([forceOpen])` inside
-        // CompactMarker fires on mount when `forceOpen=true`.
-        forceOpen={highlightMessageId === marker.message_uuid}
-        // 2026-05-24 highlight-gate fix: pass the search query ONLY
-        // to the active-match marker. Keyed on activeMatchUuid (the
-        // sidebar's currently-selected match, stable while the user
-        // reads) rather than highlightMessageId (ephemeral URL param
-        // cleared after 2 s — would drop highlights mid-read).
-        searchQuery={
-          marker.message_uuid === activeMatchUuid ? deferredSearchQuery : ''
-        }
-      />
-    )
-    if (unwrapped) return child
-    return (
-      <div key={message.uuid} ref={getSetRef ? getSetRef(message.uuid) : undefined}>
-        {child}
-      </div>
-    )
-  }
-
-  const bubble = (
-    <MessageBubble
-      message={message}
-      isKeyboardSelected={isSelected}
-      conversationId={conversation.uuid}
-      conversationSource={conversation.source}
-      showToolCalls={showToolCalls}
-      expandAllTools={expandAllTools}
-      // 2026-05-24 highlight-gate fix: pass the search query ONLY to
-      // the active-match bubble (the one Cmd+G / card-click landed
-      // on). Keyed on `activeMatchUuid` (the sidebar's currently-
-      // selected match — stable while the user reads) rather than
-      // `highlightMessageId` (ephemeral URL `?highlight=` param,
-      // cleared after the highlight-effect's 2 s timer fires —
-      // which used to drop yellow `<mark>`s mid-read). All other
-      // bubbles get '' so their React.memo comparator returns true
-      // on every debounce settle (preserves the 2026-05-23 perf fix:
-      // without this gate, every keystroke flipped searchQuery for
-      // 4014 bubbles → 8-9 s long task). The SearchPanel sidebar
-      // still shows every match with its own highlights; this gate
-      // controls only the in-conversation-pane `<mark>` decoration.
-      searchQuery={message.uuid === activeMatchUuid ? deferredSearchQuery : ''}
-    />
-  )
-
-  const onClickRow = () => {
-    const idx = messages.findIndex((m) => m.uuid === message.uuid)
-    if (idx !== -1) setSelectedMessageIndex(idx)
-    // Bug 2 (2026-05-26): record the user's explicit focus target so the
-    // next post-toggle recenter (in ConversationPage's
-    // ``markPendingRecenter``) hits the bubble the user actually
-    // clicked — not the stale ``activeMatchUuid`` from a prior search
-    // hit. Ref-based synchronous write; no React state churn.
-    //
-    // Bug 3 (2026-05-26): same call also gates the auto-promote effect
-    // in `SearchPanelContext` — a subsequent refetch (e.g. Show
-    // Compactions toggle) sees the non-null ref and skips the
-    // yank-back-to-first-match cycle.
-    markDemonstratedFocus(message.uuid)
-  }
-
-  if (unwrapped) {
-    // Caller already wrapped us in a virtualized div with a ref; we only
-    // need an inner click target. Use a fragment-equivalent: a small
-    // wrapper carrying the click handler, no ref.
-    return <div onClick={onClickRow}>{bubble}</div>
-  }
-  return (
-    <div
-      key={message.uuid}
-      ref={getSetRef ? getSetRef(message.uuid) : undefined}
-      onClick={onClickRow}
-    >
-      {bubble}
     </div>
   )
 }

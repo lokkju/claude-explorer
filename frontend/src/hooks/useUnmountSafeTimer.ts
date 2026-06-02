@@ -31,6 +31,7 @@ import { useEffect, useRef } from 'react'
 export function useUnmountSafeTimer(): (fn: () => void, ms: number) => void {
   const handleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // oxlint-disable-next-line react-doctor/exhaustive-deps -- Cleanup deliberately reads `handleRef.current` at unmount time. Capturing at effect-run would snapshot `null` (this effect runs on mount before any timer is scheduled). The intent on unmount is "cancel whichever timer is currently armed," which requires the live ref read.
   useEffect(() => {
     return () => {
       if (handleRef.current !== null) {

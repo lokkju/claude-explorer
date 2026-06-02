@@ -144,6 +144,96 @@ describe('ConversationList', () => {
     expect(screen.queryByText('Python Data Analysis')).not.toBeInTheDocument();
   });
 
+  // F12 (2026-05-29): pins the per-row source indicator for the third
+  // source value (CLAUDE_COWORK). Pre-fix code falls through to the
+  // CLAUDE_AI/"Claude Desktop" arm, so the Cowork row gets a blue
+  // MessageSquare with title="Claude Desktop" — actively wrong.
+  it('renders Cowork rows with the purple Sparkles source indicator (not Desktop)', async () => {
+    render(<ConversationList />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Cowork Session With Claude')).toBeInTheDocument();
+    });
+
+    // The Cowork row's icon-wrapping <span> exposes title="Claude Cowork".
+    // RTL's getByTitle is the user-centric query (the title attribute is
+    // part of the accessible-name computation and surfaces as the hover
+    // tooltip the user actually sees).
+    expect(screen.getByTitle('Claude Cowork')).toBeInTheDocument();
+
+    // Bidirectional assertion: a Cowork row must NOT carry the
+    // "Claude Desktop" title — that was the pre-fix wrong behavior.
+    // The Desktop title still exists on the three CLAUDE_AI rows, so
+    // we count: 3 Desktop titles (conv-1/2/3), not 4.
+    const desktopTitles = screen.getAllByTitle('Claude Desktop');
+    expect(desktopTitles).toHaveLength(3);
+
+    // And the Cowork glyph is the purple Sparkles icon, not the blue
+    // MessageSquare. lucide-react emits a class `lucide-sparkles` on
+    // the rendered SVG.
+    const cowork = screen.getByTitle('Claude Cowork');
+    const sparkles = cowork.querySelector('svg.lucide-sparkles');
+    expect(sparkles).not.toBeNull();
+    expect(sparkles).toHaveClass('text-purple-500');
+  });
+
+  // Recovery 2026-05-30 REG-1: when `groupByProject=true` and a group's
+  // members are ALL CLAUDE_AI, the group header renders the canonical
+  // SourceBadge (row variant — title="Claude Desktop") for the source
+  // indicator. Pre-fix this branch referenced a removed `MessageSquare`
+  // import and threw `ReferenceError: MessageSquare is not defined` at
+  // first render. The new code uses `<SourceBadge source="CLAUDE_AI"
+  // variant="row" />` which inherits the same blue MessageSquare visual
+  // via the canonical source-preset map.
+  it('groupByProject: all-CLAUDE_AI group header renders SourceBadge without ReferenceError', async () => {
+    server.use(
+      http.get('/api/conversations', () => {
+        // Three CLAUDE_AI rows tagged into the same organization → one
+        // group whose every member is CLAUDE_AI → hits the
+        // `groupConvs.every((c) => c.source === 'CLAUDE_AI')` branch.
+        return HttpResponse.json([
+          {
+            ...mockConversations[0],
+            uuid: 'grp-ai-1',
+            organization_name: 'Acme Org',
+            organization_id: 'org-acme',
+            source: 'CLAUDE_AI',
+          },
+          {
+            ...mockConversations[1],
+            uuid: 'grp-ai-2',
+            organization_name: 'Acme Org',
+            organization_id: 'org-acme',
+            source: 'CLAUDE_AI',
+          },
+          {
+            ...mockConversations[2],
+            uuid: 'grp-ai-3',
+            organization_name: 'Acme Org',
+            organization_id: 'org-acme',
+            source: 'CLAUDE_AI',
+          },
+        ]);
+      })
+    );
+
+    // Pre-fix this render throws synchronously; just asserting the
+    // group label appears proves render completed without ReferenceError.
+    render(<ConversationList groupByProject={true} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Acme Org')).toBeInTheDocument();
+    });
+
+    // Bidirectional: the group header MUST carry a Desktop title from
+    // the canonical SourceBadge — same source→icon map the per-row
+    // indicator uses, so adding/renaming/recoloring is a single-file
+    // change going forward.
+    const desktopTitles = screen.getAllByTitle('Claude Desktop');
+    // 3 per-row indicators + 1 group header indicator = 4 sites.
+    expect(desktopTitles.length).toBeGreaterThanOrEqual(4);
+  });
+
   it('truncates long titles with ellipsis', async () => {
     server.use(
       http.get('/api/conversations', () => {

@@ -1,12 +1,12 @@
 import {
   createContext,
+  use,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type MutableRefObject,
+  type RefObject,
   type ReactNode,
 } from 'react'
 import { useConversations, useSearch } from '@/hooks/useConversations'
@@ -252,7 +252,7 @@ interface SearchPanelContextType {
    *     recenter early-returns (sentinel matches no DOM element), so
    *     viewer stays where the user scrolled to.
    */
-  demonstratedFocusUuidRef: MutableRefObject<string | null>
+  demonstratedFocusUuidRef: RefObject<string | null>
   markDemonstratedFocus: (uuid: string | null) => void
   clearDemonstratedFocus: () => void
 }
@@ -425,10 +425,12 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
     // Return undefined when there's truly no constraint, so the cache
     // key stays minimal for the common case.
     const candidate = Object.keys(out).length === 0 ? undefined : out
+    // eslint-disable-next-line react-hooks/refs -- Identity-stabilizer pattern: structurally compare candidate to the last STABLE scope and reuse the prior reference when they match. useMemo's identity-equality on deps never sees pinScope/passingUuids as equal (new objects every parent render), so without this ref-read the queryKey for useSearch would change every render → cancel + refire → cursor reset cascade (see PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md). Reading + writing during useMemo is the documented React idiom for cached-value-with-structural-equality.
     const prev = lastScopeRef.current
     if (scopeShapesEqual(prev, candidate)) {
       return prev
     }
+    // eslint-disable-next-line react-hooks/refs -- See ref-read rationale on the matching read above; the write is the cache-population half of the same identity-stabilizer pattern.
     lastScopeRef.current = candidate
     return candidate
   }, [pinScope, organizationId, passingUuids])
@@ -587,9 +589,10 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // -1 doesn't happen, and the auto-promote effect's `=== -1` guard
   // continues to suppress re-firing. Pinned by
   // e2e/search-auto-focus.spec.ts:129 "does NOT yank the user back".
+  // oxlint-disable-next-line react-doctor/no-derived-state-effect -- The "use a key prop" recommendation doesn't apply: this state lives in a context provider that wraps the entire app (sibling of the router), not on a child component that could be keyed. The reset is intentional per the long block comment above and pinned by e2e/search-auto-focus.spec.ts. See the TODO inline for the React 19 migration plan.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: hoist activeMatchIndex alongside flatMatches as derived state. Today this resets a single int once per query-equivalent change — bounded cascade.
-    setActiveMatchIndexState(-1)
+    // react-doctor-disable-next-line react-doctor/no-chain-state-updates -- Phase 2: triggering edge is async (queryKey change + scope flips originating in OTHER providers), not a single user event. Moving this reset into the originating event handlers would miss non-local edges (pin, filter, workspace switch). Council verified the postmortem-pinned semantics hold; restructure would risk re-introducing the search-typing-lag.
+    setActiveMatchIndexState(-1) // eslint-disable-line react-hooks/set-state-in-effect -- TODO React 19 migration: hoist activeMatchIndex alongside flatMatches as derived state. Today this resets a single int once per query-equivalent change — bounded cascade.
   }, [query, sortField, sortOrder, contextSize, scope, showToolCalls, includeCompactions])
 
   // V1 polish: auto-focus the first match when results land for a fresh
@@ -620,6 +623,7 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
   // the source flag, and calls navigateToMatch with `focus: false`
   // for source='auto' so DOM focus stays in the search input while
   // the conversation pane scrolls + flashes the yellow ring.
+  // react-doctor-disable-next-line react-doctor/no-effect-chain -- Phase 2: this IS the demonstrated-focus arbitration the postmortem (PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md) protects. The chain (reset effect above sets activeMatchIndex=-1, this effect reacts) is intentional and gated; pinned by e2e/search-auto-focus.spec.ts and search-match-focus-mismatch.spec.ts.
   useEffect(() => {
     if (
       !isSearching &&
@@ -627,8 +631,9 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
       activeMatchIndex === -1 &&
       demonstratedFocusUuidRef.current === null
     ) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: "auto-promote first match once per stable-query cycle". Three-gate guard prevents infinite cascade; converting requires restructuring the navigateToMatch downstream effect too. Both setState calls (source + index) batch into a single render in React 18.
+      // react-doctor-disable-next-line react-doctor/no-chain-state-updates -- Phase 2: source MUST be set before index so downstream subscribers see the 'auto' flag at the moment they observe the index change. Cannot be batched into a useReducer without restructuring the downstream navigateToMatch effect (large risk per postmortem; deferred). NOTE: ESLint's react-hooks/set-state-in-effect does NOT currently flag setStates inside a conditional branch of an effect, so no matching eslint-disable is needed (verified 2026-05-30).
       setActiveMatchSourceState('auto')
+      // react-doctor-disable-next-line react-doctor/no-chain-state-updates -- Phase 2: see line above.
       setActiveMatchIndexState(0)
     }
   }, [isSearching, flatMatches.length, activeMatchIndex])
@@ -832,7 +837,8 @@ export function SearchPanelProvider({ children }: { children: ReactNode }) {
 
 // eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload; no runtime impact.
 export function useSearchPanel() {
-  const context = useContext(SearchPanelContext)
+  // Phase 3: React 19 use() replaces useContext().
+  const context = use(SearchPanelContext)
   if (!context) {
     throw new Error('useSearchPanel must be used within a SearchPanelProvider')
   }

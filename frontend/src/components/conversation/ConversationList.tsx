@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router'
-import { Star, GitBranch, Terminal, MessageSquare, ChevronRight, Bot, FolderCode, ChevronDown } from 'lucide-react'
+import { Star, GitBranch, ChevronRight, Bot, FolderCode, ChevronDown } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useConversations } from '@/hooks/useConversations'
 import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
@@ -9,6 +9,7 @@ import { cn, formatDate } from '@/lib/utils'
 import { applyActiveFilter, patternMatches, type FilterMode } from '@/lib/filterEngine'
 import { useFilters } from '@/contexts/FilterContext'
 import { useSearchPin } from '@/contexts/SearchPinContext'
+import { SourceBadge } from '@/components/conversation/SourceBadge'
 // Import the skinny list-payload type under an alias to avoid colliding
 // with the `ConversationListItem` component defined below in this file.
 // The post-split `/api/conversations` returns ConversationListItem[]
@@ -294,6 +295,7 @@ export function ConversationList({
           return (
             <div key={groupName}>
               <button
+                type="button"
                 onClick={() => toggleGroup(groupName)}
                 className="flex w-full items-center gap-2 px-4 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
               >
@@ -305,11 +307,14 @@ export function ConversationList({
                 />
                 {/* Source/tenant orthogonality (P1-1): icon driven by
                     source, not group label. A group consisting entirely of
-                    CLAUDE_AI conversations gets the blue MessageSquare;
-                    anything else (CLAUDE_CODE or mixed) gets the
-                    FolderCode. */}
+                    CLAUDE_AI conversations gets the canonical Desktop
+                    SourceBadge (row variant — blue MessageSquare via the
+                    SOURCE_PRESETS map); anything else (CLAUDE_CODE or
+                    mixed) gets the FolderCode. SourceBadge is the single
+                    site for the source→icon+color mapping (extracted
+                    2026-05-30 P1.2, rubric F). */}
                 {groupConvs.every((c) => c.source === 'CLAUDE_AI') ? (
-                  <MessageSquare className="h-3 w-3 text-blue-500" />
+                  <SourceBadge source="CLAUDE_AI" variant="row" />
                 ) : (
                   <FolderCode className="h-3 w-3 text-amber-500" />
                 )}
@@ -423,6 +428,7 @@ function VirtualizedFlatList({
     let node: HTMLElement | null = parentRef.current.parentElement
     while (node) {
       if (node.hasAttribute('data-radix-scroll-area-viewport')) {
+        // react-doctor-disable-next-line react-doctor/no-initialize-state -- Phase 2: this is post-mount DOM topology discovery (Radix viewport ancestor walk), not state initialization. `useState(node)` is impossible because the node doesn't exist at first render; `useSyncExternalStore` is for external data sources, not ancestor walks. Runs once per mount, fires one re-render to wire the virtualizer.
         setScrollEl(node)
         return
       }
@@ -431,6 +437,7 @@ function VirtualizedFlatList({
         (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
         node.scrollHeight > node.clientHeight
       ) {
+        // react-doctor-disable-next-line react-doctor/no-initialize-state -- Phase 2: same rationale as line above (DOM topology discovery via ancestor walk).
         setScrollEl(node)
         return
       }
@@ -439,6 +446,7 @@ function VirtualizedFlatList({
     // Last-resort fallback: virtualizer falls back to documentElement
     // scrolling. Used only when nothing above the list scrolls — true
     // in vitest where we render the list standalone.
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- Phase 2: see above.
     setScrollEl(document.documentElement)
   }, [])
 
@@ -456,6 +464,7 @@ function VirtualizedFlatList({
   useEffect(() => {
     if (!scrollEl) return
     if (items.length < prevItemsLenRef.current && scrollEl.scrollTop > 0) {
+      // oxlint-disable-next-line react-doctor/no-direct-state-mutation -- `scrollEl` is the live DOM container (HTMLElement). Writing `scrollEl.scrollTop` is the intended imperative scroll-position API; it is NOT a React state mutation. The state slot holds a stable element reference; the property we touch (scrollTop) is a browser-managed mutable field by design.
       scrollEl.scrollTop = 0
     }
     prevItemsLenRef.current = items.length
@@ -529,6 +538,8 @@ function VirtualizedFlatList({
   // event, one re-render, no cascade. The row's own scrollIntoView
   // effect (`isKeyboardSelected` → `scrollIntoView({block:
   // 'nearest'})`) handles the final precision once the row mounts.
+  //
+  // react-doctor-disable-next-line react-doctor/no-effect-chain -- Phase 2: scrollEl is the post-mount DOM-topology probe result (see the `setScrollEl` ancestor walk above). This effect reacting to scrollEl IS the wiring step, and it cannot be moved into the originating event handler — there is no "originating event"; the scroll element is discovered after mount. The single benign re-render per scrollEl change is one-time and load-bearing for the virtualizer.
   useEffect(() => {
     if (!scrollEl) return
     if (focusArea !== 'list') return
@@ -549,6 +560,7 @@ function VirtualizedFlatList({
     if (estimated >= viewportTop && estimated + ROW_HEIGHT <= viewportBottom) {
       return
     }
+    // oxlint-disable-next-line react-doctor/no-direct-state-mutation -- `scrollEl` is the live DOM container (HTMLElement). Writing `scrollEl.scrollTop` is the intended imperative scroll-position API; it is NOT a React state mutation. See the long comment block above for why we bypass virtualizer.scrollToIndex on purpose.
     scrollEl.scrollTop = Math.max(0, estimated - scrollEl.clientHeight / 3)
   }, [selectedIndex, focusArea, scrollEl])
 
@@ -566,6 +578,8 @@ function VirtualizedFlatList({
   // row to its `block: 'nearest'` position inside the Radix
   // viewport. This is the same code path the pre-virtualization
   // implementation used, so the final visual behavior matches.
+  //
+  // react-doctor-disable-next-line react-doctor/no-effect-chain -- Phase 2: same post-mount-DOM-discovery rationale as the effect above. scrollEl is wiring; reacting to its presence is required to bind the URL deep-link scroll behavior.
   useEffect(() => {
     if (!scrollEl || !selectedUuid) return
     const currentItems = itemsRef.current
@@ -591,6 +605,7 @@ function VirtualizedFlatList({
     // than fighting our pre-scroll position.
     const estimated = itemsIndex * ROW_HEIGHT
     const offset = Math.max(0, estimated - scrollEl.clientHeight / 3)
+    // oxlint-disable-next-line react-doctor/no-direct-state-mutation -- `scrollEl` is the live DOM container (HTMLElement). Writing `scrollEl.scrollTop` is the intended imperative scroll-position API; it is NOT a React state mutation. See the long comment block above for the cascade-avoidance rationale (we deliberately bypass virtualizer.scrollToIndex).
     scrollEl.scrollTop = offset
   }, [scrollEl, selectedUuid])
 
@@ -748,6 +763,15 @@ function ConversationListItem({
 
   return (
     <div>
+      {/* Phase 1 a11y: the row already has role="button", tabIndex={0},
+          and Enter/Space onKeyDown — fully keyboard-accessible. Oxlint's
+          prefer-tag-over-role suggests converting to a real <button>,
+          but the row needs a stable ref for scrollIntoView (above), and
+          the cell contains nested interactive children (the children
+          rendered below include a "view subagents" button). A <button>
+          element with nested interactive descendants is invalid HTML.
+          Suppress with rationale. */}
+      {/* react-doctor-disable-next-line react-doctor/prefer-tag-over-role */}
       <div
         ref={itemRef}
         role="button"
@@ -786,11 +810,11 @@ function ConversationListItem({
           </div>
         )}
         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-          {conversation.source === 'CLAUDE_CODE' ? (
-            <span title="Claude Code"><Terminal className="h-3 w-3 text-green-500" /></span>
-          ) : (
-            <span title="Claude Desktop"><MessageSquare className="h-3 w-3 text-blue-500" /></span>
-          )}
+          {/* F12 (2026-05-29) → SourceBadge (2026-05-30 P1.2): the
+              three-way source→icon+color map lives in SourceBadge so the
+              Sidebar.tsx:230-234 dropdown is the only OTHER place that
+              needs to track source-shape changes. */}
+          <SourceBadge source={conversation.source} variant="row" />
           <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
             {conversation.model}
           </Badge>
@@ -798,6 +822,7 @@ function ConversationListItem({
           <span>{conversation.message_count} msgs</span>
           {hasSubagents && (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation()
                 setIsExpanded(!isExpanded)

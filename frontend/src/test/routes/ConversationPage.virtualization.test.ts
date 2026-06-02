@@ -34,7 +34,16 @@
  */
 
 import { describe, it, expect } from 'vitest'
+// 2026-05-31 (PLANS/2026.05.31-conversationpage-decomposition.md, Commit 8):
+// The virtualizer wiring + the per-row absolute/translateY positioning + the
+// virtualizer.measureElement call all moved out of ConversationPage.tsx into
+// ConversationMessageStream.tsx. The structural invariants are unchanged;
+// the file the pins read just moved. The useVirtualizer import + call still
+// live in ConversationPage.tsx (the page owns the virtualizer instance and
+// forwards it as a prop), so the first two tests still source-grep the page.
+// The render-side pins now look at the stream component.
 import conversationPageSrc from '@/routes/ConversationPage.tsx?raw'
+import conversationMessageStreamSrc from '@/components/conversation/ConversationMessageStream.tsx?raw'
 
 describe('ConversationPage — virtualization wiring pin', () => {
   it('imports useVirtualizer from @tanstack/react-virtual', () => {
@@ -80,7 +89,7 @@ describe('ConversationPage — virtualization wiring pin', () => {
 
   it('renders via virtualizer.getVirtualItems() rather than ' +
     'visibleMessages.map() inside the stream', () => {
-    const src = conversationPageSrc
+    const src = conversationMessageStreamSrc
     // The render path MUST iterate the virtualizer's visible items.
     // Allow either `virtualizer.getVirtualItems()` or destructured
     // `const virtualItems = virtualizer.getVirtualItems()` then `virtualItems.map`.
@@ -89,14 +98,14 @@ describe('ConversationPage — virtualization wiring pin', () => {
       /\bvirtualItems\s*\.\s*map\s*\(/.test(src)
     expect(
       usesVirtualItems,
-      'ConversationPage.tsx must render via virtualizer.getVirtualItems(). ' +
+      'ConversationMessageStream.tsx must render via virtualizer.getVirtualItems(). ' +
         'A bare visibleMessages.map() shipping all bubbles to the DOM is ' +
         'the regression this pin guards against.',
     ).toBe(true)
   })
 
   it('calls virtualizer.measureElement so each row is measured post-mount', () => {
-    const src = conversationPageSrc
+    const src = conversationMessageStreamSrc
     // ResizeObserver-driven measurement is REQUIRED for variable-height
     // bubbles (1-line text vs 5000-char tool output). Without it the
     // virtualizer relies on estimateSize alone and scrollToIndex
@@ -119,7 +128,7 @@ describe('ConversationPage — virtualization wiring pin', () => {
   })
 
   it('positions each virtualized row with absolute + transform translateY', () => {
-    const src = conversationPageSrc
+    const src = conversationMessageStreamSrc
     // The row wrapper must be absolutely positioned inside the total-
     // height spacer with a translateY based on the virtual item's start
     // offset. Both pieces are mandatory; absolute alone yields stacked

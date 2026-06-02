@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useEffectEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { WifiOff, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -71,11 +71,13 @@ export function ConnectionStatus() {
     // Subsequent retries: 8s, 10s (cap), 10s, 10s — total 42s.
     const delay = Math.min(2000 * Math.pow(2, attempt), 10000)
     retryTimeoutRef.current = setTimeout(() => {
+      // eslint-disable-next-line react-hooks/immutability -- Canonical recursive-retry idiom. The closure captures `attemptConnection` lexically; reference resolves at setTimeout fire time, not at useCallback definition time. Stale-closure risk is bounded: this useCallback depends only on `checkConnection` (which has [] deps), so attemptConnection's identity is stable across re-renders. The Phase-2 React 19 migration target is to refactor with useEffectEvent (already imported below for onQueryError) but doing it today risks regressing the retry timing pinned by the postmortem.
       attemptConnection(attempt + 1)
     }, delay)
   }, [checkConnection])
 
   // Initial connection check
+  // oxlint-disable-next-line react-doctor/exhaustive-deps -- The cleanup intentionally reads `retryTimeoutRef.current` at unmount time (not at effect-run time). Capturing the ref value at effect-run would always be null (this effect runs on mount before any timer is scheduled). What we want on unmount is "clear whichever timer is currently pending," which is exactly the live ref read.
   useEffect(() => {
     attemptConnection(1)
 
@@ -86,29 +88,34 @@ export function ConnectionStatus() {
     }
   }, [attemptConnection])
 
-  // Monitor query errors for connection issues
+  // Monitor query errors for connection issues.
+  //
+  // Phase 2 perf (React Doctor prefer-use-effect-event): previously
+  // re-subscribed to the entire query cache on every `state` change
+  // (3 transitions per disconnection cycle: connected -> connecting ->
+  // disconnected -> connected). useEffectEvent lets the subscription
+  // mount once and read the latest `state` + `attemptConnection`
+  // without re-binding.
+  const onQueryError = useEffectEvent((errorMessage: string) => {
+    const isConnectionError =
+      errorMessage.includes('fetch') ||
+      errorMessage.includes('network') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('Failed to fetch')
+    if (isConnectionError && state === 'connected') {
+      attemptConnection(1)
+    }
+  })
   useEffect(() => {
     const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
       if (event?.type === 'updated' && event.query.state.status === 'error') {
         const error = event.query.state.error
         const errorMessage = error instanceof Error ? error.message : String(error)
-
-        // Check if it's a connection error
-        const isConnectionError =
-          errorMessage.includes('fetch') ||
-          errorMessage.includes('network') ||
-          errorMessage.includes('ECONNREFUSED') ||
-          errorMessage.includes('Failed to fetch')
-
-        if (isConnectionError && state === 'connected') {
-          // Connection was lost, start retry loop
-          attemptConnection(1)
-        }
+        onQueryError(errorMessage)
       }
     })
-
     return () => unsubscribe()
-  }, [queryClient, state, attemptConnection])
+  }, [queryClient])
 
   const handleReconnect = async () => {
     setShowDialog(false)

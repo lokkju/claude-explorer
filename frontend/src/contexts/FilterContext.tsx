@@ -42,7 +42,7 @@
  * and the on-disk sentinels guard future page loads.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { createContext, use, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { FilterNode, FiltersState, AtomFilter, GroupFilter, FilterId } from '@/lib/filterEngine'
 import { usePreferences } from '@/hooks/usePreferences'
@@ -288,6 +288,7 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     // `filtersState` would re-fire on every addNode/updateNode/removeNode
     // (the ref guard makes it harmless but wasteful). The body still
     // reads filtersState fresh via closure capture each render.
+    // oxlint-disable-next-line react-doctor/exhaustive-deps -- same rationale: sentinel-keyed migration effect; full filtersState read fresh from closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersState._migratedV1, filtersState._migratedV2, qc])
 
@@ -376,7 +377,8 @@ export function FilterProvider({ children }: { children: ReactNode }) {
 
 // eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useFilters(): FilterContextType {
-  const ctx = useContext(FilterContext)
+  // Phase 3: React 19 use() replaces useContext().
+  const ctx = use(FilterContext)
   if (!ctx) throw new Error('useFilters must be used within a FilterProvider')
   return ctx
 }

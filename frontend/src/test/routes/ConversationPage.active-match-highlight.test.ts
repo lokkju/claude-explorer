@@ -41,11 +41,20 @@ import { describe, it, expect } from 'vitest'
 // Vite's `?raw` query suffix loads the file as a string at bundle/test
 // time. Cross-toolchain: works in tsc + vitest + production builds
 // without needing Node `fs`/`@types/node` in the app tsconfig.
-import conversationPageSrc from '@/routes/ConversationPage.tsx?raw'
+//
+// 2026-05-31 (PLANS/2026.05.31-conversationpage-decomposition.md, Commit 1):
+// The per-bubble `<MessageBubble searchQuery={...} />` call site that this
+// regression test pins was lifted out of ConversationPage.tsx into a
+// dedicated module, `renderBubbleRow.tsx`. The structural invariant —
+// "highlight gated on a uuid-equality ternary, NOT a bare
+// `searchQuery={deferredSearchQuery}` on the generic call" — is unchanged;
+// only the file it lives in moved. Point the source-grep at the new file
+// so the same shape pin still fires on a future regression.
+import renderBubbleRowSrc from '@/components/conversation/renderBubbleRow.tsx?raw'
 
 describe('ConversationPage — active-match-only search highlight (perf regression pin)', () => {
   it('NEGATIVE: does not unconditionally pass deferredSearchQuery to every MessageBubble', () => {
-    const src = conversationPageSrc
+    const src = renderBubbleRowSrc
     // Forbid the literal pattern that caused the regression.
     // Any future code must either:
     //   a) Compute a per-bubble query (e.g. ternary based on uuid match), or
@@ -69,7 +78,7 @@ describe('ConversationPage — active-match-only search highlight (perf regressi
   })
 
   it('POSITIVE: passes searchQuery gated on a uuid-equality ternary to ONE bubble at a time', () => {
-    const src = conversationPageSrc
+    const src = renderBubbleRowSrc
     // §5.13 lesson (2026-05-24): the previous version of this test
     // pinned the literal variable name `highlightMessageId` in the
     // gate. When the bug fix on 2026-05-24 changed the gate to

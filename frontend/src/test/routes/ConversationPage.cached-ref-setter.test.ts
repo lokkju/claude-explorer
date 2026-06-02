@@ -33,17 +33,25 @@
 
 import { describe, it, expect } from 'vitest'
 // Vite's `?raw` query suffix loads file contents at bundle/test time.
+//
+// 2026-05-31 (Commit 8 of PLANS/2026.05.31-conversationpage-decomposition.md):
+// ConversationPage.tsx still owns the cached-ref-setter factory definition
+// (useRef<Map> + the useCallback that builds the cached function), but the
+// .map() bubble-list render moved into ConversationMessageStream.tsx.
+// The negative test (no inline ref) and the factory-invocation positive
+// test now look at the stream component for the .map() region.
 import conversationPageSrc from '@/routes/ConversationPage.tsx?raw'
+import conversationMessageStreamSrc from '@/components/conversation/ConversationMessageStream.tsx?raw'
 
 describe('ConversationPage — cached-per-id ref-setter (A11.1 antipattern pin)', () => {
   it('NEGATIVE: does not attach inline arrow refs inside the bubble list .map()', () => {
-    const src = conversationPageSrc
+    const src = conversationMessageStreamSrc
 
     // Find the visibleMessages.map(...) span.
     const mapStartIdx = src.indexOf('visibleMessages.map(')
     expect(
       mapStartIdx,
-      'ConversationPage.tsx must still contain visibleMessages.map(...) — ' +
+      'ConversationMessageStream.tsx must still contain visibleMessages.map(...) — ' +
         'test fixture out of date if this fails.',
     ).toBeGreaterThan(-1)
 
@@ -61,7 +69,7 @@ describe('ConversationPage — cached-per-id ref-setter (A11.1 antipattern pin)'
     const inlineRefPattern = /ref=\{\s*\(?[A-Za-z_$][A-Za-z0-9_$]*\)?\s*=>/
     expect(
       inlineRefPattern.test(mappedRegion),
-      'ConversationPage.tsx must NOT use inline `ref={(el) => …}` callbacks ' +
+      'ConversationMessageStream.tsx must NOT use inline `ref={(el) => …}` callbacks ' +
         'inside the visibleMessages.map() — those re-fire 2N times per ' +
         'parent render (Rule P11.A11.1). Use a cached-per-id getSetRef factory.',
     ).toBe(false)
@@ -100,10 +108,15 @@ describe('ConversationPage — cached-per-id ref-setter (A11.1 antipattern pin)'
     // across renders). The pattern below requires only that
     // `getSetRef(...uuid)` appears in the source — invocation, not just
     // import/definition.
+    //
+    // 2026-05-31 (Commit 8 of decomposition plan): the call site moved
+    // into ConversationMessageStream.tsx (jsdom branch + virtualized
+    // branch). The page still owns the factory definition (asserted
+    // above) and passes it as a prop.
     const factoryInvocationPattern = /\bgetSetRef\s*\(\s*[^)]*\buuid\b[^)]*\)/
     expect(
-      factoryInvocationPattern.test(src),
-      'ConversationPage.tsx must invoke the cached factory as ' +
+      factoryInvocationPattern.test(conversationMessageStreamSrc),
+      'ConversationMessageStream.tsx must invoke the cached factory as ' +
         '`getSetRef(<uuid>)` somewhere in the render path. The factory ' +
         'returns a stable function per uuid across renders so React skips ' +
         'redundant attach/detach calls (Rule P11.A11.1 fix).',

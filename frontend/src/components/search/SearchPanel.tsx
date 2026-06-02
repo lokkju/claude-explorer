@@ -151,6 +151,7 @@ export function SearchPanel() {
       return
     }
     navigateToMatch(match, { focus: activeMatchSource === 'user' })
+    // oxlint-disable-next-line react-doctor/exhaustive-deps -- same rationale: discrete-signal effect; runtime body reads location.pathname fresh to gate navigation.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- navigateToMatch + flatMatches + location identity churn on unrelated state; including them would re-fire this effect on every Tools click / route change. The behavior we want is "navigate exactly once per (index, source) pair, IF on a conversation route", which is what the body's runtime read of location.pathname captures while keeping the dep list to the discrete signals.
   }, [activeMatchIndex, activeMatchSource])
 
@@ -468,7 +469,7 @@ export function SearchPanel() {
           of{' '}
           <span
             className="font-medium text-zinc-700 dark:text-zinc-300"
-            title={truncated ? `at least ${flatMatches.length} — true total exceeds the per-query limit` : undefined}
+            title={truncated ? `at least ${flatMatches.length}; true total exceeds the per-query limit` : undefined}
           >
             {flatMatches.length}{truncated ? '+' : ''}
           </span>{' '}
@@ -478,7 +479,14 @@ export function SearchPanel() {
 
       {/* aria-live region: Cmd+G changes the active match without moving
           DOM focus; SR users would otherwise miss it. The "or more"
-          phrasing mirrors the visible `+` suffix when truncated. */}
+          phrasing mirrors the visible `+` suffix when truncated.
+
+          Phase 1 a11y: <div role="status"> is the standard, idiomatic
+          way to create a screen-reader status announcement region.
+          React Doctor's prefer-tag-over-role suggests <output>, but
+          <output> is a form-associated computed-result element;
+          semantically wrong for a generic announcer. Suppress. */}
+      {/* react-doctor-disable-next-line react-doctor/prefer-tag-over-role */}
       <div
         role="status"
         aria-live="polite"

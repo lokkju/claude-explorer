@@ -500,9 +500,21 @@ function FilterRow({
   onConfirmDelete,
   referencingGroups,
 }: FilterRowProps) {
+  // Phase 1 a11y: the row IS the selection control (no separate
+  // "select" button). It contains an enable/disable checkbox and a
+  // delete button as inner controls; wrapping the whole row in
+  // <button> would produce invalid HTML (button-in-button). Use
+  // role="button" + tabIndex + onKeyDown so keyboard users can select
+  // filters with Enter/Space, matching the click affordance. The
+  // prefer-tag-over-role suppression below is required because the
+  // rule can't see the nested-interactive constraint.
   return (
     <div
       data-testid={`filter-row-${node.id}`}
+      /* react-doctor-disable-next-line react-doctor/prefer-tag-over-role */
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
       className={cn(
         'flex flex-col gap-1 rounded border px-2 py-1.5 text-sm cursor-pointer',
         selected
@@ -510,6 +522,16 @@ function FilterRow({
           : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900',
       )}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          // Don't hijack Enter/Space when the user is inside an inner
+          // control (the toggle checkbox or delete button); those have
+          // their own native handlers.
+          if (e.target instanceof Element && e.target.closest('input, button')) return
+          e.preventDefault()
+          onSelect()
+        }
+      }}
     >
       <div className="flex items-center gap-2 min-w-0">
         <div className="flex-1 min-w-0">
@@ -520,6 +542,14 @@ function FilterRow({
             </span>
           </div>
         </div>
+        {/* Phase 1 a11y side-effect: the row above is now keyboard-
+            interactive (role=button), which made this <label>'s
+            onClick={stopPropagation} surface a new diagnostic. The
+            stopPropagation is deliberate — clicking the toggle
+            checkbox should NOT also fire the row's onSelect. The
+            corresponding onKeyDown stopPropagation lives in the row's
+            handler (the closest('input,button') guard). */}
+        {/* react-doctor-disable-next-line react-doctor/no-noninteractive-element-interactions */}
         <label
           className="flex items-center text-xs text-zinc-500 shrink-0"
           onClick={(e) => e.stopPropagation()}
@@ -616,9 +646,13 @@ function DraftEditor({ draft, state, onChange, onSave, onCancel, saveError }: Dr
   // Re-initialize sentinels when the draft id changes (selecting a different
   // filter, or starting a new one). Re-keying on id only — pure ref reset.
   const lastDraftIdRef = useRef<string>(draft.id)
+  // eslint-disable-next-line react-hooks/refs -- Sync re-init of sentinel refs on draft.id change is structurally required: deferring to useEffect([draft.id]) would create a one-render staleness window where the prefill effect (below) could fire against the previous draft's sentinel values. The "useState + initialValue prop" alternative would re-create state, but these are NEVER persisted refs by design (see comment block above).
   if (lastDraftIdRef.current !== draft.id) {
+    // eslint-disable-next-line react-hooks/refs -- Same sync-reset rationale as the read above; this is the cache-update half of the id-change detection.
     lastDraftIdRef.current = draft.id
+    // eslint-disable-next-line react-hooks/refs -- Same sync-reset rationale: must reset to the post-id-change initial value in the same render that detects the change.
     userEditedNameRef.current = !draft.isNew
+    // eslint-disable-next-line react-hooks/refs -- Same sync-reset rationale.
     nameFocusedRef.current = false
   }
 
@@ -641,6 +675,7 @@ function DraftEditor({ draft, state, onChange, onSave, onCancel, saveError }: Dr
     return () => clearTimeout(t)
     // We deliberately depend only on patterns + type so focus/edit toggles
     // don't reset the debounce.
+    // oxlint-disable-next-line react-doctor/exhaustive-deps -- same rationale: debounce intentionally scoped to (patterns, type); refs are read fresh inside the closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.patterns, draft.type])
 
@@ -800,6 +835,10 @@ function AtomEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) =>
         <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" htmlFor="filter-editor-patterns">
           Patterns (one per line)
         </label>
+        {/* Phase 1 a11y: the <label htmlFor> two lines up associates
+            this textarea correctly; Oxlint's rule misses the cross-
+            element association. False positive. */}
+        {/* oxlint-disable-next-line react-doctor/control-has-associated-label */}
         <textarea
           id="filter-editor-patterns"
           data-testid="filter-editor-patterns"
@@ -903,7 +942,7 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
       <div>
         <span className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Members</span>
         {memberNodes.length === 0 ? (
-          <div className="text-xs italic text-zinc-500">No members yet — add some below.</div>
+          <div className="text-xs italic text-zinc-500">No members yet; add some below.</div>
         ) : (
           <div className="flex flex-wrap gap-1" data-testid="filter-editor-members-list">
             {memberNodes.map(({ id, node }) => (
@@ -938,7 +977,11 @@ function GroupEditor({ draft, state, onChange }: { draft: Draft; state: FiltersS
 
       <div className="flex items-end gap-2">
         <div className="flex-1 min-w-0">
-          <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Add member</label>
+          {/* Phase 1 a11y: visible label for the Select; the Radix
+              SelectTrigger already carries aria-label="Add member" so
+              this <div> is the visual label only. Using <label> here
+              would attempt a form association the Select doesn't honor. */}
+          <div className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Add member</div>
           <Select value={pendingMemberId} onValueChange={setPendingMemberId}>
             <SelectTrigger data-testid="filter-editor-add-member-trigger" aria-label="Add member">
               <SelectValue placeholder={candidates.length === 0 ? 'No more filters available' : 'Pick a filter'} />
