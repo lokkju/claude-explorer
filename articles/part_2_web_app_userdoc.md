@@ -8,7 +8,7 @@
 
 # Part 2: Using the `claude-explorer` Web App (User Guide)
 
-*This is the user guide for the `claude-explorer` web app: install, Conversation List, keyboard shortcuts, exports, the whole nine yards. If you also want a technical deep-dive into how the front end works under the hood (the search index, the image-cache architecture, settings persistence), see the [longer version](part_2_web_app.md), which is a superset ot this article and adds the internals.*
+*This is the user guide for the `claude-explorer` web app: install, Conversation List, keyboard shortcuts, exports, the whole nine yards. If you also want a technical deep-dive into how the front end works under the hood (the search index, the image-cache architecture, settings persistence), see the [longer version](part_2_web_app.md), which is a superset of this article and adds the internals.*
 
 ***In this part of the series, we'll install `claude-explorer`, capture and fetch your Claude Desktop history, and then take a full product tour of the web UI: the unified Conversation List, full-text search, keyboard navigation, reading conversations, appearance and settings, and exports.***
 
@@ -220,7 +220,7 @@ One last bit of polish in the Conversation List: when you press **`Ctrl+P`** or 
 **`⌘+K`** opens the Search Pane and runs the query; the shortcut has become the standard across modern apps for *"I want a fast, global search"*. The pane slides in from the right so we can see the conversations list and the search hits list at the same time. The pane carries two tabs (Search and Bookmarks); **`⌘+K`** always lands on Search, and clicking the Bookmarks tab swaps the list view to your saved-message list (more on bookmarks in the Conversation Pane section). Each search hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text.
 
 <div align="center">
-<img src="Attachments/Pasted-image-20260531130608.png" alt="The Search Pane with results" width="400">
+<img src="Attachments/Pasted-image-20260602095802.png" alt="The Search Pane with results" width="400">
 </div>
 
 Once results are in, the panel header carries a small inline "N of M matches" counter so you can see your position at a glance. If the count reads like `1 of 1000+`, you've hit the per-query cap; refine the query to narrow the results and see the rest. **`⌘+G`** jumps to the next match and **`⌘+Shift+G`** jumps to the previous one. **`⌘+G`** works across the whole result set, jumping between conversations as naturally as between matches in a single thread, so you can treat a result set like a playlist. If you prefer the mouse, clicking a hit loads the corresponding conversation and scrolls you precisely to the matching message.
@@ -249,7 +249,7 @@ Day-to-day, you'll write queries two ways, and the difference comes down to quot
 
 - **Quoted phrase**, e.g. `"comprehensive medium"`. Wrap the whole query in double quotes and the words must appear in that exact sequence. This is the right tool when you remember a specific turn of phrase verbatim.
 
-![](Attachments/Pasted-image-20260531093051.png)
+![](Attachments/Pasted-image-20260602095455.png)
 
 Either way, the snippet highlights every matched token (or phrase), so you can tell at a glance which words triggered the hit.
 

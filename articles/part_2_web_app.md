@@ -283,7 +283,7 @@ If you ever forget a binding, hit **`?`** to open the help overlay. It lists eve
 When you type a query and hit enter, the UI sends it to a full-text search endpoint; the back end runs the same query across both sources and returns a single list of hits. Each hit includes enough context to be useful in a skim: conversation title, source, timestamp, and a snippet around the matching text.
 
 <div align="center">
-<img src="Attachments/Pasted-image-20260531130608.png" alt="The Search Pane with results" width="400">
+<img src="Attachments/Pasted-image-20260602095802.png" alt="The Search Pane with results" width="400">
 </div>
 
 
@@ -325,7 +325,7 @@ Day-to-day, you'll write queries two ways, and the difference comes down to quot
 
 - **Quoted phrase**, e.g. `"this screenshot"`. The words must appear in that exact sequence. This is the right tool when you remember a specific turn of phrase verbatim. Wrap the whole query in double quotes; the back end translates that to an FTS5 phrase clause, and the snippet only highlights matches of the full phrase.
 
-![](Attachments/Pasted-image-20260531093051.png)
+![](Attachments/Pasted-image-20260602100342.png)
 
 Either way, the snippet highlights every matched token (or phrase), so you can tell at a glance which words triggered the hit.
 
