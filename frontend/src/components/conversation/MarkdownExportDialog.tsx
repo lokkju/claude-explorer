@@ -10,11 +10,12 @@
  *                        wikilink syntax
  *
  * The user's last selected mode is stored under the
- * `markdownExportMode` key via `usePreferences` (server-side, with
- * the standard dual-read fallback). An optional "Save as default"
- * checkbox writes the choice through `setMarkdownExportMode` when the
- * user clicks Download. Without the checkbox the choice is local to
- * this dialog session only.
+ * `markdownExportMode` key (canonical, shared with Settings → Export
+ * since unification on 2026-05-29). The dialog reads/writes through
+ * SettingsContext so changes here update the Settings page in lockstep
+ * and vice versa. An optional "Save as default" checkbox writes the
+ * choice through `setMarkdownExportMode` when the user clicks Download;
+ * without the checkbox the choice is local to this dialog session only.
  *
  * The PDF button on the header is intentionally NOT routed through
  * this dialog — it stays a single-click direct download.
@@ -30,35 +31,16 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { useSettings } from '@/contexts/SettingsContext'
-import { usePreferences } from '@/hooks/usePreferences'
+import { RadioGroup } from '@/components/ui/radio-group'
+import { RadioOptionCard } from '@/components/ui/RadioOptionCard'
+import { CheckboxRow } from '@/components/ui/CheckboxRow'
+import {
+  useSettings,
+  isMarkdownExportMode,
+  type MarkdownExportMode,
+} from '@/contexts/SettingsContext'
 import { api } from '@/lib/api'
 import { downloadBlob, sanitizeFilename } from '@/lib/utils'
-
-export type MarkdownExportMode =
-  | 'inline'
-  | 'bundle-commonmark'
-  | 'bundle-obsidian'
-
-// Runtime predicate — Radix `RadioGroup.onValueChange` hands callers a
-// `string`, not the narrow MarkdownExportMode union. Used by the
-// onValueChange callback below to reject unknown values (defense in
-// depth — the RadioGroupItem children below only ever supply known
-// values, so the guard catches drift, not normal usage).
-const MARKDOWN_EXPORT_MODES: readonly MarkdownExportMode[] = [
-  'inline',
-  'bundle-commonmark',
-  'bundle-obsidian',
-]
-
-// eslint-disable-next-line react-refresh/only-export-components -- safe: helper predicate co-located with the dialog component that consumes it. HMR fast refresh falls back to a full reload for this file; no runtime impact.
-export function isMarkdownExportMode(v: unknown): v is MarkdownExportMode {
-  return (
-    typeof v === 'string' &&
-    (MARKDOWN_EXPORT_MODES as readonly string[]).includes(v)
-  )
-}
 
 interface MarkdownExportDialogProps {
   open: boolean
@@ -73,11 +55,12 @@ export function MarkdownExportDialog({
   conversationUuid,
   conversationName,
 }: MarkdownExportDialogProps) {
-  const { showToolCalls, hideCompactMarkers } = useSettings()
-  const [storedMode, setStoredMode] = usePreferences<MarkdownExportMode>(
-    'markdownExportMode',
-    'inline',
-  )
+  const {
+    showToolCalls,
+    hideCompactMarkers,
+    markdownExportMode: storedMode,
+    setMarkdownExportMode: setStoredMode,
+  } = useSettings()
   // V1 polish 2026-05-24 (Bug 2) — unified toggle: the conversation
   // header's "Show Compactions" checkbox is the SINGLE source of truth
   // for whether compactions are visible in the viewer AND included in
@@ -96,7 +79,9 @@ export function MarkdownExportDialog({
 
   useEffect(() => {
     if (open) {
-      setMode(storedMode)
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- Phase 2: deliberate "seed-on-open" UX. The user audits a mode without persisting; reopening must re-seed from storedMode. The rule's "use a key prop" recommendation would remount the entire Radix Dialog on every open, breaking focus-trap timing, animation, and the controlled-open pattern.
+      setMode(storedMode) // eslint-disable-line react-hooks/set-state-in-effect -- Deliberate seed-on-open UX: re-seed audition state from storedMode each time the dialog opens (see doctor-disable rationale above). A key prop would break Radix Dialog focus trap + animation.
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- Phase 2: same seed-on-open rationale. (ESLint react-hooks/set-state-in-effect only flags the first setState in an effect; the disable above setMode already covers this one.)
       setSaveAsDefault(false)
     }
   }, [open, storedMode])
@@ -151,61 +136,42 @@ export function MarkdownExportDialog({
           }}
           className="gap-3"
         >
-          <label className="flex items-start gap-3 rounded border border-zinc-200 p-3 dark:border-zinc-800">
-            <RadioGroupItem value="inline" id="md-mode-inline" className="mt-0.5" />
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                Inline
-              </span>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Single .md file. Images embedded inline or omitted.
-              </span>
-            </div>
-          </label>
-
-          <label className="flex items-start gap-3 rounded border border-zinc-200 p-3 dark:border-zinc-800">
-            <RadioGroupItem
-              value="bundle-commonmark"
-              id="md-mode-bundle-cm"
-              className="mt-0.5"
-            />
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                Bundle CommonMark
-              </span>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Zip with conversation.md, images/, attachments/. Standard
-                Markdown links.
-              </span>
-            </div>
-          </label>
-
-          <label className="flex items-start gap-3 rounded border border-zinc-200 p-3 dark:border-zinc-800">
-            <RadioGroupItem
-              value="bundle-obsidian"
-              id="md-mode-bundle-ob"
-              className="mt-0.5"
-            />
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                Bundle Obsidian
-              </span>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Same as CommonMark but uses Obsidian wikilink syntax.
-              </span>
-            </div>
-          </label>
+          {/* P1.3 (2026-05-30): three card-shaped <label>+<RadioGroupItem>
+              pairs collapsed into <RadioOptionCard>. The dialog mirrors
+              the Settings page Export Mode shape; selection visuals are
+              delegated to the surrounding RadioGroup's `value` prop, so
+              we pass `active={mode === ...}` to keep the border swap. */}
+          <RadioOptionCard
+            value="inline"
+            id="md-mode-inline"
+            title="Inline"
+            description="Single .md file. Images embedded inline or omitted."
+            active={mode === 'inline'}
+            layout="stacked"
+          />
+          <RadioOptionCard
+            value="bundle-commonmark"
+            id="md-mode-bundle-cm"
+            title="Bundle CommonMark"
+            description="Zip with conversation.md, images/, attachments/. Standard Markdown links."
+            active={mode === 'bundle-commonmark'}
+            layout="stacked"
+          />
+          <RadioOptionCard
+            value="bundle-obsidian"
+            id="md-mode-bundle-ob"
+            title="Bundle Obsidian"
+            description="Same as CommonMark but uses Obsidian wikilink syntax."
+            active={mode === 'bundle-obsidian'}
+            layout="stacked"
+          />
         </RadioGroup>
 
-        <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-900"
-            checked={saveAsDefault}
-            onChange={(e) => setSaveAsDefault(e.target.checked)}
-          />
-          <span>Save as default</span>
-        </label>
+        <CheckboxRow
+          label="Save as default"
+          checked={saveAsDefault}
+          onCheckedChange={setSaveAsDefault}
+        />
 
         <DialogFooter>
           <Button
