@@ -198,7 +198,7 @@ class ConversationSummary(BaseModel):
         """Compute project_name from project_path after initialization."""
         if self.project_path and not self.project_name:
             # Extract just the folder name from the full path
-            # e.g., /Users/rpeck/Source/my-project -> my-project
+            # e.g., /Users/you/Source/my-project -> my-project
             path = self.project_path.rstrip("/")
             self.project_name = path.split("/")[-1] if "/" in path else path
 
