@@ -1326,6 +1326,55 @@ broken suite had masked for days (recovery plan:
 
 ---
 
+### 5.17 · Specs with a local `mockBackend(page)` MUST mock `/api/preferences`
+
+Any spec that defines its OWN local `async function mockBackend(page)`
+helper (i.e. does NOT use the shared `mockBackend` fixture from
+`frontend/e2e/fixtures.ts`) must also mock `**/api/preferences`. Without
+the mock, GET/PATCH/PUT `/api/preferences` falls through Vite's dev-
+server proxy to whatever backend happens to be running on `:8765`, so
+prefs like `rightPaneTab`, `searchPanel.isOpen`, `showCompactions`, and
+`showToolCalls` persist across browser contexts and bleed between
+tests.
+
+The 2026-06-01 recovery surfaced this as the root cause of every
+remaining post-Tailscale-fix flake (bookmarks, compact-markers,
+cowork-multi-org, force-refetch, per-bubble-tools, redownload-
+conversation, url-navigation, search-compact-auto-expand,
+connection-status). Symptom shape: an assertion fails because a UI
+toggle / panel state set by a sibling test persists into the current
+test's first render. The failure looks like a UI race; the root cause
+is server-side state.
+
+Use the shared helper:
+
+```ts
+import { installLocalPrefsMock } from './fixtures'
+
+async function mockBackend(page: Page) {
+  // ... other route mocks ...
+  await installLocalPrefsMock(page)                            // empty prefs
+  await installLocalPrefsMock(page, { rightPaneTab: 'search' }) // seeded
+  // ... rest of the mocks ...
+}
+```
+
+The helper supports GET (returns the current blob), PATCH (merges the
+body into the blob), PUT (overwrites the blob), and 405 for everything
+else. Status-quo behavior; no migration cost for existing call sites.
+
+**Rule for new specs**: if you write a local `mockBackend(page)`, audit
+your route mocks for `/api/preferences` coverage AS PART OF THE PR
+review. If `/api/preferences` is missing, that's a Vite-proxy leak
+waiting to flake the next sibling test that toggles a pref.
+
+The shared `mockBackend` fixture from `fixtures.ts` already wires its
+own prefs mock with the same shape (accepting `preferences` /
+`sharedPrefsState` options). Specs using the shared fixture do NOT
+need this helper.
+
+---
+
 ## 6 · Test review checklist
 
 Before declaring a new test sufficient, confirm:

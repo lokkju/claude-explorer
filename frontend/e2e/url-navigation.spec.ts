@@ -1,4 +1,4 @@
-import { test, expect, Route, withNetRetry } from './fixtures';
+import { test, expect, Route, withNetRetry, installLocalPrefsMock } from './fixtures';
 
 /**
  * URL-parameter navigation (Build-6).
@@ -135,24 +135,9 @@ async function mockBackend(page: import('@playwright/test').Page) {
     });
   });
 
-  // Per-test preferences (Vite-proxy leak defense). 2026-06-01.
-  const prefs: { data: Record<string, unknown> } = { data: {} };
-  await page.route('**/api/preferences', async (route) => {
-    const req = route.request();
-    const method = req.method();
-    if (method === 'GET') {
-      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: prefs.data }) });
-      return;
-    }
-    if (method === 'PATCH' || method === 'PUT') {
-      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
-      const patch = (body.data ?? body) as Record<string, unknown>;
-      prefs.data = method === 'PUT' ? patch : { ...prefs.data, ...patch };
-      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: prefs.data }) });
-      return;
-    }
-    route.fulfill({ status: 405, body: 'Method Not Allowed' });
-  });
+  // Per-test preferences (Vite-proxy leak defense — see
+  // fixtures.installLocalPrefsMock header for rationale). 2026-06-01.
+  await installLocalPrefsMock(page);
 }
 
 test.describe('URL-parameter navigation', () => {

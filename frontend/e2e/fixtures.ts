@@ -153,6 +153,68 @@ export function expectNetworkError(
   )
 }
 
+/**
+ * Per-test in-memory `/api/preferences` mock for specs that define their
+ * OWN local `mockBackend(page)` (i.e. NOT using the shared `mockBackend`
+ * fixture from this file). Without this, GET/PATCH/PUT `/api/preferences`
+ * falls through Vite's proxy to whatever backend happens to be running
+ * on `:8765`, so prefs (`rightPaneTab`, `searchPanel.isOpen`,
+ * `showCompactions`, …) persist across browser contexts and bleed
+ * between tests.
+ *
+ * The 2026-06-01 recovery surfaced this as the root cause of every
+ * remaining post-Tailscale-fix intermittent (bookmarks, compact-markers,
+ * cowork-multi-org, force-refetch, per-bubble-tools, redownload-
+ * conversation, url-navigation, search-compact-auto-expand, connection-
+ * status). Each spec had its own local-prefs mock copy-pasted ~18 lines
+ * verbatim; this helper consolidates them.
+ *
+ * Behavior:
+ *   - GET  → returns `{ data: prefs.data }` (current in-memory blob).
+ *   - PATCH → merges the request body's `data` field (or the whole body
+ *     as a fallback) into the existing prefs.
+ *   - PUT  → overwrites the prefs blob with the request body's `data`
+ *     field (or the whole body as a fallback).
+ *   - other → 405 Method Not Allowed.
+ *
+ * Usage in a local mockBackend(page) helper:
+ *
+ *   await installLocalPrefsMock(page)                            // empty start
+ *   await installLocalPrefsMock(page, { rightPaneTab: 'search' }) // seeded
+ *
+ * Specs that use the shared `mockBackend` fixture from this file do NOT
+ * need this — the fixture already wires its own prefs mock with the
+ * same shape (and accepts `preferences` / `sharedPrefsState` options).
+ */
+export async function installLocalPrefsMock(
+  page: Page,
+  initial: Record<string, unknown> = {},
+): Promise<void> {
+  const prefs: { data: Record<string, unknown> } = { data: { ...initial } }
+  await page.route('**/api/preferences', async (route: Route) => {
+    const req = route.request()
+    const method = req.method()
+    if (method === 'GET') {
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: prefs.data }),
+      })
+      return
+    }
+    if (method === 'PATCH' || method === 'PUT') {
+      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>
+      const patch = (body.data ?? body) as Record<string, unknown>
+      prefs.data = method === 'PUT' ? patch : { ...prefs.data, ...patch }
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: prefs.data }),
+      })
+      return
+    }
+    route.fulfill({ status: 405, body: 'Method Not Allowed' })
+  })
+}
+
 const PRIMARY_ORG_ID = 'ae24ae66-4622-48e7-b4b3-1ab2c49f933d'
 
 const DEFAULT_ORGS: OrgsResponse = {

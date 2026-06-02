@@ -1,4 +1,4 @@
-import { test, expect, Route, withNetRetry } from './fixtures';
+import { test, expect, Route, withNetRetry, installLocalPrefsMock } from './fixtures';
 
 /**
  * Message bookmarks (Build-4).
@@ -79,56 +79,18 @@ interface MockBookmark {
 
 async function mockBackend(page: import('@playwright/test').Page) {
   const state: { bookmarks: MockBookmark[] } = { bookmarks: [] };
-  // Per-test preferences store. Without this, PATCH /api/preferences
-  // and GET /api/preferences fall through to whatever backend is
-  // running on :8765 via the Vite proxy, so prefs (rightPaneTab,
-  // searchPanel.isOpen, etc.) set by one test bleed into the next.
-  // The 2026-06-01 regression: bookmarks:172 / :245 / :268 saw a
-  // PERSISTED `rightPaneTab: 'bookmarks'` from a prior test's tab
-  // click, and Cmd+K's "open Search tab" race surfaced as a
-  // visible-tablist timeout. Isolating prefs here makes the file
-  // self-contained again.
-  const prefs: { data: Record<string, unknown> } = { data: {} };
+  // Per-test preferences store. The 2026-06-01 regression: bookmarks:172
+  // / :245 / :268 saw a PERSISTED `rightPaneTab: 'bookmarks'` from a
+  // prior test's tab click via the Vite-proxy leak, and Cmd+K's "open
+  // Search tab" race surfaced as a visible-tablist timeout. See
+  // fixtures.installLocalPrefsMock header for the shared rationale.
+  await installLocalPrefsMock(page);
 
   await page.route('**/api/config', (route: Route) => {
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data_dir: '/tmp', conversation_count: 1 }),
     });
-  });
-
-  await page.route('**/api/preferences', async (route: Route) => {
-    const req = route.request();
-    const method = req.method();
-    if (method === 'GET') {
-      route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({ data: prefs.data }),
-      });
-      return;
-    }
-    if (method === 'PATCH') {
-      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
-      // The frontend's `usePreferences` sends `{ data: { key: value } }`
-      // shaped patches. Merge into the in-memory store.
-      const patch = (body.data ?? body) as Record<string, unknown>;
-      prefs.data = { ...prefs.data, ...patch };
-      route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({ data: prefs.data }),
-      });
-      return;
-    }
-    if (method === 'PUT') {
-      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
-      prefs.data = (body.data ?? body) as Record<string, unknown>;
-      route.fulfill({
-        contentType: 'application/json',
-        body: JSON.stringify({ data: prefs.data }),
-      });
-      return;
-    }
-    route.fulfill({ status: 405, body: 'Method Not Allowed' });
   });
 
   await page.route('**/api/bookmarks**', async (route: Route) => {
