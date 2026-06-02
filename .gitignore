@@ -67,4 +67,5 @@ profile_*
 LinkedIn/
 
 # Bumblebee security scanner output (large NDJSON inventory of system packages)
-inventory.ndjsonmedium-build/
+inventory.ndjson
+medium-build/
