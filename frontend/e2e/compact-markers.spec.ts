@@ -134,6 +134,36 @@ async function mockBackend(page: import('@playwright/test').Page) {
       body: JSON.stringify({ data_dir: '/tmp', conversation_count: 1 }),
     });
   });
+
+  // Per-test preferences store. Without this, /api/preferences leaks
+  // through the Vite proxy to whatever backend is on :8765, so a
+  // PREVIOUS run that toggled Show Compactions off persists across
+  // tests in this file (compact-markers all depend on the marker
+  // being visible). 2026-06-01 hardening — same pattern as bookmarks
+  // and search-compact-auto-expand.
+  const prefs: { data: Record<string, unknown> } = { data: {} };
+  await page.route('**/api/preferences', async (route: Route) => {
+    const req = route.request();
+    const method = req.method();
+    if (method === 'GET') {
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: prefs.data }),
+      });
+      return;
+    }
+    if (method === 'PATCH' || method === 'PUT') {
+      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+      const patch = (body.data ?? body) as Record<string, unknown>;
+      prefs.data = method === 'PUT' ? patch : { ...prefs.data, ...patch };
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: prefs.data }),
+      });
+      return;
+    }
+    route.fulfill({ status: 405, body: 'Method Not Allowed' });
+  });
 }
 
 test.describe('Compact markers', () => {

@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route, withNetRetry } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route, withNetRetry, expectNetworkError } from './fixtures'
 import type { ImageFile, Message } from '../src/lib/types'
 
 /**
@@ -233,7 +233,10 @@ test.describe('Image attachments — files + files_v2 dedup (Phase 2)', () => {
 })
 
 test.describe('Image attachments — broken image fallback (Phase 2)', () => {
-  test('404 thumbnail shows ImageOff placeholder with the filename', async ({ page, mockBackend }) => {
+  test('404 thumbnail shows ImageOff placeholder with the filename', async ({ page, mockBackend, consoleAssertions }) => {
+    // §5.15: deliberate `<img>` 404 → Chromium logs a network-layer
+    // line the app cannot suppress. Allowlist only that shape.
+    expectNetworkError(consoleAssertions, 404)
     const summary = makeSummary({ uuid: C, source: 'CLAUDE_AI', message_count: 1 })
     const img = makeImage({ file_uuid: 'broken', file_name: 'gone.png' })
     const m = makeMessage({
@@ -269,7 +272,13 @@ test.describe('Claude Code [Image: source: <path>] text markers (Pattern B)', ()
   // This test asserts the desired behavior: the marker is replaced
   // with an <img> in the bubble. Failing == we still need to ship
   // the fix (preprocessor + image-cache proxy).
-  test('text marker [Image: source: <path>] renders as an <img>, not literal text', async ({ page, mockBackend }) => {
+  test('text marker [Image: source: <path>] renders as an <img>, not literal text', async ({ page, mockBackend, consoleAssertions }) => {
+    // §5.15: /fixture/cc-image-cache/... is not on disk; the marker
+    // preprocessor's image fetch 404s and Chromium logs the network
+    // line. Either the success path (200) or the fallback (404) is OK
+    // for this assertion — we only check that the literal marker text
+    // is replaced. Allowlist the 404 shape for the fallback path.
+    expectNetworkError(consoleAssertions, 404)
     const summary = makeSummary({
       uuid: C,
       source: 'CLAUDE_CODE',

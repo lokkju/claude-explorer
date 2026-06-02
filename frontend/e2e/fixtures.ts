@@ -112,6 +112,47 @@ const PROJECT_CONSOLE_ALLOWLIST: RegExp[] = [
   // mocked); leave it as an error so it fails the test, NOT allowlisted.
 ]
 
+/**
+ * Per-test helper for error-path tests that deliberately mock a network
+ * failure (404 / 401 / 504 / connection-refused) and then assert the app's
+ * error UI. Chromium logs `Failed to load resource: ...` (or
+ * `net::ERR_CONNECTION_REFUSED`) at the network layer regardless of how the
+ * app handles the rejection — for `<img>` 404s especially, the app cannot
+ * suppress it. §5.15 still fires on every OTHER console error or warning.
+ *
+ * Usage:
+ *
+ *   test('shows fallback on 404', async ({ page, mockBackend, consoleAssertions }) => {
+ *     expectNetworkError(consoleAssertions, 404)        // image / fetch 404s
+ *     // OR
+ *     expectNetworkError(consoleAssertions, 'connectionrefused')
+ *     // ...
+ *   })
+ *
+ * Keep the regex tight: pass a specific status code (or the symbolic
+ * `'connectionrefused'`) — never a bare `/Failed to load resource/`, which
+ * would blind the guardrail to genuinely-swallowed errors.
+ */
+export function expectNetworkError(
+  consoleAssertions: ConsoleCapture,
+  kind: 404 | 401 | 403 | 504 | 'connectionrefused',
+): void {
+  if (kind === 'connectionrefused') {
+    consoleAssertions.allowlist.push(/net::ERR_CONNECTION_REFUSED/)
+    // The Failed-to-load-resource line precedes the ERR_CONNECTION_REFUSED
+    // detail in some Chromium versions; allow both shapes.
+    consoleAssertions.allowlist.push(/Failed to load resource:.*ERR_CONNECTION_REFUSED/)
+    return
+  }
+  // Numeric statuses log as `Failed to load resource: the server responded
+  // with a status of <code> (<reason>)`. Anchor on the status so a 404
+  // allowlist does not also catch a 504 leak.
+  const code = String(kind)
+  consoleAssertions.allowlist.push(
+    new RegExp(`Failed to load resource:.*status of ${code}\\b`),
+  )
+}
+
 const PRIMARY_ORG_ID = 'ae24ae66-4622-48e7-b4b3-1ab2c49f933d'
 
 const DEFAULT_ORGS: OrgsResponse = {

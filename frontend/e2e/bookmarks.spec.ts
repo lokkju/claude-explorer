@@ -79,12 +79,56 @@ interface MockBookmark {
 
 async function mockBackend(page: import('@playwright/test').Page) {
   const state: { bookmarks: MockBookmark[] } = { bookmarks: [] };
+  // Per-test preferences store. Without this, PATCH /api/preferences
+  // and GET /api/preferences fall through to whatever backend is
+  // running on :8765 via the Vite proxy, so prefs (rightPaneTab,
+  // searchPanel.isOpen, etc.) set by one test bleed into the next.
+  // The 2026-06-01 regression: bookmarks:172 / :245 / :268 saw a
+  // PERSISTED `rightPaneTab: 'bookmarks'` from a prior test's tab
+  // click, and Cmd+K's "open Search tab" race surfaced as a
+  // visible-tablist timeout. Isolating prefs here makes the file
+  // self-contained again.
+  const prefs: { data: Record<string, unknown> } = { data: {} };
 
   await page.route('**/api/config', (route: Route) => {
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data_dir: '/tmp', conversation_count: 1 }),
     });
+  });
+
+  await page.route('**/api/preferences', async (route: Route) => {
+    const req = route.request();
+    const method = req.method();
+    if (method === 'GET') {
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: prefs.data }),
+      });
+      return;
+    }
+    if (method === 'PATCH') {
+      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+      // The frontend's `usePreferences` sends `{ data: { key: value } }`
+      // shaped patches. Merge into the in-memory store.
+      const patch = (body.data ?? body) as Record<string, unknown>;
+      prefs.data = { ...prefs.data, ...patch };
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: prefs.data }),
+      });
+      return;
+    }
+    if (method === 'PUT') {
+      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+      prefs.data = (body.data ?? body) as Record<string, unknown>;
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ data: prefs.data }),
+      });
+      return;
+    }
+    route.fulfill({ status: 405, body: 'Method Not Allowed' });
   });
 
   await page.route('**/api/bookmarks**', async (route: Route) => {
@@ -171,15 +215,22 @@ test.describe('Message bookmarks (Build-4)', () => {
 
   test('right pane has Search and Bookmarks tabs', async ({ page }) => {
     await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
-    // Open the right panel (Cmd/Ctrl+K). Click main first to ensure focus.
-    await page.locator('main').click();
-    // Open the right panel by dispatching the keyboard shortcut. Use evaluate
-    // to ensure focus context is correct (page.keyboard.press misses the
-    // window listener intermittently in the test runner).
-    await page.evaluate(() => {
-      const isMac = navigator.platform.includes('Mac');
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac, bubbles: true }));
-    });
+    // Settle signal: the bubble being in the DOM is the deterministic
+    // signal that the App tree (including useKeyboardShortcuts' window
+    // keydown handler) has mounted. Without this, a race between the
+    // navigation finishing and the useEffect that wires up the keydown
+    // handler causes Cmd+K to no-op (panel never opens, tablist never
+    // appears). 2026-06-01 hardening — same shape as the rest of the
+    // suite (toggle-preserves-focus-after-click, search-* specs).
+    await expect(page.locator('[data-message-uuid="msg-A"]')).toBeVisible();
+    // 2026-06-01: switched from window.dispatchEvent(new KeyboardEvent)
+    // back to page.keyboard.press. The original `evaluate` shape was
+    // documented as "more reliable" than keyboard.press, but the rest
+    // of the e2e suite uses page.keyboard.press successfully (e.g.
+    // toggle-preserves-focus-after-click). dispatchEvent was the
+    // intermittent path here — bare keyboard.press works once the App
+    // tree has mounted (see the settle signal above).
+    await page.keyboard.press('Meta+k');
     await expect(page.getByRole('tablist')).toBeVisible({ timeout: 10_000 });
 
     const tablist = page.getByRole('tablist');
@@ -243,15 +294,9 @@ test.describe('Message bookmarks (Build-4)', () => {
     await bubble.getByRole('button', { name: /bookmark/i }).click();
     await expect(bubble.locator('[data-bookmarked]')).toHaveCount(1);
 
-    // Open the right panel and switch to Bookmarks tab.
-    await page.locator('main').click();
-    // Open the right panel by dispatching the keyboard shortcut. Use evaluate
-    // to ensure focus context is correct (page.keyboard.press misses the
-    // window listener intermittently in the test runner).
-    await page.evaluate(() => {
-      const isMac = navigator.platform.includes('Mac');
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac, bubbles: true }));
-    });
+    // 2026-06-01: switched from window.dispatchEvent to page.keyboard.press
+    // — same reliability fix as test 172 above. See that test's comment.
+    await page.keyboard.press('Meta+k');
     await expect(page.getByRole('tablist')).toBeVisible({ timeout: 10_000 });
     await page.getByRole('tablist').getByRole('tab', { name: /bookmarks/i }).click();
 
@@ -270,15 +315,19 @@ test.describe('Message bookmarks (Build-4)', () => {
     const bubble = page.locator('[data-message-uuid="msg-B"]');
     await bubble.hover();
     await bubble.getByRole('button', { name: /bookmark/i }).click();
+    // Settle signal: confirm the bookmark write has been reflected in
+    // the DOM before continuing. Without this, the subsequent
+    // main.click() + Cmd+K dispatch races with the bookmark PATCH and
+    // its React re-render cascade — the global keydown handler reads
+    // a half-mounted SearchPanelContext and the toggle silently no-ops,
+    // leaving the tablist never visible (2026-06-01 baseline regression
+    // for `Export to Markdown button` — see CLAUDE-TESTING.md on
+    // playwright settle signals).
+    await expect(bubble.locator('[data-bookmarked]')).toHaveCount(1);
 
-    await page.locator('main').click();
-    // Open the right panel by dispatching the keyboard shortcut. Use evaluate
-    // to ensure focus context is correct (page.keyboard.press misses the
-    // window listener intermittently in the test runner).
-    await page.evaluate(() => {
-      const isMac = navigator.platform.includes('Mac');
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac, bubbles: true }));
-    });
+    // 2026-06-01: switched from window.dispatchEvent to page.keyboard.press
+    // — same reliability fix as test 172 above. See that test's comment.
+    await page.keyboard.press('Meta+k');
     await expect(page.getByRole('tablist')).toBeVisible({ timeout: 10_000 });
     await page.getByRole('tablist').getByRole('tab', { name: /bookmarks/i }).click();
 

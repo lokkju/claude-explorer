@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route, withNetRetry } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route, withNetRetry, expectNetworkError } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -108,7 +108,13 @@ test.describe('CC inline image content block opens lightbox (Issue #1)', () => {
 })
 
 test.describe('CC `[Image: source: <path>]` marker opens lightbox (Issue #1)', () => {
-  test('clicking a CC image marker opens the lightbox, not a new tab', async ({ page, mockBackend }) => {
+  test('clicking a CC image marker opens the lightbox, not a new tab', async ({ page, mockBackend, consoleAssertions }) => {
+    // §5.15: the CC marker bubble preprocessor probes both
+    // `/api/cc-image?path=...` (mocked 200 below) AND the org-files /
+    // attachments fallbacks (default 404 from mockBackend). Allowlist the
+    // 404 line that Chromium logs for those fallback probes — the lightbox
+    // opens on the successful /api/cc-image fetch regardless.
+    expectNetworkError(consoleAssertions, 404)
     const tracker = await trackPopups(page)
     await mockCcImageBytes(page)
 

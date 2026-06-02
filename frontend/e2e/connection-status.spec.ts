@@ -1,4 +1,4 @@
-import { test, expect, withNetRetry } from './fixtures';
+import { test, expect, withNetRetry, expectNetworkError } from './fixtures';
 
 // M5.5: converted to `./fixtures`. Tests 1-7 deliberately block all
 // `/api/**` to exercise the offline-backend UX, so they don't need
@@ -15,7 +15,12 @@ import { test, expect, withNetRetry } from './fixtures';
 // cold-start finish). Schedule: 4s, 8s, 10s, 10s, 10s = 42s to terminal.
 
 test.describe('Connection Status', () => {
-  test('shows connecting dialog when backend is unavailable', async ({ page }) => {
+  test('shows connecting dialog when backend is unavailable', async ({ page, consoleAssertions }) => {
+    // §5.15: deliberately aborting every /api/** with connectionrefused
+    // makes Chromium log net::ERR_CONNECTION_REFUSED at the network
+    // layer. That noise is expected for this offline-backend test; every
+    // other console error or warning still fails the test.
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // Block all API requests to simulate backend down
     await page.route('**/api/**', (route) => {
       route.abort('connectionrefused');
@@ -30,7 +35,8 @@ test.describe('Connection Status', () => {
     await expect(page.getByText(/Attempt \d+ of \d+/)).toBeVisible();
   });
 
-  test('shows retry counter incrementing', async ({ page }) => {
+  test('shows retry counter incrementing', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // Block API requests
     await page.route('**/api/**', (route) => {
       route.abort('connectionrefused');
@@ -49,7 +55,8 @@ test.describe('Connection Status', () => {
     await expect(page.getByText('Attempt 3 of 5')).toBeVisible({ timeout: 10000 });
   });
 
-  test('Retry Now button triggers immediate retry', async ({ page }) => {
+  test('Retry Now button triggers immediate retry', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     let requestCount = 0;
 
     // Block API requests and count them
@@ -74,7 +81,8 @@ test.describe('Connection Status', () => {
     expect(requestCount).toBeGreaterThan(initialCount);
   });
 
-  test('shows Connection Failed dialog after max retries', async ({ page }) => {
+  test('shows Connection Failed dialog after max retries', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // Block API requests
     await page.route('**/api/**', (route) => {
       route.abort('connectionrefused');
@@ -100,7 +108,8 @@ test.describe('Connection Status', () => {
     await expect(page.getByRole('button', { name: 'Try Again' })).toBeVisible();
   });
 
-  test('Try Again button restarts retry process', async ({ page }) => {
+  test('Try Again button restarts retry process', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // Block API requests
     await page.route('**/api/**', (route) => {
       route.abort('connectionrefused');
@@ -120,7 +129,8 @@ test.describe('Connection Status', () => {
     await expect(page.getByText(/Attempt [23] of 5/)).toBeVisible();
   });
 
-  test('Dismiss button closes the dialog', async ({ page }) => {
+  test('Dismiss button closes the dialog', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // Block API requests
     await page.route('**/api/**', (route) => {
       route.abort('connectionrefused');
@@ -138,7 +148,10 @@ test.describe('Connection Status', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible();
   });
 
-  test('dialog closes automatically when backend becomes available', async ({ page, mockBackend }) => {
+  test('dialog closes automatically when backend becomes available', async ({ page, mockBackend, consoleAssertions }) => {
+    // The pre-recovery block phase aborts with connectionrefused, which
+    // Chromium logs at the network layer. Allowlist just that shape.
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // Install the mocked backend FIRST so its routes exist when we lift
     // the per-test block. Once `blockRequests=false`, the per-test
     // `**/api/**` handler falls through (via `route.fallback()`) to the
@@ -176,7 +189,8 @@ test.describe('Connection Status', () => {
     await expect(page.getByText('Claude Explorer')).toBeVisible();
   });
 
-  test('shows spinning icon during connection attempts', async ({ page }) => {
+  test('shows spinning icon during connection attempts', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // Block API requests
     await page.route('**/api/**', (route) => {
       route.abort('connectionrefused');
@@ -195,7 +209,8 @@ test.describe('Connection Status', () => {
   // V1 polish (2026-05-09): the three new behaviors get explicit
   // regression tests so a future refactor can't quietly drop them.
 
-  test('does NOT show "Last error" while still connecting (V1 polish)', async ({ page }) => {
+  test('does NOT show "Last error" while still connecting (V1 polish)', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // Block API to force `connecting` state with a recorded lastError.
     await page.route('**/api/**', (route) => {
       route.abort('connectionrefused');
@@ -212,7 +227,8 @@ test.describe('Connection Status', () => {
     await expect(page.getByText(/Last error/)).toHaveCount(0);
   });
 
-  test('first retry waits ~4 seconds (V1 polish)', async ({ page }) => {
+  test('first retry waits ~4 seconds (V1 polish)', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     const requestTimes: number[] = [];
     await page.route('**/api/config', (route) => {
       requestTimes.push(Date.now());
@@ -221,22 +237,53 @@ test.describe('Connection Status', () => {
 
     await withNetRetry(() => page.goto('/'));
 
-    // React StrictMode in the Vite dev build double-mounts the
-    // ConnectionStatus, producing two near-simultaneous initial fetches.
-    // Wait until we have at least 4 timestamps (≥2 from the doubled
-    // initial mount + ≥2 from the first scheduled retry round) so we
-    // can measure the actual retry-delay gap regardless.
-    await expect.poll(() => requestTimes.length, { timeout: 15000 }).toBeGreaterThanOrEqual(3);
+    // The previous shape (poll for length ≥ 3 then read gaps) returned
+    // immediately after the StrictMode-doubled mount fired ~2-4 nearly
+    // simultaneous requests, BEFORE the 4s scheduled retry got a chance
+    // to fire. That made maxGap = ~30ms regardless of the production
+    // schedule, defeating the regression check. (Baseline 2026-06-01.)
+    //
+    // The `/api/config` endpoint is hit by TWO independent retry
+    // schedules: ConnectionStatus's own loop AND react-query's default
+    // for the `['config']` query (`queryClient.ts:42`, 1s/2s/4s/...).
+    // Observed timestamps after 8s wall-clock (one representative run):
+    //
+    //   t:    [0, 4, 5, 40,  1027, 3031, 4029, 4033, 7035]
+    //   gaps: [4, 1, 35, 1027, 2004,  998,   4, 3002]
+    //
+    // The 4s ConnectionStatus retry shows as the 3002ms gap at the end
+    // of that 8s window; with only 5-6s of wall-clock we instead lock
+    // in the 2004ms react-query gap and miss the 4s one. Wait ≥ 7s so
+    // the 4s ConnectionStatus retry has landed AND the next 2s
+    // react-query backoff has put a `/api/config` after it, surfacing
+    // the ≥ 3s gap.
+    await expect.poll(() => requestTimes.length, { timeout: 10000 }).toBeGreaterThanOrEqual(1);
+    const first = requestTimes[0];
+    await expect
+      .poll(() => Date.now() - first, { timeout: 12000, intervals: [500, 500, 1000] })
+      .toBeGreaterThanOrEqual(7500);
 
     // Find the largest gap between consecutive timestamps. Under the
     // 2s baseline this is ~2000ms; under the 4s V1-polish schedule it
-    // should be ~4000ms. Reject sub-3000ms as a regression.
+    // should be ~4000ms (actually surfaces as ~3000ms because the
+    // react-query retries land in between). Reject sub-3000ms as a
+    // regression — any retry slower than 3s catches a drift away from
+    // the 4s V1-polish schedule back to the pre-polish 2s schedule.
+    expect(requestTimes.length).toBeGreaterThanOrEqual(2);
     const gaps = requestTimes.slice(1).map((t, i) => t - requestTimes[i]);
     const maxGap = Math.max(...gaps);
     expect(maxGap).toBeGreaterThanOrEqual(3000);
   });
 
-  test('does NOT flash dialog after a single transient (V1 polish)', async ({ page, mockBackend }) => {
+  test('does NOT flash dialog after a single transient (V1 polish)', async ({ page, mockBackend, consoleAssertions }) => {
+    // §5.15: the test deliberately aborts the first /api/config with
+    // connectionrefused; Chromium logs the network-layer line. This
+    // wasn't catching in the original baseline because the abort fired
+    // before the App tree had wired up its console listener, but it
+    // surfaced as a flake on retry runs (2026-06-01). Allowlist the
+    // expected shape; the actual contract (no dialog ever visible) is
+    // still asserted below.
+    expectNetworkError(consoleAssertions, 'connectionrefused')
     // mockBackend installed first so the app loads.
     await mockBackend({});
 

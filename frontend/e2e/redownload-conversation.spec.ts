@@ -1,4 +1,4 @@
-import { test, expect, Route, withNetRetry } from './fixtures';
+import { test, expect, Route, withNetRetry, expectNetworkError } from './fixtures';
 
 /**
  * Build-9 Bug 3 (frontend): the per-conversation "Re-download this
@@ -38,6 +38,25 @@ async function mockBackend(
 ) {
   await page.route('**/api/config', (route: Route) => {
     route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data_dir: '/tmp', conversation_count: 1 }) });
+  });
+
+  // Per-test preferences (Vite-proxy leak defense). 2026-06-01.
+  const prefs: { data: Record<string, unknown> } = { data: {} };
+  await page.route('**/api/preferences', async (route: Route) => {
+    const req = route.request();
+    const method = req.method();
+    if (method === 'GET') {
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: prefs.data }) });
+      return;
+    }
+    if (method === 'PATCH' || method === 'PUT') {
+      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+      const patch = (body.data ?? body) as Record<string, unknown>;
+      prefs.data = method === 'PUT' ? patch : { ...prefs.data, ...patch };
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: prefs.data }) });
+      return;
+    }
+    route.fulfill({ status: 405, body: 'Method Not Allowed' });
   });
 
   await page.route('**/api/fetch/conversation/**', (route: Route) => {
@@ -116,7 +135,11 @@ test.describe('Re-download this conversation (Bug 3)', () => {
     await expect(toast).toContainText(/re-downloaded|re-fetched|complete/i);
   });
 
-  test('on 404, shows the backend\'s friendly detail (not raw JSON)', async ({ page }) => {
+  test('on 404, shows the backend\'s friendly detail (not raw JSON)', async ({ page, consoleAssertions }) => {
+    // §5.15: deliberate 404 from the redownload endpoint logs the
+    // network-layer line; the friendly toast is the user-visible
+    // signal we still assert below.
+    expectNetworkError(consoleAssertions, 404)
     const friendly =
       "This conversation isn't available on Anthropic anymore. It may have been deleted or archived.";
     await mockBackend(page, {
@@ -134,7 +157,8 @@ test.describe('Re-download this conversation (Bug 3)', () => {
     await expect(toast).not.toContainText(/\{"detail"/);
   });
 
-  test('on cross-workspace 404, shows the workspace explanation', async ({ page }) => {
+  test('on cross-workspace 404, shows the workspace explanation', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 404)
     const friendly =
       'This conversation may belong to a different Anthropic workspace than your current login. Cross-workspace sync is coming in a future update.';
     await mockBackend(page, {
@@ -150,7 +174,8 @@ test.describe('Re-download this conversation (Bug 3)', () => {
     await expect(toast).toContainText(/different Anthropic workspace/);
   });
 
-  test('on 401 (session expired), shows the session-expired copy', async ({ page }) => {
+  test('on 401 (session expired), shows the session-expired copy', async ({ page, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 401)
     const sessionExpired =
       'Session expired or Cloudflare-blocked. Re-run claude-explorer capture to refresh credentials.';
     await mockBackend(page, {

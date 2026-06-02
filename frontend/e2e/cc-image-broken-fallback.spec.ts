@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route, withNetRetry } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, type Route, withNetRetry, expectNetworkError } from './fixtures'
 import type { Message } from '../src/lib/types'
 
 /**
@@ -40,7 +40,11 @@ const summary = makeSummary({
 })
 
 test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () => {
-  test('CcImageMarkerText shows friendly fallback when /api/cc-image 404s', async ({ page, mockBackend }) => {
+  test('CcImageMarkerText shows friendly fallback when /api/cc-image 404s', async ({ page, mockBackend, consoleAssertions }) => {
+    // §5.15: the deliberate /api/cc-image 404 logs a Chromium network-layer
+    // line that the app cannot suppress. Allowlist that one shape; every
+    // other console error still fails the test.
+    expectNetworkError(consoleAssertions, 404)
     const m = makeMessage({
       uuid: 'msg-marker',
       sender: 'human',
@@ -77,7 +81,8 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
     await expect(fallback.locator('img')).toHaveCount(0)
   })
 
-  test('InlineImageBlock shows friendly fallback when image url 404s', async ({ page, mockBackend }) => {
+  test('InlineImageBlock shows friendly fallback when image url 404s', async ({ page, mockBackend, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 404)
     const m = makeMessage({
       uuid: 'msg-inline',
       sender: 'human',
@@ -105,7 +110,8 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
     await expect(fallback.locator('img')).toHaveCount(0)
   })
 
-  test('fallback tile shows clearer cache-miss copy and tooltip', async ({ page, mockBackend }) => {
+  test('fallback tile shows clearer cache-miss copy and tooltip', async ({ page, mockBackend, consoleAssertions }) => {
+    expectNetworkError(consoleAssertions, 404)
     const m = makeMessage({
       uuid: 'msg-marker-copy',
       sender: 'human',
@@ -142,7 +148,10 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
   test('<img> auto-retries once via cache-busting URL before showing fallback tile', async ({
     page,
     mockBackend,
+    consoleAssertions,
   }) => {
+    // First request 404s before the retry succeeds; allowlist the 404 line.
+    expectNetworkError(consoleAssertions, 404)
     const m = makeMessage({
       uuid: 'cc-marker-retry',
       sender: 'human',

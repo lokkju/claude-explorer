@@ -1,4 +1,4 @@
-import { test, expect, withNetRetry } from './fixtures'
+import { test, expect, withNetRetry, expectNetworkError } from './fixtures'
 
 /**
  * M1 of the mock-data conversion plan
@@ -172,7 +172,12 @@ test.describe('mockBackend default routes (M1)', () => {
     })
   })
 
-  test('GET /api/cc-image returns 404 by default', async ({ page, mockBackend }) => {
+  test('GET /api/cc-image returns 404 by default', async ({ page, mockBackend, consoleAssertions }) => {
+    // §5.15: the test deliberately fetches /api/cc-image with a path
+    // that the mockBackend default 404s. The Chromium fetch fails at
+    // the network layer and logs `Failed to load resource: ... 404`;
+    // that noise is expected here.
+    expectNetworkError(consoleAssertions, 404)
     await mockBackend({})
     const r = await fetchOnPage(page, '/api/cc-image?path=/missing.png')
     expect(r.status).toBe(404)
@@ -216,7 +221,9 @@ test.describe('mockBackend default routes (M1)', () => {
   test('GET /api/{org}/files/{uuid}/preview returns 404 by default', async ({
     page,
     mockBackend,
+    consoleAssertions,
   }) => {
+    expectNetworkError(consoleAssertions, 404)
     await mockBackend({})
     const r = await fetchOnPage(
       page,
@@ -228,7 +235,9 @@ test.describe('mockBackend default routes (M1)', () => {
   test('GET /api/attachments/<conv>/<file>/<variant> returns 404 by default', async ({
     page,
     mockBackend,
+    consoleAssertions,
   }) => {
+    expectNetworkError(consoleAssertions, 404)
     await mockBackend({})
     const r = await fetchOnPage(page, '/api/attachments/c1/f1/preview')
     expect(r.status).toBe(404)

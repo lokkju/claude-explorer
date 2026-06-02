@@ -45,6 +45,26 @@ async function mockBackend(page: import('@playwright/test').Page) {
   await page.route('**/api/config', (route: Route) => {
     route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data_dir: '/tmp', conversation_count: 1 }) });
   });
+
+  // Per-test preferences (Vite-proxy leak defense). 2026-06-01.
+  const prefs: { data: Record<string, unknown> } = { data: {} };
+  await page.route('**/api/preferences', async (route: Route) => {
+    const req = route.request();
+    const method = req.method();
+    if (method === 'GET') {
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: prefs.data }) });
+      return;
+    }
+    if (method === 'PATCH' || method === 'PUT') {
+      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+      const patch = (body.data ?? body) as Record<string, unknown>;
+      prefs.data = method === 'PUT' ? patch : { ...prefs.data, ...patch };
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: prefs.data }) });
+      return;
+    }
+    route.fulfill({ status: 405, body: 'Method Not Allowed' });
+  });
+
   await page.route('**/api/conversations**', (route: Route) => {
     const url = route.request().url();
     if (url.includes(`/${FAKE_UUID}/tree`)) {

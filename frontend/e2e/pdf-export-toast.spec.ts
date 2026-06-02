@@ -1,4 +1,4 @@
-import { test, expect, makeSummary, makeMessage, makeDetail, type Page, withNetRetry } from './fixtures'
+import { test, expect, makeSummary, makeMessage, makeDetail, type Page, withNetRetry, expectNetworkError } from './fixtures'
 
 /**
  * Task A5 — Spinner toast UX for PDF export.
@@ -114,7 +114,11 @@ test.describe('PDF export spinner toast (Task A5)', () => {
   test('504 timeout response shows user-readable error toast', async ({
     page,
     mockBackend,
+    consoleAssertions,
   }) => {
+    // §5.15: deliberate 504 → Chromium logs the network-layer line; the
+    // app surfaces the user-readable toast separately.
+    expectNetworkError(consoleAssertions, 504)
     await mockBackend({ conversations: [summary], details: { [PDF]: detail } })
     await page.route('**/api/conversations/*/export/pdf**', async (route) => {
       await route.fulfill({

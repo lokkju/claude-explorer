@@ -86,6 +86,26 @@ async function mockBackend(
     });
   });
 
+  // Per-test preferences (Vite-proxy leak defense — see compact-markers
+  // and bookmarks for the rationale). 2026-06-01.
+  const prefs: { data: Record<string, unknown> } = { data: {} };
+  await page.route('**/api/preferences', async (route: Route) => {
+    const req = route.request();
+    const method = req.method();
+    if (method === 'GET') {
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: prefs.data }) });
+      return;
+    }
+    if (method === 'PATCH' || method === 'PUT') {
+      const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
+      const patch = (body.data ?? body) as Record<string, unknown>;
+      prefs.data = method === 'PUT' ? patch : { ...prefs.data, ...patch };
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: prefs.data }) });
+      return;
+    }
+    route.fulfill({ status: 405, body: 'Method Not Allowed' });
+  });
+
   await page.route('**/api/orgs', (route: Route) => {
     route.fulfill({
       status: orgsResponse.status,

@@ -63,17 +63,24 @@ test.describe('Delete UX', () => {
     await withNetRetry(() => page.goto('/'))
     const modal = await openModal(page)
 
-    const trash = modal.getByRole('button', { name: /^delete/i }).first()
+    // 2026-06-01: the previous role-based confirm selector
+    // (`getByRole('button', { name: /^confirm|yes|delete/i }).filter({
+    // hasNotText: /DeleteMe/ }).last()`) was ambiguous — the row
+    // wrapper is itself `role="button"` (aria-pressed div), so its
+    // accessible name picks up the inline "Delete "DeleteMe"? Cancel
+    // Confirm" copy after the trash click. That made the locator
+    // resolve to the row wrapper instead of the inner Confirm button
+    // on ~10/10 attempts, leaving the delete UI in 'confirm' state and
+    // the row still rendered. Pin to the production testids the
+    // component already exposes (`filter-row-delete-{id}` for the
+    // trash, `filter-row-delete-confirm-{id}` for Confirm).
+    const trash = page.getByTestId('filter-row-delete-a-1')
     await expect(trash).toBeVisible()
     await trash.click()
 
-    // An inline confirm appears.
-    const confirm = modal.getByRole('button', { name: /^confirm|yes|delete/i }).filter({
-      hasNotText: /DeleteMe/,
-    })
-    // Click the confirm (the one that's not the trash row label).
-    // Heuristic: pick the last confirm-style button.
-    await confirm.last().click()
+    const confirm = page.getByTestId('filter-row-delete-confirm-a-1')
+    await expect(confirm).toBeVisible()
+    await confirm.click()
 
     // Row is gone.
     await expect(modal.getByText(/^DeleteMe$/)).toHaveCount(0)
