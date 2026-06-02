@@ -11,7 +11,7 @@
 
 New here? Start with [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) for what this project is and why you'd want it. For the full product tour (named filters, branches, bookmarks, themes, Time Machine recovery), read the [user guide](part_2_web_app_userdoc.md); for the internals (search index, image-cache architecture, settings persistence), read the [deep-dive](part_2_web_app.md).
 
-![Claude Explorer's three-pane web UI: the Conversation List, the Conversation Pane, and the Search Pane](Attachments/Pasted%20image%2020260527130701.png)
+![Claude Explorer's three-pane web UI: the Conversation List, the Conversation Pane, and the Search Pane](Attachments/Pasted-image-20260527130701.png)
 
 ## Install
 
