@@ -209,7 +209,7 @@ def conversation_to_html(
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{conversation.name}</title>
+    <title>{escape_html(conversation.name or "")}</title>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -355,9 +355,9 @@ def conversation_to_html(
     </style>
 </head>
 <body>
-    <h1>{conversation.name}</h1>
+    <h1>{escape_html(conversation.name or "")}</h1>
     <div class="meta">
-        <strong>Model:</strong> {conversation.model}<br>
+        <strong>Model:</strong> {escape_html(conversation.model or "")}<br>
         <strong>Created:</strong> {format_timestamp(conversation.created_at)}<br>
         <strong>Messages:</strong> {conversation.message_count}
     </div>
@@ -483,6 +483,17 @@ def _build_pdf_url_fetcher(conversation: ConversationDetail) -> Any:
     conv_uuid = conversation.uuid
 
     def fetcher(url: str) -> dict[str, Any]:
+        # `data:` URIs are inline (no network round trip) and WeasyPrint
+        # may emit them internally for fonts or generated images, so we
+        # defer them to the default fetcher. EVERY other scheme — http(s),
+        # file, ftp — that doesn't match one of the three local-API regexes
+        # below falls through to the transparent-PNG placeholder at the
+        # bottom of this function. The default fetcher accepts all of those
+        # schemes with no allow-list, so passing an unrecognised URL through
+        # it would turn any HTML-injection vector in a user-controlled
+        # field (conversation.name, conversation.model) into SSRF +
+        # arbitrary-file-read during PDF render. Pinned in
+        # tests/test_export_pdf_html_injection.py.
         if url.startswith("data:"):
             from weasyprint.urls import default_url_fetcher
 
@@ -550,13 +561,8 @@ def _build_pdf_url_fetcher(conversation: ConversationDetail) -> Any:
                 )
             return {"string": _TRANSPARENT_1x1_PNG, "mime_type": "image/png"}
 
-        # Anything else: defer to the default fetcher. Most non-data,
-        # non-file URLs will raise; that's the right behavior for
-        # external resources we shouldn't be trying to fetch from a PDF
-        # render.
-        from weasyprint.urls import default_url_fetcher
-
-        return default_url_fetcher(url)
+        log.warning("PDF url_fetcher: refusing unknown URL scheme: %r", url)
+        return {"string": _TRANSPARENT_1x1_PNG, "mime_type": "image/png"}
 
     return fetcher
 
