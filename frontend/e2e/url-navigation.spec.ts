@@ -184,7 +184,7 @@ test.describe('URL-parameter navigation', () => {
   });
 
   test('/conversations?title=^React&filterMode=regex applies regex title filter', async ({ page }) => {
-    await withNetRetry(() => page.goto('/conversations?title=' + encodeURIComponent('^React')) + '&filterMode=regex');
+    await withNetRetry(() => page.goto('/conversations?title=' + encodeURIComponent('^React') + '&filterMode=regex'));
     await expect(page.getByText('React component refactor')).toBeVisible();
     await expect(page.getByText('MCP server bootstrap notes')).toHaveCount(0);
   });

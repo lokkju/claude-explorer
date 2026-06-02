@@ -13,7 +13,7 @@
 // NO APP CODE was read while writing this test.
 
 import { test, expect, withNetRetry } from './fixtures'
-import { makeSummary, withNetRetry } from './fixtures'
+import { makeSummary } from './fixtures'
 
 const conversations = [
   makeSummary({ uuid: 'c-foo', name: 'Foo morning' }),

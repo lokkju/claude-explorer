@@ -32,7 +32,7 @@
 // NO APP CODE was read while writing this test.
 
 import { test, expect, type Locator, withNetRetry } from './fixtures'
-import { makeSummary, withNetRetry } from './fixtures'
+import { makeSummary } from './fixtures'
 
 /**
  * Asserts that `target`'s bounding box is fully contained within the

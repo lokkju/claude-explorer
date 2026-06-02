@@ -17,7 +17,7 @@
  */
 
 import { test, expect, withNetRetry } from './fixtures'
-import { makeSummary, withNetRetry } from './fixtures'
+import { makeSummary } from './fixtures'
 import type { FiltersState } from '../src/lib/filterEngine'
 
 const conversations = [
