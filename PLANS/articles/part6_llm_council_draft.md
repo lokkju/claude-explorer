@@ -9,7 +9,7 @@
   The prose sits here until Part 6 gets a full framing pass.
 
   Companion plan (structure + outline): PLANS/articles/part6_llm_council_plan.md
-  Voice rules: PROCESS/99_voice_cheatsheet.md
+  Voice rules: PROCESS/99_styleguide.md
 -->
 
 # Part 6 — DRAFT CONTENT (Bug-Hunting essay lifted from Part 2)

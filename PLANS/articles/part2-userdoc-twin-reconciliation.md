@@ -65,7 +65,7 @@ existing userdoc surgically** (so approved prose and voice survive). Section by 
      rg -nE 'backend/|/api/|FTS5|schema v[0-9]+|isCompactSummary|launchd|systemd|sqlite|orjson|ThreadPoolExecutor' \
        articles/part_2_web_app_userdoc.md
      ```
-   - **Voice scan** per `PROCESS/99_voice_cheatsheet.md`: active voice, no em-dashes,
+   - **Voice scan** per `PROCESS/99_styleguide.md`: active voice, no em-dashes,
      no "X, not Y", no verbless fragments, ⌘ glyph, "back end"/"front end" nouns.
    - **Twin-parity on claims**: every user-visible claim in the userdoc must match (not
      contradict) the long-form; the userdoc may say *less*, never something *different*.

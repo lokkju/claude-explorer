@@ -1,7 +1,7 @@
 <!--
   Medium series: Unlocking Your Claude History
   Part 2 of 7: Draft (Council synthesis: Gemini 3 Pro + GPT-5.2-pro drafters, cross-critique, Opus synthesis)
-  Sources: Part 1 (immutable), PROCESS/99_voice_cheatsheet.md, README.md, phase_07/11/14/18/19 extractions
+  Sources: Part 1 (immutable), PROCESS/99_styleguide.md, README.md, phase_07/11/14/18/19 extractions
   Voice: Raymond Peck's "Best Practices for Modern REST APIs in Python" series
 -->
 

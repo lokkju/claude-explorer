@@ -1,7 +1,7 @@
 <!--
   Medium series: Unlocking Your Claude History
   Part 1 of 5 — Draft (v2, post-Council review 2026-04-20)
-  Sources: PROCESS/93_use_cases.md, 90_themes.md, 91_memorable_quotes.md, 92_timeline.md, 99_voice_cheatsheet.md, README.md
+  Sources: PROCESS/93_use_cases.md, 90_themes.md, 91_memorable_quotes.md, 92_timeline.md, 99_styleguide.md, README.md
   Voice: Raymond Peck's "Best Practices for Modern REST APIs in Python" series
   Council contributors: gemini-3-pro-preview + gpt-5.2 (both neutral stance)
 -->

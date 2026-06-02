@@ -199,6 +199,6 @@
 ## Out of scope (per user's brief)
 
 - **Part 1 audit** — companion doc, not requested
-- **Stylistic / voice edits** — audit is fact + test coverage only; the article's voice is consistent with PROCESS/99_voice_cheatsheet.md and not in scope
+- **Stylistic / voice edits** — audit is fact + test coverage only; the article's voice is consistent with PROCESS/99_styleguide.md and not in scope
 - **Implementing the test gaps** — this is plan-only; user will approve before any work
 - **`PLANS/part2_revision_followups.md`** (sibling file) — already a tracking doc for the credentials-perms fix that landed; do not double-track in this plan

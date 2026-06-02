@@ -2,7 +2,7 @@
   Medium series: Unlocking Your Claude History
   Part 2 of 7: User-doc lite version
   Source: PLANS/articles/part_2_web_app.md (~7,700 words)
-  Voice: PROCESS/99_voice_cheatsheet.md (Raymond Peck's "Best Practices for Modern REST APIs in Python" series)
+  Voice: PROCESS/99_styleguide.md (Raymond Peck's "Best Practices for Modern REST APIs in Python" series)
   Council: Gemini 3 Pro + Gemini 2.5 Pro (GPT-5.2-pro fallback after 429) drafters → cross-critique → synthesis
 -->
 

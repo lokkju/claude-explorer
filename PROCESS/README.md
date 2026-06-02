@@ -1,6 +1,6 @@
 /model# PROCESS/ — Medium Series Extraction Artifacts
 
-Intermediate artifacts for the Medium series **"Unlocking Your Claude History: A UI and MCP Server for Your Conversations"** (see `PLANS/medium-article.md` for the plan + progress tracker).
+Intermediate artifacts for the Medium series **"Unlocking Your Claude History: A UI and MCP Server for Your Conversations"** (see `PLANS/medium-articles.md` for the plan + progress tracker).
 
 Everything in this directory is generated from the project's own build-session transcripts via the `claude-sessions` MCP server. The articles' factual claims cite back to these files; each fact cites back to a specific message in a specific session.
 
@@ -19,7 +19,7 @@ Session ids are the full UUID (e.g. `a70251a5-b932-4b61-aba1-16a70410b98e`). Sho
 PROCESS/
 ├── README.md                      # this file
 ├── 00_session_inventory.md        # full session table + skipped-session note
-├── 99_voice_cheatsheet.md         # prompt-include for every drafting subagent
+├── 99_styleguide.md         # prompt-include for every drafting subagent
 ├── a70251a5/                      # main build session (5,207 messages)
 │   ├── outline.jsonl              # every message: uuid, position, sender, summary
 │   ├── outline_digest.md          # every 100th human message, for scanning
