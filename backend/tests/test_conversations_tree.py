@@ -591,3 +591,119 @@ def test__get_conversations_tree__cc_session_returns_empty_tree_envelope(
         )
     finally:
         config.get_settings.cache_clear()  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Real-data root marker (regression guard, 2026-05-30).
+#
+# The claude.ai export API parents the FIRST message of every conversation to
+# a synthetic placeholder UUID rather than to ``None``. ``build_message_tree``
+# historically seeded its BFS only from ``parent_message_uuid is None``, so a
+# conversation whose root used the placeholder produced ``root_messages: []``
+# — an empty tree — even though ``has_branches`` correctly reported a fork.
+# Net effect: the "View branches" button appeared but the modal rendered blank
+# for *every* real Claude Desktop conversation (104/104 in the maintainer's
+# corpus). Every fixture above uses a ``None`` root, which is why CI never
+# caught it. These two tests pin the real-data shape.
+# ---------------------------------------------------------------------------
+
+
+_PLACEHOLDER_ROOT = "00000000-0000-4000-8000-000000000000"
+
+
+def _branched_conversation_placeholder_root() -> tuple[dict[str, Any], dict[str, str]]:
+    """``_branched_conversation`` with the root parented to the real-data
+    placeholder UUID instead of ``None`` — i.e. exactly what claude.ai writes
+    to disk.
+    """
+    conv, uuids = _branched_conversation()
+    for msg in conv["chat_messages"]:
+        if msg["uuid"] == uuids["root"]:
+            msg["parent_message_uuid"] = _PLACEHOLDER_ROOT
+    return conv, uuids
+
+
+def test__get_conversations_tree__placeholder_root__renders_populated_tree(
+    isolated_data_dir: Path,
+) -> None:
+    """A conversation whose root is parented to the placeholder UUID must
+    render a populated tree, not an empty one. ``build_message_tree`` treats
+    any parent that is not itself a message in the conversation as a root.
+
+    Before the fix this returned ``root_messages: []`` and the branch modal
+    was blank for all real Desktop conversations.
+    """
+    conv, uuids = _branched_conversation_placeholder_root()
+    _write_conversation(isolated_data_dir, conv)
+
+    client = TestClient(app)
+    response = client.get(f"/api/conversations/{uuids['conv']}/tree")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    # THE regression: exactly one root must surface (m_root), not zero.
+    assert len(body["root_messages"]) == 1, (
+        "placeholder-rooted conversation must render a populated tree; "
+        f"got {len(body['root_messages'])} roots (0 == the bug)"
+    )
+    assert body["root_messages"][0]["message"]["uuid"] == uuids["root"]
+
+    # The full branched shape survives, branch point at m_a intact.
+    expected_shape = {
+        uuids["root"]: {
+            uuids["a"]: {
+                uuids["b1"]: {uuids["c1"]: {}},
+                uuids["b2"]: {uuids["c2"]: {}},
+            },
+        },
+    }
+    assert _extract_tree_shape(body["root_messages"]) == expected_shape
+
+    # active_path still walks root -> active leaf (already correct pre-fix,
+    # since the leaf-walk stops at the unknown placeholder parent; pinned
+    # here so a future change can't break it alongside the tree fix).
+    assert body["active_path"] == [
+        uuids["root"],
+        uuids["a"],
+        uuids["b2"],
+        uuids["c2"],
+    ]
+
+
+def test__get_conversations_tree__dangling_parent__treated_as_root(
+    isolated_data_dir: Path,
+) -> None:
+    """Robustness: a message whose ``parent_message_uuid`` points at a UUID
+    absent from ``chat_messages`` (a dangling/orphan link) must be treated as
+    a root. Otherwise the message and its whole subtree silently vanish from
+    the tree.
+    """
+    conv_uuid = str(uuid_lib.uuid4())
+    m_root = str(uuid_lib.uuid4())
+    m_child = str(uuid_lib.uuid4())
+    missing_parent = str(uuid_lib.uuid4())  # deliberately never added
+
+    chat_messages = [
+        _msg(m_root, missing_parent, sender="human", text="Orphan-rooted"),
+        _msg(m_child, m_root, sender="assistant", text="Child reply"),
+    ]
+    conv = {
+        "uuid": conv_uuid,
+        "name": "Dangling-parent fixture",
+        "summary": "",
+        "model": "claude-sonnet-4-6",
+        "created_at": _CREATED_AT,
+        "updated_at": _CREATED_AT,
+        "is_starred": False,
+        "source": "CLAUDE_AI",
+        "current_leaf_message_uuid": m_child,
+        "chat_messages": chat_messages,
+    }
+    _write_conversation(isolated_data_dir, conv)
+
+    client = TestClient(app)
+    response = client.get(f"/api/conversations/{conv_uuid}/tree")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert _extract_tree_shape(body["root_messages"]) == {m_root: {m_child: {}}}

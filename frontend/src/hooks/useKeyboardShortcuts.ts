@@ -97,16 +97,19 @@ export function useKeyboardShortcuts() {
       }
       const cmdOrCtrl = e.metaKey || e.ctrlKey
 
-      // Cmd+R triggers the same Build-9 capture+fetch pipeline the
-      // sidebar Refresh button runs — matches the article's "Cmd+R does
-      // the same thing as the sidebar Refresh button" promise. The
-      // pipeline context guards itself with a sourceRef so a rapid
-      // double-press can't double-fire; we also short-circuit on the
-      // hook's isRunning flag to avoid even calling startRefresh while
-      // a refresh is in flight (defense in depth). preventDefault is
-      // load-bearing — without it, Cmd+R reloads the SPA and the user
-      // loses their place.
-      if (e.key === 'r' && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      // Cmd+R (macOS) / Ctrl+R (Windows, Linux) triggers the same
+      // Build-9 capture+fetch pipeline the sidebar Refresh button runs,
+      // matching the article's "the same one the sidebar button
+      // triggers" promise on every platform. Uses the shared cmdOrCtrl
+      // modifier so the binding fires everywhere, exactly as Cmd/Ctrl+K,
+      // +F, and +G do. The pipeline context guards itself with a
+      // sourceRef so a rapid double-press can't double-fire; we also
+      // short-circuit on the hook's isRunning flag to avoid even calling
+      // startRefresh while a refresh is in flight (defense in depth).
+      // preventDefault is load-bearing: without it the browser reloads
+      // the SPA (Ctrl/Cmd+R is the native reload) and the user loses
+      // their place. F5 and Ctrl+Shift+R still reload by design.
+      if (e.key === 'r' && cmdOrCtrl && !e.altKey && !e.shiftKey) {
         e.preventDefault()
         if (!isRefreshRunning) {
           startRefresh(true)

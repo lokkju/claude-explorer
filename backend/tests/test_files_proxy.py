@@ -315,3 +315,151 @@ def test__proxy__upstream_404_local_fallback__emits_observability_log(
         f"expected a log record mentioning 'proxy_local_fallback'; "
         f"got: {[r.getMessage() for r in caplog.records]!r}"
     )
+
+
+# ----------------------------------------------------------------------
+# Offline fallback (Phase B — 2026-05-29).
+#
+# When the upstream `curl_cffi.requests.get` raises (network unreachable,
+# DNS timeout, claude.ai down) we previously returned 502 unconditionally
+# even if the bulk fetcher had already cached the attachment bytes on
+# disk. This breaks the "images keep working when offline" claim Part 2
+# makes for Desktop attachments. The fix: try the SAME local cache that
+# the 404 branch already uses before raising 502.
+#
+# Spec-driven: tests pin the three branches of the new behavior:
+#   1. upstream-unreachable + cached → serve local (200)
+#   2. upstream-unreachable + NOT cached → still 502 (unchanged)
+#   3. metachar `file_uuid` (path-traversal attempt) + cached →
+#      still 502 (security guard holds; cache lookup skipped)
+# ----------------------------------------------------------------------
+
+
+def test__proxy__upstream_unreachable_with_local_cache__returns_local_bytes(
+    proxy_404_fallback_env: tuple[TestClient, Path],
+) -> None:
+    """PROXY-OFFLINE-FALLBACK-200: upstream raises (offline) + local cache
+    present → serve local bytes with HTTP 200.
+
+    Pre-fix this returns 502 (the network-failure except branch raises
+    immediately without consulting the cache).
+    """
+    client, root = proxy_404_fallback_env
+
+    cache_dir = root / _TEST_CONV / _TEST_FILE
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "thumbnail.png").write_bytes(_FALLBACK_PNG)
+
+    with patch(
+        "curl_cffi.requests.get",
+        side_effect=OSError("Network is unreachable"),
+    ):
+        resp = client.get(f"/api/{_TEST_ORG}/files/{_TEST_FILE}/thumbnail")
+
+    assert resp.status_code == 200, (
+        f"upstream-unreachable + local-cache must serve local bytes (200); "
+        f"got {resp.status_code}: {resp.text!r}"
+    )
+    assert resp.content == _FALLBACK_PNG, "served bytes must equal the cached fixture"
+    assert resp.headers["content-type"].startswith("image/"), (
+        f"expected image/* content-type from local cache; got {resp.headers['content-type']!r}"
+    )
+
+
+def test__proxy__upstream_unreachable_local_fallback__emits_observability_log(
+    proxy_404_fallback_env: tuple[TestClient, Path],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PROXY-OFFLINE-FALLBACK-OBS: the offline fallback emits a distinct
+    structured log line (reason=upstream_unreachable) so dashboards can
+    separate "served local because claude.ai 404'd" from "served local
+    because we were offline."
+    """
+    client, root = proxy_404_fallback_env
+    cache_dir = root / _TEST_CONV / _TEST_FILE
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "thumbnail.png").write_bytes(_FALLBACK_PNG)
+
+    with caplog.at_level(logging.INFO, logger="backend.routers.files"):
+        with patch(
+            "curl_cffi.requests.get",
+            side_effect=OSError("Network is unreachable"),
+        ):
+            resp = client.get(f"/api/{_TEST_ORG}/files/{_TEST_FILE}/thumbnail")
+    assert resp.status_code == 200, (
+        "fallback must succeed for the log assertion to be meaningful"
+    )
+
+    fallback_records = [
+        r for r in caplog.records if "proxy_local_fallback" in r.getMessage()
+    ]
+    assert fallback_records, (
+        f"expected a log record mentioning 'proxy_local_fallback'; "
+        f"got: {[r.getMessage() for r in caplog.records]!r}"
+    )
+    # The reason field separates this code path from the 404 fallback.
+    reason_records = [
+        r for r in fallback_records
+        if getattr(r, "reason", None) == "upstream_unreachable"
+    ]
+    assert reason_records, (
+        f"expected a fallback log carrying reason='upstream_unreachable'; "
+        f"got reasons: {[getattr(r, 'reason', None) for r in fallback_records]!r}"
+    )
+
+
+def test__proxy__upstream_unreachable_no_local_cache__still_502(
+    proxy_404_fallback_env: tuple[TestClient, Path],
+) -> None:
+    """PROXY-OFFLINE-FALLBACK-NEG: upstream raises (offline) + nothing
+    cached on disk → 502 (unchanged from pre-fix behavior).
+
+    Bidirectional pair to the positive test above: proves the cache
+    lookup gates the 200, not just the unconditional return path.
+    """
+    client, _root = proxy_404_fallback_env
+
+    with patch(
+        "curl_cffi.requests.get",
+        side_effect=OSError("Network is unreachable"),
+    ):
+        resp = client.get(f"/api/{_TEST_ORG}/files/{_TEST_FILE}/thumbnail")
+
+    assert resp.status_code == 502, (
+        f"upstream-unreachable + no cache must still 502; "
+        f"got {resp.status_code}: {resp.text!r}"
+    )
+
+
+def test__proxy__upstream_unreachable_metachar_file_uuid__still_502(
+    proxy_404_fallback_env: tuple[TestClient, Path],
+) -> None:
+    """PROXY-OFFLINE-FALLBACK-SEC: a `file_uuid` containing glob
+    metacharacters offline must NOT walk the attachments tree via the
+    cache lookup — same Hunt #4 guard as the 404 branch. Plant a real
+    cached file under a sibling directory; the request for `**` must
+    NOT return its bytes.
+    """
+    client, root = proxy_404_fallback_env
+
+    # Plant a legitimate cached file for some other file_uuid so the
+    # glob `*/<file_uuid>/<variant>.*` would otherwise have a match.
+    legit_dir = root / _TEST_CONV / _TEST_FILE
+    legit_dir.mkdir(parents=True)
+    (legit_dir / "thumbnail.png").write_bytes(_FALLBACK_PNG)
+
+    with patch(
+        "curl_cffi.requests.get",
+        side_effect=OSError("Network is unreachable"),
+    ):
+        resp = client.get(f"/api/{_TEST_ORG}/files/**/thumbnail")
+
+    # The proxy MUST refuse the traversal — neither 200 nor leaked bytes.
+    # 502 is the correct fall-through when the cache lookup is skipped.
+    assert resp.status_code == 502, (
+        f"metachar file_uuid must not match cache via glob; "
+        f"got {resp.status_code}: {resp.text!r}"
+    )
+    assert _FALLBACK_PNG not in resp.content, (
+        "metachar file_uuid leaked sibling-cache bytes; security guard failed"
+    )

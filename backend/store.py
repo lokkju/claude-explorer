@@ -252,16 +252,25 @@ def build_message_tree(messages: list[dict[str, Any]]) -> list[MessageNode]:
     # Build parent->children map
     children_map: dict[str | None, list[str]] = {}
     msg_by_uuid: dict[str, dict[str, Any]] = {}
+    # Set of UUIDs that are real messages in THIS conversation. A parent that
+    # is not in this set marks a root: real claude.ai exports parent the first
+    # message to a synthetic placeholder UUID
+    # (00000000-0000-4000-8000-000000000000), not to None. Seeding the BFS only
+    # from parent==None therefore left every real Desktop conversation with an
+    # empty tree (the "View branches" modal rendered blank). See
+    # test_conversations_tree.py::...placeholder_root...
+    msg_uuids: set[str] = {msg["uuid"] for msg in messages}
 
     for msg in messages:
         uuid = msg["uuid"]
         parent = msg.get("parent_message_uuid")
-        # Detect and break self-referential parent links. A message that claims
-        # its own UUID as its parent would produce a MessageNode that contains
-        # itself in its children list, causing a Pydantic serialization cycle
-        # (PydanticSerializationError: Circular reference detected). Treat the
-        # node as a root instead.
-        if parent == uuid:
+        # Normalize any parent that doesn't resolve to a real message in this
+        # conversation down to None so it seeds the root set. Covers three
+        # cases: a self-referential link (parent == uuid, which would otherwise
+        # build a MessageNode containing itself and raise
+        # PydanticSerializationError: Circular reference detected), the
+        # placeholder root, and a dangling/orphan parent.
+        if parent == uuid or (parent is not None and parent not in msg_uuids):
             parent = None
         msg_by_uuid[uuid] = msg
         if parent not in children_map:
@@ -296,13 +305,17 @@ def build_message_tree(messages: list[dict[str, Any]]) -> list[MessageNode]:
 
         # If this is a root node, add to root list
         parent_uuid = msg_by_uuid[uuid].get("parent_message_uuid")
-        if parent_uuid is None or parent_uuid == uuid:
-            # parent_uuid == uuid: self-loop guard. This can occur when a later
-            # raw record for the same UUID overwrites msg_by_uuid after
-            # children_map was already built, restoring a self-referential
-            # parent link that the children_map construction pass already
-            # cleared. Treat as a root to avoid appending this node as its own
-            # child, which would create a Python object cycle.
+        if parent_uuid is None or parent_uuid == uuid or parent_uuid not in msg_uuids:
+            # Root node. Three cases collapse to "no resolvable parent":
+            #   * parent_uuid is None — a genuine root.
+            #   * parent_uuid == uuid — self-loop guard. This can occur when a
+            #     later raw record for the same UUID overwrites msg_by_uuid
+            #     after children_map was already built, restoring a
+            #     self-referential parent link the construction pass cleared.
+            #     Treating it as a root avoids appending the node as its own
+            #     child (a Python object cycle).
+            #   * parent_uuid not in msg_uuids — the placeholder root, or a
+            #     dangling parent that points outside this conversation.
             root_nodes.append(node)
         elif parent_uuid in nodes:
             # Add as child of parent

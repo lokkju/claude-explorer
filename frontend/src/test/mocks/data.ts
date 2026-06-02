@@ -59,6 +59,21 @@ export const mockConversations: ConversationListItem[] = [
     has_branches: false,
     source: 'CLAUDE_CODE',
   },
+  // F12 (2026-05-29): Cowork row pins the per-row source indicator
+  // away from the binary CLAUDE_CODE/CLAUDE_AI ternary. Used by
+  // `ConversationList.test.tsx` to assert the purple Sparkles glyph
+  // with title="Claude Cowork" — not the blue "Claude Desktop" arm.
+  {
+    uuid: 'conv-5',
+    name: 'Cowork Session With Claude',
+    model: 'claude-sonnet-4-6',
+    created_at: '2026-02-25T08:00:00Z',
+    updated_at: '2026-02-25T10:00:00Z',
+    is_starred: false,
+    message_count: 4,
+    has_branches: false,
+    source: 'CLAUDE_COWORK',
+  },
 ];
 
 // Mock messages

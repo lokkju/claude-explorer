@@ -81,6 +81,41 @@ def _load_session_cookies() -> dict[str, str]:
     return cookies
 
 
+def _serve_from_local_cache(file_uuid: str, variant: str) -> FileResponse | None:
+    """Return the bulk-fetcher-cached attachment for (file_uuid, variant), or None.
+
+    Shared by the 404 branch ("claude.ai GC'd the file") AND the
+    network-failure branch ("we're offline from claude.ai") of ``_proxy``.
+    The bulk fetcher writes
+    ``<attachments_root>/<conv>/<file_uuid>/<variant>.<ext>`` at fetch
+    time; this lookup is the read side of that contract.
+
+    Hunt #4 (API boundaries audit): defense-in-depth glob-meta reject.
+    ``Path.glob()`` interprets ``*``, ``?``, ``[``, ``]`` in the pattern,
+    and ``**`` as recursive descent. With ``file_uuid="**"`` a request
+    would return the FIRST matching file from any subdir — real
+    attachment bytes from an unrelated file_uuid, at 200 OK. h11 /
+    Starlette routing doesn't filter these characters from path segments.
+    Return None on any metachar so the caller falls through to its
+    standard error (404 or 502, depending on which branch invoked us).
+    """
+    if any(ch in file_uuid for ch in "*?[]"):
+        return None
+    try:
+        cached = [
+            m for m in _attachments_root().glob(f"*/{file_uuid}/{variant}.*")
+            if m.is_file()  # exclude any stray directory matching the pattern
+        ]
+    except OSError:
+        return None
+    if not cached:
+        return None
+    media_type = mimetypes.guess_type(str(cached[0]))[0] or "application/octet-stream"
+    return FileResponse(cached[0], media_type=media_type, headers={
+        "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+    })
+
+
 def _proxy(org_id: str, file_uuid: str, variant: str) -> Response:
     """Fetch the image bytes from claude.ai and stream them back."""
     try:
@@ -97,6 +132,24 @@ def _proxy(org_id: str, file_uuid: str, variant: str) -> Response:
     try:
         upstream = curl_requests.get(url, cookies=cookies, impersonate="chrome", timeout=15)
     except Exception as exc:
+        # Offline / DNS timeout / claude.ai unreachable. Try the local
+        # cache before surfacing 502 — the bulk fetcher writes
+        # thumbnails/previews/originals to disk at fetch time, so a
+        # user who has fetched the conversation while online can still
+        # see attachment images after the network drops. Mirrors the
+        # 404-branch fallback below and the /api/cc-image fallback at
+        # lines ~270+.
+        served = _serve_from_local_cache(file_uuid, variant)
+        if served is not None:
+            logger.info(
+                "proxy_local_fallback",
+                extra={
+                    "file_uuid": file_uuid,
+                    "variant": variant,
+                    "reason": "upstream_unreachable",
+                },
+            )
+            return served
         logger.warning("image proxy upstream fetch failed for %s: %s", url, exc)
         raise HTTPException(status_code=502, detail=f"upstream fetch failed: {exc}") from exc
 
@@ -105,40 +158,18 @@ def _proxy(org_id: str, file_uuid: str, variant: str) -> Response:
         # surfacing the 404 (and breaking Markdown / PDF exporters that
         # hit this same URL — see module docstring lines 15-18), look
         # for a local copy the bulk fetcher cached at
-        # <attachments_root>/<conv>/<file>/<variant>.<ext>. Mirrors the
-        # /api/cc-image fallback at lines 222-237.
-        #
-        # Hunt #4 (API boundaries audit): defense-in-depth glob-meta
-        # reject. `Path.glob()` interprets `*`, `?`, `[`, `]` in the
-        # pattern, and `**` as recursive descent. With `file_uuid="**"`
-        # a request would return the FIRST matching file from any
-        # subdir — real attachment bytes from an unrelated file_uuid,
-        # at 200 OK. h11 / Starlette routing doesn't filter these
-        # characters from path segments. Skip the glob entirely on any
-        # metachar so the route falls through to its standard 502.
-        if any(ch in file_uuid for ch in "*?[]"):
-            cached = []
-        else:
-            try:
-                cached = [
-                    m for m in _attachments_root().glob(f"*/{file_uuid}/{variant}.*")
-                    if m.is_file()  # exclude any stray directory matching the pattern
-                ]
-            except OSError:
-                cached = []
-        if cached:
+        # <attachments_root>/<conv>/<file>/<variant>.<ext>.
+        served = _serve_from_local_cache(file_uuid, variant)
+        if served is not None:
             logger.info(
                 "proxy_local_fallback",
                 extra={
                     "file_uuid": file_uuid,
                     "variant": variant,
-                    "path": str(cached[0]),
+                    "reason": "upstream_404",
                 },
             )
-            media_type = mimetypes.guess_type(str(cached[0]))[0] or "application/octet-stream"
-            return FileResponse(cached[0], media_type=media_type, headers={
-                "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
-            })
+            return served
         raise HTTPException(
             status_code=404,
             detail="image not found upstream and no local cache",
