@@ -1,5 +1,5 @@
-import { useCallback, useEffect } from 'react'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { useCallback, useEffect, useEffectEvent } from 'react'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Download, ExternalLink, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -49,35 +49,44 @@ export function ImageLightbox({ files, index, onIndexChange }: ImageLightboxProp
   // [role="dialog"] guard, but capture phase is defense in depth so a
   // future global handler regression doesn't immediately break the
   // lightbox keys).
+  //
+  // Phase 2 perf (React Doctor prefer-use-effect-event): the inner
+  // callbacks (next/prev/close) and the latest file/url all change
+  // identity on every parent render. Prior shape listed them as deps
+  // and re-subscribed the window keydown listener on every render.
+  // useEffectEvent (React 19 stable) captures the latest values
+  // without forcing re-subscription; the effect now depends only on
+  // `open`, which is the real lifecycle gate.
+  const onKeydown = useEffectEvent((e: KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    let handled = false
+    if (e.key === 'ArrowRight') {
+      next()
+      handled = true
+    } else if (e.key === 'ArrowLeft') {
+      prev()
+      handled = true
+    } else if (e.key === 'Escape') {
+      close()
+      handled = true
+    } else if (e.key === 'd' && file) {
+      triggerDownload(url, file.file_name)
+      handled = true
+    } else if (e.key === 'o' && url) {
+      openOriginalInNewTab(url, file?.file_name ?? 'image')
+      handled = true
+    }
+    if (handled) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  })
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      let handled = false
-      if (e.key === 'ArrowRight') {
-        next()
-        handled = true
-      } else if (e.key === 'ArrowLeft') {
-        prev()
-        handled = true
-      } else if (e.key === 'Escape') {
-        close()
-        handled = true
-      } else if (e.key === 'd' && file) {
-        triggerDownload(url, file.file_name)
-        handled = true
-      } else if (e.key === 'o' && url) {
-        openOriginalInNewTab(url, file?.file_name ?? 'image')
-        handled = true
-      }
-      if (handled) {
-        e.preventDefault()
-        e.stopPropagation()
-      }
-    }
+    const onKey = (e: KeyboardEvent) => onKeydown(e)
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [open, next, prev, close, file, url])
+  }, [open])
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close() }}>
@@ -88,6 +97,13 @@ export function ImageLightbox({ files, index, onIndexChange }: ImageLightboxProp
         <DialogTitle className="sr-only">
           {file ? imageAltText(file) : 'Image viewer'}
         </DialogTitle>
+        {/* Phase 2 a11y: Radix Dialog requires either DialogDescription
+            OR aria-describedby={undefined} explicitly. Without one, dev
+            mode emits a warning that fails our e2e console-assertion
+            (caught by the same fixtures protocol the article documents). */}
+        <DialogDescription className="sr-only">
+          Full-screen image viewer. Press Esc to close, arrow keys to navigate, d to download, o to open the original in a new tab.
+        </DialogDescription>
         {file && (
           <>
             <header className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-black/80 px-4 py-2 text-zinc-200">

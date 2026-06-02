@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, use, useCallback, useMemo, useState, type ReactNode } from 'react'
 import { ImageLightbox } from '@/components/message/ImageLightbox'
 import { dedupeImageFiles } from '@/lib/imageFiles'
 import type { ImageFile, Message } from '@/lib/types'
@@ -136,7 +136,8 @@ export function ConversationLightboxProvider({
 
 // eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useConversationLightbox(): ConversationLightboxContextValue {
-  const ctx = useContext(ConversationLightboxContext)
+  // Phase 3: React 19 use() replaces useContext().
+  const ctx = use(ConversationLightboxContext)
   if (!ctx) {
     // Used outside a provider — return a no-op so callers that aren't
     // mounted under ConversationPage (rare) don't crash. Tile clicks

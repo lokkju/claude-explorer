@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api } from '@/lib/api'
 import type { Bookmark } from '@/lib/types'
 
@@ -31,6 +31,7 @@ export function BookmarkProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Initial mount-time data fetch: setState calls inside reload() land on a promise resolution AFTER the render cycle (no synchronous cascade). Standard initial-load idiom for context-owned async state; reload identity is stable via useCallback([]).
     reload()
   }, [reload])
 
@@ -84,7 +85,9 @@ export function BookmarkProvider({ children }: { children: ReactNode }) {
 
 // eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. Splitting would force every consumer to re-import. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useBookmarks(): BookmarkContextType {
-  const ctx = useContext(BookmarkContext)
+  // Phase 3: React 19 `use()` replaces `useContext()` (drop-in for
+  // non-conditional reads; identical subscription semantics).
+  const ctx = use(BookmarkContext)
   if (!ctx) throw new Error('useBookmarks must be used within a BookmarkProvider')
   return ctx
 }

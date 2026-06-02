@@ -26,7 +26,12 @@ export function MigrationBanner() {
   if (!filtersState._migratedV1) return null
   if (filtersState.migrationBannerDismissed) return null
 
+  // Phase 1 a11y: role="status" is correct for a non-modal state-change
+  // banner that contains a dismiss button. React Doctor's prefer-tag-
+  // over-role suggests <output>, but <output> is a form-associated
+  // element for computed results; wrong semantic fit. Suppress.
   return (
+    /* react-doctor-disable-next-line react-doctor/prefer-tag-over-role */
     <div
       role="status"
       aria-label="Filter update"
@@ -35,7 +40,7 @@ export function MigrationBanner() {
     >
       <div className="min-w-0 flex-1 leading-relaxed">
         Filters are now composable. Your previously-pinned filters are
-        grouped under <strong>Default (migrated)</strong> — your active
+        grouped under <strong>Default (migrated)</strong>, your active
         filter. Click <em>Manage filters</em> to review.
       </div>
       <button

@@ -26,6 +26,7 @@ export function PinScopeButton({
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- Phase 2: the 3 setOpen(false) calls are 3 independent dismiss paths (non-Node target, click-outside, Escape key); only ONE fires per user event. Counting them as "cascading" is a rule miscount. useReducer wouldn't reduce the count or improve clarity.
   useEffect(() => {
     if (!open) return
     const onClick = (e: MouseEvent) => {

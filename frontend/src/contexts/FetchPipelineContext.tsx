@@ -1,8 +1,9 @@
 import {
   createContext,
+  use,
   useCallback,
-  useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -213,20 +214,37 @@ export function FetchPipelineProvider({ children }: { children: ReactNode }) {
 
   const isRunning = state === 'running'
 
+  // Project invariant #2 (CLAUDE.md "Performance Work"): every
+  // `<Provider value={{...}}>` MUST be wrapped in `useMemo` with an
+  // explicit deps list. Inline object literals rebuild value identity
+  // every render and fire the entire subscriber graph.
+  const value = useMemo(
+    () => ({
+      state,
+      progress,
+      errorMessage,
+      isRunning,
+      startRefresh,
+      reset,
+      openDetails,
+      closeDetails,
+      detailsOpen,
+    }),
+    [
+      state,
+      progress,
+      errorMessage,
+      isRunning,
+      startRefresh,
+      reset,
+      openDetails,
+      closeDetails,
+      detailsOpen,
+    ],
+  )
+
   return (
-    <FetchPipelineContext.Provider
-      value={{
-        state,
-        progress,
-        errorMessage,
-        isRunning,
-        startRefresh,
-        reset,
-        openDetails,
-        closeDetails,
-        detailsOpen,
-      }}
-    >
+    <FetchPipelineContext.Provider value={value}>
       {children}
     </FetchPipelineContext.Provider>
   )
@@ -234,7 +252,8 @@ export function FetchPipelineProvider({ children }: { children: ReactNode }) {
 
 // eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useFetchPipeline(): FetchPipelineContextValue {
-  const ctx = useContext(FetchPipelineContext)
+  // Phase 3: React 19 use() replaces useContext().
+  const ctx = use(FetchPipelineContext)
   if (!ctx) {
     throw new Error('useFetchPipeline must be used within a FetchPipelineProvider')
   }

@@ -50,7 +50,7 @@ export function ConfigCorruptionBanner() {
         />
         <div className="flex-1 text-sm">
           <p className="font-medium">
-            Config file is corrupt — writes are disabled until you fix it.
+            Config file is corrupt; writes are disabled until you fix it.
           </p>
           <p className="mt-1 break-words text-xs opacity-80">
             Reason: <code className="font-mono">{reason}</code>

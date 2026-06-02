@@ -101,6 +101,14 @@ export function BookmarksPanel() {
             </div>
             <div className="space-y-1.5">
               {bms.map((b) => (
+                // Phase 1 a11y: the wrapper's onClick is a mouse-only
+                // convenience that opens the bookmark when you click
+                // anywhere on the card. Keyboard users already have a
+                // canonical activation path: the inner <button> below.
+                // Adding tabIndex+key handlers here would create a
+                // duplicate tab stop per bookmark row; worse UX, no
+                // a11y win.
+                // react-doctor-disable-next-line react-doctor/click-events-have-key-events,react-doctor/no-static-element-interactions
                 <div
                   key={b.id}
                   data-bookmark-item

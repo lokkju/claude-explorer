@@ -107,7 +107,16 @@ export function Sidebar({ className }: SidebarProps) {
     startRefresh(true)
   }
 
+  // Phase 1 a11y: the <aside>'s onClick is a passive "claim focus area"
+  // shortcut; clicking anywhere in the sidebar marks 'list' as the
+  // active focus area so keyboard shortcuts (j/k/Tab) route there.
+  // Keyboard users reach the same state by Tab-ing into any of the
+  // interactive children (search input, conversation buttons, etc.)
+  // which fire their own focus handlers. Adding tabIndex+keyDown to
+  // the whole <aside> would make it a tab stop above its children;
+  // worse keyboard UX, no a11y win.
   return (
+    /* react-doctor-disable-next-line react-doctor/click-events-have-key-events,react-doctor/no-static-element-interactions,react-doctor/no-noninteractive-element-interactions */
     <aside
       onClick={() => setFocusArea('list')}
       className={cn(
@@ -304,6 +313,9 @@ export function Sidebar({ className }: SidebarProps) {
               </label>
             )}
             <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Show empty sessions created by local commands">
+              {/* Phase 1 a11y: WCAG-conformant nested label with sibling
+                  text. See SettingsPage for rationale. */}
+              {/* oxlint-disable-next-line react-doctor/control-has-associated-label */}
               <input
                 type="checkbox"
                 checked={showPhantomSessions}
@@ -320,6 +332,8 @@ export function Sidebar({ className }: SidebarProps) {
                 a UI element with no effect. */}
             {(sourceFilter === 'CLAUDE_COWORK' || sourceFilter === 'all') && (
               <label className="flex items-center gap-1 text-xs text-zinc-500 cursor-pointer" title="Show archived Cowork sessions">
+                {/* Phase 1 a11y: nested label with sibling text. */}
+                {/* oxlint-disable-next-line react-doctor/control-has-associated-label */}
                 <input
                   type="checkbox"
                   checked={showArchivedSessions}

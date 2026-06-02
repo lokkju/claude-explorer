@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, use, useMemo, type ReactNode } from 'react'
 import type { SourceFilter } from '@/lib/types'
 import { usePreferences } from '@/hooks/usePreferences'
 
@@ -31,10 +31,18 @@ export function SourceFilterProvider({ children }: { children: ReactNode }) {
     null,
   )
 
+  // Project invariant #2 (CLAUDE.md "Performance Work"): wrap every
+  // Provider value in `useMemo`. The setters from `usePreferences`
+  // currently churn identity on each render, so the deps list pins them
+  // explicitly — the memo bails out only when sourceFilter + organizationId
+  // values AND setter identities are all unchanged.
+  const value = useMemo(
+    () => ({ sourceFilter, setSourceFilter, organizationId, setOrganizationId }),
+    [sourceFilter, setSourceFilter, organizationId, setOrganizationId],
+  )
+
   return (
-    <SourceFilterContext.Provider
-      value={{ sourceFilter, setSourceFilter, organizationId, setOrganizationId }}
-    >
+    <SourceFilterContext.Provider value={value}>
       {children}
     </SourceFilterContext.Provider>
   )
@@ -42,7 +50,8 @@ export function SourceFilterProvider({ children }: { children: ReactNode }) {
 
 // eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload; no runtime impact.
 export function useSourceFilter() {
-  const context = useContext(SourceFilterContext)
+  // Phase 3: React 19 use() replaces useContext().
+  const context = use(SourceFilterContext)
   if (!context) {
     throw new Error('useSourceFilter must be used within a SourceFilterProvider')
   }

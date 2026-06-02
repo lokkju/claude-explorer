@@ -32,5 +32,5 @@ function Badge({ className, variant, ...props }: BadgeProps) {
   )
 }
 
-// eslint-disable-next-line react-refresh/only-export-components -- safe: shadcn/ui pattern co-locates component + variant generator. HMR fast refresh falls back to full reload for this file; no runtime impact.
-export { Badge, badgeVariants }
+// react-doctor-disable-next-line react-doctor/only-export-components -- safe: shadcn/ui pattern co-locates component + variant generator. HMR fast refresh falls back to full reload for this file; no runtime impact. Mirrors the inline eslint-disable for react-refresh/only-export-components on the export line below; react-doctor (npm) doesn't honor eslint-disable comments and needs its own. (Earlier `oxlint-disable-next-line` was a misnamed runner — the configured runner is `react-doctor`, not `oxlint`.)
+export { Badge, badgeVariants } // eslint-disable-line react-refresh/only-export-components -- safe: shadcn/ui pattern co-locates component + variant generator. HMR fast refresh falls back to full reload for this file; no runtime impact.

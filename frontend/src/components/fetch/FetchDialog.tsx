@@ -48,8 +48,8 @@ const CAPTURE_FETCH_TYPES: readonly string[] = [
   'capture_done',
 ]
 
-// eslint-disable-next-line react-refresh/only-export-components -- safe: helper co-located with FetchDialog. HMR falls back to a full reload for this file; no runtime impact.
-export function mapLiveProgressType(rawType: string): LegacyFetchProgress['type'] {
+// react-doctor-disable-next-line react-doctor/only-export-components -- safe: pure helper co-located with FetchDialog. HMR falls back to a full reload for this file; no runtime impact. Mirrors the inline eslint-disable for react-refresh/only-export-components on the export line below; react-doctor (npm) doesn't honor eslint-disable comments and needs its own. (Earlier `oxlint-disable-next-line` was a misnamed runner — the configured runner is `react-doctor`, not `oxlint`.)
+export function mapLiveProgressType(rawType: string): LegacyFetchProgress['type'] { // eslint-disable-line react-refresh/only-export-components -- safe: helper co-located with FetchDialog. HMR falls back to a full reload for this file; no runtime impact.
   if (CAPTURE_FETCH_TYPES.includes(rawType)) return 'progress'
   if ((LEGACY_FETCH_TYPES as readonly string[]).includes(rawType)) {
     return rawType as LegacyFetchProgress['type']
@@ -69,11 +69,12 @@ export function FetchDialog({ isOpen, onClose }: FetchDialogProps) {
   const [progress, setProgress] = useState<LegacyFetchProgress | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
 
-  // Check status when dialog opens
+  // Check status when dialog opens.
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state,react-doctor/no-adjust-state-on-prop-change -- Phase 2: (1) setState calls land on a promise resolution AFTER render, no synchronous cascade; useReducer with a 'status-checked' dispatch is the right long-term fix but requires the React 19 useQuery migration (queryClient.fetchQuery on /fetch/status) first. (2) The "check-status-on-open" lifecycle is deliberate; the dialog mirrors live pipeline state via FetchPipelineContext subscription above, and this fetch hydrates the snapshot when the dialog opens fresh. Keying the Dialog would break pipeline-mirroring + controlled-open.
   useEffect(() => {
     if (isOpen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- TODO React 19 migration: replace with useQuery on /fetch/status. Today this is a single mount-time async fetch; the setState calls land on a promise resolution AFTER render, no cascade.
-      setState('checking')
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- Phase 2: see effect-level rationale above (deliberate check-status-on-open).
+      setState('checking') // eslint-disable-line react-hooks/set-state-in-effect -- TODO React 19 migration: replace with useQuery on /fetch/status. Today this is a single mount-time async fetch; the setState calls land on a promise resolution AFTER render, no cascade.
       api.getFetchStatus()
         .then((status) => {
           setHasCredentials(status.has_credentials)

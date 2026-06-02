@@ -10,7 +10,7 @@ import App from './App.tsx'
 // against null.
 const rootEl = document.getElementById('root')
 if (!rootEl) {
-  throw new Error("Missing #root element in index.html — can't mount React.")
+  throw new Error("Missing #root element in index.html; can't mount React.")
 }
 createRoot(rootEl).render(
   <StrictMode>

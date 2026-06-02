@@ -5,6 +5,7 @@ import { useKeyboardNavigation } from '@/contexts/KeyboardNavigationContext'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -128,6 +129,13 @@ export function KeyboardHelpModal() {
               {keyboardMode === 'vim' ? 'Vim Mode' : 'Emacs Mode'}
             </span>
           </DialogTitle>
+          {/* Phase 2 a11y: Radix Dialog requires either DialogDescription OR
+              aria-describedby={undefined} explicitly. Without one, dev mode
+              emits a console warning that fails the e2e console-assertion
+              fixture. Same precedent as ImageLightbox.tsx. */}
+          <DialogDescription className="sr-only">
+            Two-pane keyboard navigation reference. Press Esc to close.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="mt-4 space-y-4">

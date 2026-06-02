@@ -72,10 +72,16 @@ function TreeNode({
         />
       )}
 
-      {/* Node */}
-      <div
+      {/* Node — real <button> so Enter/Space activate natively (Phase 1
+          a11y, React Doctor click-events-have-key-events). Reset
+          `text-left` because <button> defaults to text-align:center, and
+          `w-full` so the button fills the row exactly like the previous
+          <div>. */}
+      <button
+        type="button"
+        aria-label={`${node.message.sender === 'human' ? 'You' : 'Claude'}: ${previewText}`}
         className={cn(
-          'group flex cursor-pointer items-start gap-2 rounded-lg p-2 transition-colors',
+          'group flex w-full cursor-pointer items-start gap-2 rounded-lg p-2 text-left transition-colors',
           isActive
             ? 'bg-amber-50 dark:bg-amber-950/50'
             : 'hover:bg-zinc-100 dark:hover:bg-zinc-800/50'
@@ -142,7 +148,7 @@ function TreeNode({
             )}
           />
         )}
-      </div>
+      </button>
 
       {/* Children */}
       {hasChildren && (

@@ -8,20 +8,25 @@
  * setter and propagate downstream (e.g. `effectiveTheme` would return a
  * non-`'light'|'dark'` value, breaking the CSS class toggle).
  *
- * The fix exposes `isTheme`, `isKeyboardMode`, and `isMarkdownDialect`
+ * The fix exposes `isTheme`, `isKeyboardMode`, and `isMarkdownExportMode`
  * runtime predicates; SettingsPage uses them to guard each onValueChange
  * call. These tests pin the predicates' contract.
  *
  * Written RED-first: with the predicates absent (the old `as Theme` cast
  * version), the wrong-value branch crashes the import. With the
  * predicates present, every wrong value is rejected.
+ *
+ * Note (2026-05-29 unification): `isMarkdownDialect` was retired when the
+ * Settings Export section and Markdown dialog were unified on a single
+ * `markdownExportMode` key. The dialect was a subset of the mode and is
+ * no longer a standalone setting.
  */
 
 import { describe, it, expect } from 'vitest'
 import {
   isTheme,
   isKeyboardMode,
-  isMarkdownDialect,
+  isMarkdownExportMode,
 } from '../../contexts/SettingsContext'
 
 describe('SettingsContext runtime predicates (Hunt #2)', () => {
@@ -65,22 +70,25 @@ describe('SettingsContext runtime predicates (Hunt #2)', () => {
     })
   })
 
-  describe('isMarkdownDialect', () => {
-    it('accepts every value in the MarkdownDialect union', () => {
-      expect(isMarkdownDialect('commonmark')).toBe(true)
-      expect(isMarkdownDialect('obsidian')).toBe(true)
+  describe('isMarkdownExportMode', () => {
+    it('accepts every value in the MarkdownExportMode union', () => {
+      expect(isMarkdownExportMode('inline')).toBe(true)
+      expect(isMarkdownExportMode('bundle-commonmark')).toBe(true)
+      expect(isMarkdownExportMode('bundle-obsidian')).toBe(true)
     })
 
     it('rejects unknown strings', () => {
-      expect(isMarkdownDialect('gfm')).toBe(false)
-      expect(isMarkdownDialect('CommonMark')).toBe(false)
-      expect(isMarkdownDialect('')).toBe(false)
+      expect(isMarkdownExportMode('bundle')).toBe(false)
+      expect(isMarkdownExportMode('commonmark')).toBe(false)
+      expect(isMarkdownExportMode('obsidian')).toBe(false)
+      expect(isMarkdownExportMode('Inline')).toBe(false)
+      expect(isMarkdownExportMode('')).toBe(false)
     })
 
     it('rejects non-string values', () => {
-      expect(isMarkdownDialect(null)).toBe(false)
-      expect(isMarkdownDialect(undefined)).toBe(false)
-      expect(isMarkdownDialect([])).toBe(false)
+      expect(isMarkdownExportMode(null)).toBe(false)
+      expect(isMarkdownExportMode(undefined)).toBe(false)
+      expect(isMarkdownExportMode([])).toBe(false)
     })
   })
 })

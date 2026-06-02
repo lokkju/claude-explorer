@@ -51,7 +51,7 @@ export function WatcherMissingBanner() {
         />
         <div className="flex-1 text-sm">
           <p className="font-medium">
-            Image-cache watcher not installed — Claude Code screenshots may
+            Image-cache watcher not installed; Claude Code screenshots may
             be permanently lost during backend downtime.
           </p>
           <p className="mt-1 text-xs">

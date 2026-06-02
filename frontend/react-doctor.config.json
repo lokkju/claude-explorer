@@ -1,0 +1,12 @@
+{
+  "$schema": "https://react.doctor/schemas/config.json",
+  "_comment": "Phase 3 of the 2026-05-27 React Doctor cleanup. The shadcn/ui primitives in src/components/ui/* still use React.forwardRef because that's what the shadcn CLI scaffolds and what the upstream template ships. Migrating to React 19's ref-as-prop pattern would diverge from upstream, increase friction for future `shadcn add` re-scaffolding, and risks subtle ref-forwarding issues in Radix focus management (Dialog, Select, Tooltip) and Slot/asChild polymorphism (Button). forwardRef still works at runtime in React 19 with no warnings. UPDATE 2026-05-28: shadcn HAS shipped React 19 templates in the v4 registry (apps/v4/registry/new-york-v4/ui/). They use function-component-with-spread-props (no forwardRef) AND switched from `@radix-ui/react-slot` to the `radix-ui` umbrella package. The trigger condition has technically fired, but migration is a registry swap plus a dependency-tree change, not an in-place edit. Cost: ~half-day across 18 files + verify Radix focus management still works under the new package layout. Decision: defer to post-V1 publish. The Council DR's spirit was 'avoid divergence from upstream during the pre-publish window,' and a registry swap during pre-publish is RISKIER than the current setup. New removal condition: after V1 publish, schedule a v4 registry migration as its own focused refactor. See PLANS/articles/2026.05.27-react-doctor-notes.md F48 + F53 (post-V1 follow-up).",
+  "ignore": {
+    "overrides": [
+      {
+        "files": ["src/components/ui/**/*.tsx"],
+        "rules": ["react-doctor/no-react19-deprecated-apis"]
+      }
+    ]
+  }
+}

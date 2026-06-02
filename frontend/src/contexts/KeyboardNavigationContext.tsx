@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
+import { createContext, use, useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react'
 
 export type FocusArea = 'list' | 'detail' | 'search' | 'none'
 
@@ -222,43 +222,82 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
     setSelectedMessageIndex((prev) => Math.max(prev - PAGE_SIZE, 0))
   }, [])
 
+  // Project invariant #2 (CLAUDE.md "Performance Work"): wrap every
+  // Provider value in `useMemo`. This Provider is the highest-risk
+  // one in the project — `selectedMessageIndex` changes on every key
+  // press, and the value carries ~30 fields. Any list-rendered
+  // component subscribing to this context (today: ConversationList
+  // rows for sidebar nav; tomorrow potentially message bubbles) would
+  // re-render every row on every keystroke without this wrap. The
+  // deps list pins every state value AND every useCallback'd setter
+  // so React 18's exhaustive-deps stays happy; the stable callbacks
+  // contribute no rebuilds (their identity doesn't change), so the
+  // memo bails out whenever state is unchanged.
+  const value = useMemo(
+    () => ({
+      selectedIndex,
+      setSelectedIndex,
+      conversationIds,
+      setConversationIds,
+      focusArea,
+      setFocusArea,
+      navSource,
+      setNavSource,
+      isHelpOpen,
+      setIsHelpOpen,
+      selectNext,
+      selectPrevious,
+      selectFirst,
+      selectLast,
+      getSelectedId,
+      // Message navigation
+      selectedMessageIndex,
+      setSelectedMessageIndex,
+      messages,
+      setMessages,
+      setMessagesAndPinSelection,
+      selectNextMessage,
+      selectPreviousMessage,
+      selectFirstMessage,
+      selectLastMessage,
+      getSelectedMessageId,
+      selectNextUserMessage,
+      selectPreviousUserMessage,
+      selectNextAssistantMessage,
+      selectPreviousAssistantMessage,
+      pageDown,
+      pageUp,
+    }),
+    [
+      selectedIndex,
+      conversationIds,
+      focusArea,
+      navSource,
+      isHelpOpen,
+      selectNext,
+      selectPrevious,
+      selectFirst,
+      selectLast,
+      getSelectedId,
+      selectedMessageIndex,
+      messages,
+      setMessagesAndPinSelection,
+      selectNextMessage,
+      selectPreviousMessage,
+      selectFirstMessage,
+      selectLastMessage,
+      getSelectedMessageId,
+      selectNextUserMessage,
+      selectPreviousUserMessage,
+      selectNextAssistantMessage,
+      selectPreviousAssistantMessage,
+      pageDown,
+      pageUp,
+    ],
+  )
+
   return (
-    <KeyboardNavigationContext.Provider
-      value={{
-        selectedIndex,
-        setSelectedIndex,
-        conversationIds,
-        setConversationIds,
-        focusArea,
-        setFocusArea,
-        navSource,
-        setNavSource,
-        isHelpOpen,
-        setIsHelpOpen,
-        selectNext,
-        selectPrevious,
-        selectFirst,
-        selectLast,
-        getSelectedId,
-        // Message navigation
-        selectedMessageIndex,
-        setSelectedMessageIndex,
-        messages,
-        setMessages,
-        setMessagesAndPinSelection,
-        selectNextMessage,
-        selectPreviousMessage,
-        selectFirstMessage,
-        selectLastMessage,
-        getSelectedMessageId,
-        selectNextUserMessage,
-        selectPreviousUserMessage,
-        selectNextAssistantMessage,
-        selectPreviousAssistantMessage,
-        pageDown,
-        pageUp,
-      }}
-    >
+    <KeyboardNavigationContext.Provider value={value}>
       {children}
     </KeyboardNavigationContext.Provider>
   )
@@ -266,7 +305,8 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
 
 // eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload for this file; no runtime impact.
 export function useKeyboardNavigation() {
-  const context = useContext(KeyboardNavigationContext)
+  // Phase 3: React 19 use() replaces useContext().
+  const context = use(KeyboardNavigationContext)
   if (!context) {
     throw new Error('useKeyboardNavigation must be used within a KeyboardNavigationProvider')
   }

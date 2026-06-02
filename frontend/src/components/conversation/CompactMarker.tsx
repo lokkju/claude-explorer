@@ -43,6 +43,7 @@ export function CompactMarker({
   // case we care about — the user can collapse the panel again
   // afterward with the pill click.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Deliberate one-way derive: the false→true edge of forceOpen (parent flips it when a search hit targets this marker's UUID) opens the panel; the user can then collapse it via the pill click. A key prop would remount the marker and lose the user's subsequent collapse state. The block comment above documents why we don't track forceOpen with a ref.
     if (forceOpen) setIsOpen(true)
   }, [forceOpen])
 

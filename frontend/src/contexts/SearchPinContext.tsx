@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router'
 
 /**
@@ -129,6 +129,7 @@ export function SearchPinProvider({ children }: { children: ReactNode }) {
       const next = readScopeFromUrl()
       return scopesEqual(prev, next) ? prev : next
     })
+    // oxlint-disable-next-line react-doctor/no-mutable-in-deps -- `location` is `useLocation()` from react-router (reactive, triggers re-renders on navigation), NOT `window.location` (the mutable global the rule targets). Listing these is correct.
   }, [location.pathname, location.search])
 
   useEffect(() => {
@@ -167,7 +168,8 @@ export function SearchPinProvider({ children }: { children: ReactNode }) {
 
 // eslint-disable-next-line react-refresh/only-export-components -- safe: context Provider + hook co-located by convention. HMR fast refresh falls back to full reload; no runtime impact.
 export function useSearchPin(): SearchPinContextValue {
-  const ctx = useContext(SearchPinContext)
+  // Phase 3: React 19 use() replaces useContext().
+  const ctx = use(SearchPinContext)
   if (!ctx) {
     return {
       scope: { kind: 'none' },
