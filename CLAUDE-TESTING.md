@@ -1240,6 +1240,60 @@ the user-observable contract (the developer opening the browser dev
 tools is part of the contract — red text there IS a bug). Both are
 required.
 
+### 5.16 · A "passing" run must PROVE it executed (no piped exit codes, no silent non-execution)
+
+§5.13–§5.15 catch tests that run but assert the wrong thing. This one
+catches the layer below: a suite that reports success while running
+**nothing**. Two misleading-greens stacked on 2026-06-01 and a
+confident "the test suite passes" went to the user when it did not:
+
+1. **A pipe swallowed the exit code.** `npx playwright test
+   --reporter=line | tail -60` ran as a background job that reported
+   `exit 0`. That `0` was *`tail`'s* status, not Playwright's — a
+   shell pipeline's exit status is the LAST stage's. Playwright had
+   actually failed. **Never pipe a test / type-check / lint command
+   through `tail` / `head` / `grep` / `sed` when pass/fail matters.**
+   Run it bare and read the output, redirect full output to a file and
+   read the file, or force the runner's status to survive:
+   `set -o pipefail` and/or `${PIPESTATUS[0]}` (bash),
+   `$pipestatus[1]` (zsh). A background task's "exit 0" is meaningless
+   when the command it ran was a pipeline.
+2. **Files silently never ran.** 13 Playwright specs carried a
+   duplicate `import { … withNetRetry … }` and threw
+   `SyntaxError: Identifier 'withNetRetry' has already been declared`
+   at parse time. Playwright skipped the unparseable files and the run
+   still "completed." A parse error, an import/collection error, or a
+   filter that matches nothing all produce **zero failures while
+   exercising zero behavior**. `0 failed` is NOT `green`.
+
+**The rule** — before telling anyone (including yourself) a suite is
+green, prove it RAN:
+
+- **Read the runner's own summary AND the real exit code.** pytest →
+  `N passed`; vitest → `Test Files N passed`; Playwright → `N passed`
+  with `0 failed` and zero `Error:` / `SyntaxError` lines anywhere in
+  the output.
+- **Check the COUNT against the known baseline** (this repo,
+  2026-06-01: backend pytest **1139 passed / 1 skipped**; vitest
+  **538 passed / 67 files**; Playwright **~441 tests**). A count that
+  *drops* means something stopped being collected — investigate before
+  declaring green; never assume "fewer tests = they were deleted."
+  Keep these numbers current as the suites grow, so "the count
+  dropped" stays a usable signal.
+- **Grep the raw output for non-execution tells:** `SyntaxError`,
+  `Error:`, `Cannot find module`, `failed to load`, `collected 0`,
+  `no tests ran`, `0 passed`, `did not run`. Any hit ⇒ not green.
+- **Report only what you verified.** A confident "the suite passes"
+  from an unread or piped result is a falsification event the moment
+  it is wrong (per `feedback_never_accept_failing_tests`): correct it
+  loudly and immediately; never let the false claim stand.
+
+The corollary that earned this section: a dead suite does not merely
+fail to catch *new* bugs — it **conceals** the ones already there.
+Fixing the 13 parse errors un-hid 26 further pre-existing failures the
+broken suite had masked for days (recovery plan:
+`PLANS/2026.06.01-e2e-suite-recovery.md`).
+
 ---
 
 ## 6 · Test review checklist

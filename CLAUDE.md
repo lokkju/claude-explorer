@@ -8,6 +8,12 @@ All UX flows and rules are documented in [UX.md](./UX.md). Code changes that aff
 
 When writing or reviewing tests (Playwright, pytest, vitest), read [CLAUDE-TESTING.md](./CLAUDE-TESTING.md). It codifies black-box / spec-driven discipline, bidirectional verification, Playwright-specific gotchas (overflow-clipping, shadcn `<Select>`, Radix `<ScrollArea>`, Radix `<RadioGroup>` `.check()` race), fixture-design rules, and a pre-flight checklist. Other agents (pure feature work, refactors, deployments) can skip it.
 
+**Test-execution integrity (HARD invariant — earned 2026-06-01, when a confident "the suite passes" was reported while 13 spec files weren't even running).** A run is not "green" until you have verified it actually executed, using the runner's *real* exit code:
+
+1. **Never pipe a test / type-check / lint command through `tail` / `head` / `grep` when pass/fail matters.** A shell pipeline's exit status is the LAST stage's, so `pytest … | tail` (or a backgrounded `playwright test … | tail`) returns `tail`'s `0` even when the runner failed. Run it bare and read the output, redirect full output to a file and read the file, or force the status to survive (`set -o pipefail`, `${PIPESTATUS[0]}` in bash, `$pipestatus[1]` in zsh).
+2. **"0 failed" is not "green" — verify the COUNT.** A parse/import/collection error or an empty filter makes a suite "succeed" while testing nothing (on 2026-06-01, 13 Playwright specs threw `SyntaxError` at parse time and the run still "completed"). Confirm the runner's pass count is at/above the known baseline — backend pytest **1139 passed / 1 skipped**, vitest **538 passed / 67 files**, Playwright **~441 tests** — and grep the output for `SyntaxError` / `Error:` / `no tests ran` / `collected 0` before reporting green. A count that *dropped* is a failure signal, not "tests were removed."
+3. **Report only verified results.** Never tell the user the suite passes from a background "exit 0" or a truncated tail; read the summary line and the real exit code first. A green claim that turns out false is a falsification event — correct it loudly and immediately. Full detail: [CLAUDE-TESTING.md §5.16](./CLAUDE-TESTING.md).
+
 ## Performance Work
 
 Three project-specific invariants the 2026-05-22 → 2026-05-23 search-perf hunt earned. Full walk: [PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md](./PLANS/POSTMORTEM-search-typing-lag-2026-05-22.md). Testing protocol: [CLAUDE-TESTING.md §5.14](./CLAUDE-TESTING.md). Council-driven perf workflow: `~/.claude/agents/llm-council-coding.md` Rules P0–P11.
