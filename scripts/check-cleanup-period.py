@@ -8,7 +8,7 @@ Claude Code automatically deletes session files in ~/.claude/projects/ that are
 older than `cleanupPeriodDays` (default: 30). Many users only discover this
 when they realize months of conversation history has silently disappeared.
 
-Setting `cleanupPeriodDays` to a large value (e.g. 3650 = 10 years) effectively
+Setting `cleanupPeriodDays` to a large value (e.g. 36500 = 100 years) effectively
 disables the auto-cleanup. DO NOT set it to 0 — issue #23710 documents that 0
 silently disables conversation persistence entirely.
 
@@ -21,7 +21,7 @@ What this script does
 Usage
 -----
     python3 scripts/check-cleanup-period.py          # report only
-    python3 scripts/check-cleanup-period.py --set 3650
+    python3 scripts/check-cleanup-period.py --set 36500
     python3 scripts/check-cleanup-period.py --set 365
     python3 scripts/check-cleanup-period.py --settings /path/to/settings.json
 """
@@ -37,7 +37,7 @@ from pathlib import Path
 
 DEFAULT_PATH = Path.home() / ".claude" / "settings.json"
 DEFAULT_VALUE = 30  # Claude Code's documented default
-RECOMMENDED = 3650  # ~10 years; effectively disables cleanup
+RECOMMENDED = 36500  # ~100 years; effectively disables cleanup
 
 
 def parse_args() -> argparse.Namespace:
@@ -128,7 +128,7 @@ def report(path: Path, data: dict, file_existed: bool) -> None:
     else:
         print(f"cleanupPeriodDays: <unset>  (Claude Code default: {DEFAULT_VALUE} days)")
         print()
-        print(f"Recommendation: set to {RECOMMENDED} (~10 years) to effectively disable")
+        print(f"Recommendation: set to {RECOMMENDED} (~100 years) to effectively disable")
         print("auto-cleanup. Run:")
         print(f"  python3 {sys.argv[0]} --set {RECOMMENDED}")
 

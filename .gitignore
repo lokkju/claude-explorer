@@ -65,3 +65,6 @@ profile_*
 
 # Personal / promotional drafts not part of the project
 LinkedIn/
+
+# Bumblebee security scanner output (large NDJSON inventory of system packages)
+inventory.ndjson
