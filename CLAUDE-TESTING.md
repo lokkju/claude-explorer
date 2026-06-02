@@ -1280,6 +1280,36 @@ green, prove it RAN:
   declaring green; never assume "fewer tests = they were deleted."
   Keep these numbers current as the suites grow, so "the count
   dropped" stays a usable signal.
+- **Count the test FILES on disk and confirm the runner collected
+  exactly that many.** This is the baseline-free version of the check
+  above — it self-references the current tree, so it catches silent
+  non-execution even when you do not know the historical numbers. A
+  parse / import / collection error drops a *whole file*, so
+  `disk-file-count > collected` is the direct signal. Per runner
+  (numbers current 2026-06-01):
+  - **vitest** — `find frontend/src \( -name '*.test.ts' -o -name
+    '*.test.tsx' \) | wc -l` (= **67**) must equal the `Test Files N
+    passed (N)` number the reporter prints.
+  - **Playwright** — `find frontend/e2e -name '*.spec.ts' | wc -l`
+    (= **113**) must equal the file count Playwright reports in the
+    `Total: N tests in M files` footer of `npx playwright test --list`
+    (and `--list` *errors outright* on a parse-broken file, so a clean
+    list whose `M` matches `find` proves every spec is collectable).
+    Grab `M` with:
+    `npx playwright test --list 2>&1 | sed -nE 's/^Total: [0-9]+ tests in ([0-9]+) files$/\1/p'`.
+  - **pytest** — `find backend fetcher -name 'test_*.py' | wc -l`
+    (= **142**) vs the unique-file count pytest collects:
+    `uv run pytest --collect-only -q 2>&1 | grep -oE '^[^:]+\.py' | sort -u | wc -l`
+    (= **141**). The expected delta is the **deliberately-deselected**
+    files: the default `addopts = -m 'not serial'` drops the serial
+    benchmark `backend/tests/test_search_index_benchmark.py`, so
+    142 vs 141 is correct, not a gap.
+  **Rule:** investigate *every* mismatch. A file legitimately excluded
+  by a marker filter (`-m 'not serial'`), an `--ignore`, or a
+  manual/benchmark gate is fine **once you have confirmed each one is
+  deliberate** — keep the known-excluded list current so the expected
+  delta is known. An *unexplained* drop means files never executed ⇒
+  not green, regardless of what the pass line says.
 - **Grep the raw output for non-execution tells:** `SyntaxError`,
   `Error:`, `Cannot find module`, `failed to load`, `collected 0`,
   `no tests ran`, `0 passed`, `did not run`. Any hit ⇒ not green.
