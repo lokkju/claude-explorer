@@ -10,6 +10,18 @@
 
 ***In this first part of the series, we meet the project: a local, unified, searchable archive of every session you've ever had with Claude, on both Desktop and Code, complete with your prompts, Claude's responses, and all the tool calls and tool results in between. And, alongside it, an MCP server that lets a new Claude session query the whole corpus programmatically.***
 
+## Contents
+
+- [The Hook](#the-hook)
+- [The Grounding Fact](#the-grounding-fact)
+- [The Shape of the Thing](#the-shape-of-the-thing)
+- [The Use Cases](#the-use-cases)
+- [So: Should You Run This?](#so-should-you-run-this)
+- [Under the Hood](#under-the-hood)
+- [Wrapping Up!](#wrapping-up)
+
+<a id="the-hook"></a>
+
 ## The Hook
 
 Here's a question that probably hasn't kept you up at night, but should have: *where exactly is all the stuff you've ever asked Claude? And its answers?* Not the clever one-liners, the ones you remember. The long debugging sessions. The three-hour architecture arguments where you and the model finally landed on a good design. The half-written prompts you abandoned but meant to come back to. The Claude Code runs where you tried four approaches before one stuck.
@@ -20,6 +32,8 @@ This project fixes that. It gives you one local spot containing every Claude Des
 
 That second piece is the one I'm more excited about, and it's the one that snuck up on me while I was building the first piece. We'll come back to it.
 
+<a id="the-grounding-fact"></a>
+
 ## The Grounding Fact
 
 Before we talk about what you can *do* with a unified archive, let's be precise about where your history actually lives today, because that's the gap this project fills.
@@ -29,6 +43,8 @@ Claude Desktop stores your conversation history **server-side only**. The app is
 Claude Code, on the other hand, writes each session to disk as a JSONL file under `~/.claude/projects/<project-slug>/*.jsonl`. The data is right there on your machine, in a reasonable format, owned by you. But there is no shipped UI to browse or search it. If you want to find a particular session from three months ago, you're left with `find` and `grep` and `xargs`.
 
 Half your history is somebody else's to show you, and the other half is yours but unreadable. This project's job is to copy the first half down to your disk on a schedule you control, read the second half live from where it already lives, and put both of them behind a single UI and a single MCP surface.
+
+<a id="the-shape-of-the-thing"></a>
 
 ## The Shape of the Thing
 
@@ -66,6 +82,8 @@ At a high level, the project is three pieces that share one on-disk corpus:
 There's a **capture-and-fetch flow** that pulls every Claude Desktop conversation down into `~/.claude-exporter/conversations/` as JSON files, attachments and all. There's a **web UI** (I call it `Claude Explorer`) that reads those JSONs *and* reads Claude Code sessions live from `~/.claude/projects/`, merges them behind one list, and hands you both a left-side side panel with the sessions list (which you can group and search and such) and a right-side search panel that runs full-text search across the whole thing. And there's an **MCP server** that exposes the same unified corpus to a fresh Claude Code or Claude Desktop session as five structured tools, so you can have your agents query your history programmatically.
 
 We'll get into how each piece actually works in the "Under the Hood" section at the end. First, the reasons you'd want any of this.
+
+<a id="the-use-cases"></a>
 
 ## The Use Cases
 
@@ -137,6 +155,8 @@ The PDF case is the one that caught us. I pulled a fresh conversation and went l
 
 I'll come back to that one in Part 5 as a cautionary tale, because it's a habit this project taught me more than once: *read the actual JSON before coding against your mental model of the JSON*. The mental model is always tidier than the data.
 
+<a id="so-should-you-run-this"></a>
+
 ## So: Should You Run This?
 
 If any of these are true, probably yes:
@@ -147,6 +167,8 @@ If any of these are true, probably yes:
 - You want a local, searchable, backed-up copy of your Claude conversations that isn't subject to server-side retention, account state, or network access.
 
 If none of those are true (you use Claude casually, on one account, on one machine, and you're fine with server-side search being the only way in) then honestly, you don't need this. Claude Desktop is a good product. I am not trying to replace it. I'm trying to build the thing that lives *next to* it for the users who've outgrown what the single-account, single-source view can do.
+
+<a id="under-the-hood"></a>
 
 ## Under the Hood
 
@@ -163,6 +185,8 @@ Now for the *how*. This is the architecture tour; we'll go deeper in later parts
 **The MCP server.** A small FastMCP-based Python package in `mcp_server/` that exposes five tools (`list_sessions`, `list_projects`, `get_session_outline`, `get_messages`, `export_session`) over stdio. The tool descriptions are written to say *"only call when the user explicitly asks…"* so that a Claude Code or Claude Desktop instance with the server attached doesn't burn tokens on speculative calls. The fixed context cost of attaching this server is small: about 4,700 characters of tool definitions, somewhere between twelve hundred and sixteen hundred tokens per conversation, regardless of whether the tools ever actually get called. Installation is `uv run --directory /path/to/project mcp_server` (it's a local package, not a PyPI one), wired into `~/.claude.json` for Claude Code or `~/Library/Application Support/Claude/claude_desktop_config.json` for Claude Desktop on macOS. Part 3 walks through the setup on all three OSes.
 
 **How it all fits.** The backend is the source of truth for "what sessions exist right now." The UI is a read-only browser on top of that backend (plus the export endpoints). The MCP server is a second, programmatic read-only browser on top of the same backend-internal logic, exposed to another Claude. None of the three components can mutate your Claude Desktop history, because that lives server-side at Anthropic and this project has no write path to it; none of them can mutate your Claude Code sessions either, because those are live JSONL files that Claude Code owns. This is a read-side project, top to bottom.
+
+<a id="wrapping-up"></a>
 
 ## Wrapping Up!
 

@@ -12,7 +12,7 @@ Distilled from Raymond E. Peck III's existing Medium series, *"Best Practices fo
 
 Scan each sentence's main verb. If it's *"is"*, *"was"*, *"are"*, *"were"*, *"be"*, or *"been"*, look for a transitive verb hiding in the predicate that should be promoted.
 
-Four patterns to watch for and rewrite:
+Five patterns to watch for and rewrite:
 
 1. **Passive voice proper.**
    - ❌ *"The file is saved by the back end."*
@@ -29,6 +29,13 @@ Four patterns to watch for and rewrite:
 4. **Stative noun phrases ("there is X", "there are Y").** Find the verb that's actually happening and lead with it.
    - ❌ *"There is a refresh button at the top of the sidebar that triggers a Desktop fetch."*
    - ✅ *"A refresh button at the top of the sidebar triggers a Desktop fetch."*
+
+5. **Verbless / telegraphic fragments (no main verb at all).** Two noun phrases or absolute clauses jammed together as a "sentence" read like status-log shorthand, not prose. Give it a real verb.
+   - ❌ *"Install done, first fetch streaming."*
+   - ✅ *"The install's done and the first fetch is streaming in."*
+   - ❌ *"Beyond that posture, a one-time supply-chain audit and the scans that gate every push:"*
+   - ✅ *"Beyond that posture, two things back it up: a one-time supply-chain audit, and the scans that gate every push."*
+   - Carve-out: a short verbless tag deliberately closing a sentence or paragraph for rhythm (*"one server for both."*, *"One checkbox, every source."*, *"nothing to clone, nothing to build, just run."*) is a rhetorical beat, not this failure mode. The tell: does it jar (scene-setting or transition shorthand) or land (an emphatic summary)?
 
 Why it matters: the active verb is shorter and clearer; the grammatical subject becomes the semantic actor (so the reader does not have to unwind an equation); repeated *"is"* / *"are"* as main verbs reads as AI-generated drift. The same instinct underlies the "X, not Y" ban below: prefer concrete predication over rhetorical posing.
 
@@ -76,6 +83,7 @@ Every part after #1 opens with a recap + link to the prior part:
 - **H2** for major sections: `## Documentation`, `## Introspection`, `## Linked Classes`, `## Wrapping Up!`
 - **H3** for subsections: `### Guiding Principles`, `### CRUD Class Design`, `### Design Considerations`
 - Keep them short and declarative. No gerunds-as-headers unless required.
+- **Lead a header with the action, not a nominalization or noun-pile.** A header like *Cold-restart lifespan staggering* (modifier + modifier + gerund-as-noun) forces the reader to unstack a noun pile; put the verb first instead: *Staggering the cold-restart lifespan*. This is the *"required"* case in the rule above. When the only short alternative is a nominalized noun pile (*Truncation disclosure*, *Conversation-detail caching*, *Tool-aware projection*), the active gerund-led form wins (*Disclosing truncation*, *Caching conversation detail*, *Making search tool-aware*). Match the section's own pattern, too: a run of *Caching… / Trimming… / Virtualizing… / Running…* headers should not hide a lone noun-pile among them.
 
 - **Long H2 sections need H3 subheaders.** When an H2 section covers four-plus distinct subtopics, or runs past about eight paragraphs, split it with H3s so a reader skimming can see the section's structure. The article-of-record test: if the H2 section had its own little table of contents, would it have more than one entry? If yes, write the H3s that table of contents would have. A wall of H2-only sections, each covering a feature cluster without internal hierarchy, reads as undifferentiated to a scrolling reader; H3s give them the topic anchors they're reaching for.
 
@@ -153,11 +161,20 @@ The article ends up with a **two-stage tease**: an early hint here, the full set
 - **After** the block: commentary explaining *why* each decision matters — *"The `User` class includes …"*
 - Triple-quoted docstrings *inside* the code are used as teaching comments; `#`-comments are sparse.
 - In prose, every identifier / path / keyword / CLI flag goes in backticks: `async`, `table=True`, `/docs`, `--proxy-server`.
+- **Keyboard shortcuts go in bold backticks, uniformly: `` **`⌘+K`** ``, `` **`Enter`** ``, `` **`u`** ``.** Bold *every* keybinding the same way, whether it's a single character (`` **`j`** ``, `` **`?`** ``), a named key (`` **`Esc`** ``, `` **`Tab`** ``), a modifier combo (`` **`⌘+Shift+G`** ``, `` **`Ctrl+N`** ``), or a bare modifier shown as a key label (`` **`⌘`** ``, `` **`Alt`** ``). Plain backticks alone make single characters nearly invisible mid-sentence, and a mix of bold combos with plain single keys looks inconsistent; bold everything so the reader's eye catches every binding. Do NOT bold code identifiers, paths, flags, or option values, even when they sit right next to a shortcut: `metaKey || ctrlKey`, `frontend/src/...`, and `cleanupPeriodDays` stay plain backticks. The test: is it a key the reader physically presses? Bold it. Is it code or config? Plain.
 - Italics for single-word emphasis: *"covered a lot of ground"*, *"This is the *only* place we …"*
 - **Shell commands the reader is meant to *execute* go in fenced code blocks, not inline backticks.** Inline backticks are for naming and referring (identifiers, paths, flags, error strings, tool names). The moment the prose is telling the reader to *run* something, the command moves to its own ```bash``` (or ```powershell```) block, even if it's a single line. Code blocks are copy-pasteable as-is (Medium renders a copy button), while inline backticks force the reader to assemble the command out of the surrounding sentence; they also help a scanning reader spot the article's executable surface at a glance.
   - ❌ *"Run `claude-explorer serve --help` for the full set of flags."*
   - ✅ *"For the full set of flags, run:* `bash` *block containing* `claude-explorer serve --help` *."*
   - References stay inline: *"the `--proxy` flag"*, *"the `uv run --directory` form"*, *"every `claude-explorer serve` start kicks off..."* — these are naming the thing, not asking the reader to type it.
+
+## Screenshots and image sizing
+
+Obsidian embeds (`![[Pasted image ....png]]`) render full-width by default; add `|<width>` (e.g. `|450`) to shrink one. The goal is **legibility**: size every screenshot so the smallest text the reader needs stays readable. Use the source image's pixel width as the decider, because it's a direct proxy for how much of the screen you captured (a retina full-window grab lands near ~3600 px; cropping to one modal naturally yields well under ~1400 px). Check it with `sips -g pixelWidth "<file>"`.
+
+- **Source width ≥ ~1500 px → render full-width** (no `|width`). These are whole or near-whole app windows. They stay wide even when a modal or dialog is open inside one, because the surrounding chrome already shrinks the modal's contents and narrowing the whole image would make that text unreadable. (The Manage-filters modal shown in context with the full window, source ~2666 px, is the canonical case: full-width.)
+- **Source width < ~1500 px → add a `|width`** so the clip doesn't render "magnified". These are tight crops of a single surface (a cropped modal, overlay, panel, or control: the keyboard-shortcuts overlay ~1028 px, the Settings page ~1348 px, a cropped Search Pane ~776 px). In practice `|400`–`|514` reads well; pick the width that keeps the labels legible without blowing the clip up.
+- The ~1500 px line cleanly separates our two real clusters (the widest crop we use is ~1348 px; the narrowest full-window is ~1734 px). Don't narrow a full-window shot just because it happens to contain a modal; the modal's text will go sub-legible.
 
 ## Lists vs prose
 
@@ -218,6 +235,12 @@ Every part ends with an **H2 "Wrapping Up!"** (with exclamation). Content:
 - Overly academic tone. The author is a working engineer, not a professor.
 - AI-assistant tells: *"Let's dive in"*, *"In this comprehensive guide"*, *"It's worth noting that…"*, emdashes, "It's not this, it's that" and similar framing that's common to AI writing — Raymond doesn't write like that.
 - UI-design jargon (*"toast"*, *"modal"*, *"chip"*, *"drawer"*, *"hamburger"*, *"FAB"*, *"kebab"*) needs a plain-English description, not the term on its own. *"A small status popup in the corner"*, not *"a toast"*. PM / designer vocabulary makes engineering readers pause even when they know the word, and many readers don't.
+- **No military / martial metaphors for ordinary engineering work.** This is not the army. *"campaign"* for a stretch of optimization work is the canonical offender (use *"work"*, *"effort"*, *"pass"*, *"round"*, or just name the thing: *"the original optimization work"*, not *"the original optimization campaign"*). Same ban on *"war room"*, *"battle"*, *"attack the problem"*, *"in the trenches"*, *"arsenal"*, *"salvo"*, *"frontline"*, *"wage"*, *"troops"*, *"crusade"*, *"deploy" (as a metaphor — software deployment is fine)*. Carve-out: *"war story"* is an established idiom for a debugging-anecdote subsection and stays. Pick the plain word; the work is engineering, not combat.
+- **Reconsider *"bucket"* as a metaphor for a group of things.** It reads crude when used loosely (*"treat everything in repo `foo` as a first-class bucket"* → *collection*, *group*, *category*). Reach for the plain noun instead. Keep *"bucket"* ONLY where it's an established term of art (an *S3 bucket*, a *token bucket*, a *histogram bucket*); there the word is precise and expected. The tell: if you could swap in *collection* / *group* with no loss, it was the loose metaphor, so swap it.
+- **No *"landed"* for shipped work, fixes, or measured results.** It's a tired tech-blog verb (a feature *"landed,"* a fix *"landed,"* a metric *"landed at 87 ms"*). Say the plain thing instead: a fix *shipped* / *went in* / *came in alongside X*; an index *was working* / *was in place*; a latency *dropped to* / *came down to* a number. Reserve *land* for its literal meaning (a search hit *lands* on a message, a scroll *lands* on a row). Same instinct as the *"campaign"* ban above: reach for the direct word, not the blog-cliché one.
+- **Match the verb to the unit when quoting a metric change.** A *×N factor* is a speedup or a multiplier, so it goes up; an *absolute value* (ms, bytes, seconds) is what drops. Don't say a thing *"dropped 57×"* — it *"sped up ~57×"* (or *"got ~57× faster"*). Reserve *dropped / fell / shrank* for the absolute numbers: *"latency dropped from 1,474 ms to 230 ms"*, *"the payload shrank from 650 KB to 459 KB"*. Mixing the two (*"dropped 57×"*) reads as a unit error to any numerate reader. Also keep the **×-factor honest against the stated before/after**: if the table says 4.5 s → 87 ms, the prose says ~52×, not a rounder-sounding 57× from some other baseline; recompute rather than eyeball.
+- *"Mode"* implies a sticky, persistent state the user switches into and stays in. Reserve it for settings that behave that way (Light / Dark / System theme, Emacs / Vim keybindings). For a one-off, per-action choice, name the choice: quoting a search query is a per-query decision (quotes or no quotes), so *"two modes you'll use day-to-day"* mislabels it. Same caution for *"toggle"* / *"switch"* / *"state"* when the thing is really a single decision: the word sets the reader's mental model, so pick one that matches the behavior.
+  - Even when the state genuinely IS sticky, prefer a precise domain noun over the generic *"mode"* if one exists. The search **pin** survives panel close and a full page reload, so it clears the stickiness bar, yet it's a search *scope*, and the article already uses "scope" everywhere else. So *"a complementary mode"* → *"a complementary scope"*, *"makes a mode visible"* → *"makes the active scope visible"*, *"the same scoped mode"* → *"scoped the same way"*. *"Mode"* is the fallback you reach for only when no sharper noun (scope, filter, theme, layout) fits; a sharper noun tells the reader *what kind* of state it is, where "mode" only tells them *that* there is one.
 
 ### The "it's not X, it's Y" trope — one-shot example (do not use this construction)
 
