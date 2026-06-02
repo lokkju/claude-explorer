@@ -7,7 +7,7 @@
 
 # Part 2: Using the `claude-explorer` Web App (User Guide with Technical Deep Dive)
 
-*This is the user guide for the `claude-explorer` web app plus a deep-dive into how the front end works under the hood (the search index, the image-cache architecture, settings persistence, dark mode, exports). If you only want the product tour without the implementation detail, see the [user-guide version](part_2_web_app_userdoc.md).*
+*This is the user guide for the `claude-explorer` web app plus a deep-dive into how the front end works under the hood (the search index, the image-cache architecture, settings persistence, dark mode, exports). If you only want the product tour without the implementation detail, see the [user-guide version](part_2_web_app_userdoc.md) or the [Quickstart](part_2_web_app_quickstart.md).*
 
 ***In this part of the series, we'll install `claude-explorer`, capture and fetch your Claude Desktop history, and then take a full product tour of the web UI: the unified Conversation List, full-text search, keyboard navigation, reading conversations, appearance and settings, and exports.***
 

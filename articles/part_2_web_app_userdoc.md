@@ -8,7 +8,7 @@
 
 # Part 2: Using the `claude-explorer` Web App (User Guide)
 
-*This is the user guide for the `claude-explorer` web app: install, Conversation List, keyboard shortcuts, exports, the whole nine yards. If you also want a technical deep-dive into how the front end works under the hood (the search index, the image-cache architecture, settings persistence), see the [longer version](part_2_web_app.md), which is a superset of this article and adds the internals.*
+*This is the user guide for the `claude-explorer` web app: install, Conversation List, keyboard shortcuts, exports, the whole nine yards. If you also want a technical deep-dive into how the front end works under the hood (the search index, the image-cache architecture, settings persistence), see the [longer version](part_2_web_app.md), which is a superset of this article and adds the internals. There's also a [Quickstart](part_2_web_app_quickstart.md) if you just want to get going quickly. 🤓*
 
 ***In this part of the series, we'll install `claude-explorer`, capture and fetch your Claude Desktop history, and then take a full product tour of the web UI: the unified Conversation List, full-text search, keyboard navigation, reading conversations, appearance and settings, and exports.***
 
