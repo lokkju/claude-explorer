@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Pre-push gate: article image / link formats must render on GitHub.
+
+The Medium series is read on GitHub AND Medium (co-equal surfaces). GitHub's
+blob-Markdown renderer is the strict one, so this checker enforces the formats
+that survive it (and Obsidian, where the author drafts). Run from the repo root:
+
+    python3 scripts/check-article-formats.py
+
+It scans every ``articles/*.md`` (the published surface) and FAILS (exit 1) on:
+
+  1. Obsidian image embeds ``![[...]]``  -> GitHub shows literal text.
+  2. Obsidian wikilinks    ``[[...]]``   -> GitHub shows literal text.
+  3. A space or ``%20`` in a LOCAL image/link path or ``<img src>`` -> GitHub's
+     blob renderer mangles ``%20`` in relative paths and shows a broken image
+     (the raw file resolves at the %20 URL, which is the trap). Use dash-named
+     files and plain relative paths instead.
+  4. A referenced LOCAL image that is not git-tracked -> 404 on GitHub.
+
+Rationale + the empirical findings live in
+``PLANS/articles/medium-articles.md`` (image + TOC standards).
+
+Files in KNOWN_PENDING are skipped with a loud warning (a WIP part whose images
+are not in the repo yet). Empty that set before publishing those parts.
+"""
+from __future__ import annotations
+import glob
+import os
+import re
+import subprocess
+import sys
+
+# Parts not yet ready to render on GitHub; fix and remove before publishing.
+KNOWN_PENDING = {
+    # Part 3's 5 screenshots are not yet in articles/Attachments/; convert its
+    # ![[...]] embeds to dash-named standard-MD / <img> once the files land.
+    "articles/part_3_mcp_server.md",
+}
+
+INLINE_CODE = re.compile(r"`[^`]*`")
+FENCE = re.compile(r"^\s*```")
+
+
+def tracked_under_articles() -> set[str]:
+    out = subprocess.run(
+        ["git", "ls-files", "articles"], capture_output=True, text=True
+    ).stdout
+    return set(out.splitlines())
+
+
+def is_remote(target: str) -> bool:
+    return target.startswith(("http://", "https://", "mailto:", "#"))
+
+
+def check_file(path: str, tracked: set[str]) -> list[tuple[int, str, str]]:
+    viol: list[tuple[int, str, str]] = []
+    in_fence = False
+    for lineno, raw in enumerate(open(path, encoding="utf-8").read().split("\n"), 1):
+        if FENCE.match(raw):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        line = INLINE_CODE.sub("", raw)  # drop `inline code` so doc examples don't trip it
+
+        for m in re.finditer(r"!\[\[[^\]]*\]\]", line):
+            viol.append((lineno, "Obsidian image embed ![[...]] (literal text on GitHub)", m.group(0)))
+        for m in re.finditer(r"(?<!!)\[\[[^\]]*\]\]", line):
+            viol.append((lineno, "Obsidian wikilink [[...]] (literal text on GitHub)", m.group(0)))
+
+        # markdown image/link destinations
+        for m in re.finditer(r"!?\[[^\]]*\]\(([^)]+)\)", line):
+            tgt = m.group(1).strip()
+            if is_remote(tgt):
+                continue
+            if " " in tgt or "%20" in tgt:
+                viol.append((lineno, "space/%20 in local markdown path (GitHub mangles it)", tgt))
+        # HTML <img src="...">
+        for m in re.finditer(r'<img[^>]*\bsrc="([^"]+)"', line):
+            tgt = m.group(1).strip()
+            if is_remote(tgt):
+                continue
+            if " " in tgt or "%20" in tgt:
+                viol.append((lineno, "space/%20 in <img src> (GitHub mangles it)", tgt))
+
+        # referenced local IMAGES must be git-tracked (else 404 on GitHub)
+        for m in re.finditer(r'!\[[^\]]*\]\(([^)]+)\)|<img[^>]*\bsrc="([^"]+)"', line):
+            tgt = (m.group(1) or m.group(2)).strip()
+            if is_remote(tgt):
+                continue
+            rel = os.path.normpath(os.path.join(os.path.dirname(path), tgt.replace("%20", " ")))
+            if rel not in tracked:
+                viol.append((lineno, "referenced image not git-tracked (404 on GitHub)", tgt))
+    return viol
+
+
+def main() -> int:
+    tracked = tracked_under_articles()
+    failed = False
+    skipped: list[str] = []
+    for path in sorted(glob.glob("articles/*.md")):
+        if path in KNOWN_PENDING:
+            skipped.append(path)
+            continue
+        viol = check_file(path, tracked)
+        if viol:
+            failed = True
+            print(f"\n✗ {path}")
+            for lineno, why, what in viol:
+                print(f"    line {lineno}: {why}\n        {what}")
+    for path in skipped:
+        print(f"⚠️  SKIP {path} (KNOWN_PENDING — fix image format before publishing this part)")
+    if failed:
+        print(
+            "\nArticle format check FAILED. Use standard Markdown for full-window shots and "
+            "centered <img width> for crops, dash-named files, plain relative paths "
+            "(no spaces / no %20). See PLANS/articles/medium-articles.md."
+        )
+        return 1
+    print("✓ article image/link formats OK (GitHub-renderable)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
