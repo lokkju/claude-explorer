@@ -1,6 +1,6 @@
 # Claude Explorer
 
-A tool to extract, browse, search, and export your Claude conversation history — even if you've lost access to the email address on your account.
+A local tool to browse, full-text search, and export your entire Claude conversation history — Claude Desktop, Claude Code, and Claude Cowork in one unified, searchable place — and to query it programmatically from Claude itself via a built-in MCP server. It also rescues conversations from accounts whose login email you've lost access to.
 
 > **Disclaimer**: This is an independent, community-built project. It is not affiliated with, endorsed by, sponsored by, or supported by Anthropic, PBC. "Claude" and "Claude Code" are trademarks of Anthropic, PBC. This project consumes Anthropic's products as a user would — via the same APIs and on-disk file formats the official clients use — but nothing here represents an Anthropic-sanctioned interface, and the formats this project depends on may change without notice.
 
@@ -38,7 +38,7 @@ brew install pango cairo libffi
 #            system-library dance entirely.
 ```
 
-That's it. Open `http://localhost:8765` in your browser and your Claude Code sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
+That's it. Open `http://localhost:8765` in your browser and your Claude Code and Claude Cowork sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
 
 The watcher is a one-time install that registers a tiny background job with your OS supervisor (launchd / systemd / Task Scheduler) so Claude Code can't quietly rotate your screenshots and pasted images off disk before they get mirrored. Without it, you only have image protection while `claude-explorer serve` is running.
 
@@ -46,7 +46,7 @@ If you'd rather hack on the project than install it, see [From source (for contr
 
 ## Features
 
-- **Browse conversations** from both Claude Desktop and Claude Code
+- **Browse conversations** from all three sources in one unified list: Claude Desktop (fetched), Claude Code, and Claude Cowork (both read live from local disk)
 - **Full-text search** across all messages with instant results — multi-word queries AND tokens (all words must appear in the same message, any order); wrap in `"double quotes"` to require an exact phrase. Both the title-search and full-text-search honor the sidebar's active scope (source dropdown, workspace, and any active filter), so what you can't see in the sidebar can't appear in search results either.
 - **Export** to Markdown or PDF
 - **Dark mode** with automatic system preference detection
@@ -422,7 +422,7 @@ The project ships with a built-in **Model Context Protocol** server that lets Cl
 | `get_messages` | Full message content for specific positions or UUIDs, with optional tool calls/results |
 | `export_session` | Markdown export of a full or partial session |
 
-The server runs over **stdio** (no network port) and reads from the same `~/.claude-explorer/conversations/` directory the web UI uses.
+The server runs over **stdio** (no network port) and reads the same on-disk corpus the web UI does: fetched Claude Desktop JSON under `~/.claude-explorer/conversations/`, plus live Claude Code and Claude Cowork sessions.
 
 ### Prerequisites
 
@@ -684,7 +684,7 @@ After recovery, **set a high `cleanupPeriodDays`** with the checker above so thi
 
 ### `utils/restore-deleted-sessions-and-images.sh` — recover sessions AND image-cache PNGs
 
-A bash superset of the Python script above that also restores files under `~/.claude/image-cache/<session-uuid>/<N>.png` (Claude Code rotates these off disk on its own schedule, separately from the `cleanupPeriodDays` setting). Walks Time Machine snapshots **newest-first**, restores anything missing from `~/.claude/projects/` and `~/.claude/image-cache/`, **never overwrites** files that still exist, and supports `--dry-run` so you can review the plan before anything moves.
+A bash superset of the Python script above that also restores files under `~/.claude/image-cache/<session-uuid>/<N>.png` (Claude Code rotates these off disk on its own schedule, separately from the `cleanupPeriodDays` setting). Walks Time Machine snapshots **newest-first**, restores anything missing from `~/.claude/projects/`, `~/.claude/image-cache/`, and `~/Library/Application Support/Claude/local-agent-mode-sessions/` (so Cowork's `audit.jsonl` trees come back too), **never overwrites** files that still exist, and supports `--dry-run` so you can review the plan before anything moves.
 
 **Step 1 — grant Full Disk Access** (one-time):
 

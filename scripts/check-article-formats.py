@@ -31,11 +31,9 @@ import subprocess
 import sys
 
 # Parts not yet ready to render on GitHub; fix and remove before publishing.
-KNOWN_PENDING = {
-    # Part 3's 5 screenshots are not yet in articles/Attachments/; convert its
-    # ![[...]] embeds to dash-named standard-MD / <img> once the files land.
-    "articles/part_3_mcp_server.md",
-}
+# (Part 3's restructure on 2026-06-02 dropped its image embeds entirely, so it
+# no longer needs to be pending; the set is empty again.)
+KNOWN_PENDING: set[str] = set()
 
 INLINE_CODE = re.compile(r"`[^`]*`")
 FENCE = re.compile(r"^\s*```")
