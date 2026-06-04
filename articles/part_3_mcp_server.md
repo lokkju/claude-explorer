@@ -133,11 +133,11 @@ user EXPLICITLY asks to search, browse, analyze, or export past conversation
 sessions. Never call these tools proactively or speculatively.
 ```
 
-That isn't decoration. We'll see why it's worth it when we talk token cost, but the short version is that an attached tool tempts an eager client to "helpfully" go rummaging through your history on prompts that have nothing to do with it, and I would rather it sat on its hands until you ask.
+That isn't decoration. We'll see why it's worth it when we talk about token cost, but the short version is that an attached tool tempts an eager client to "helpfully" go rummaging through your history on prompts that have nothing to do with it, and I would rather it sat on its hands until you ask.
 <a id="the-five-tools-by-example"></a>
 ## The Five Tools, by Example
 
-The server exposes five tools, all read-only, all pointed at the same files the UI reads. Rather than list them like a reference manual, let's walk them in the order you use them, because they're designed as a pipeline: **find the sessions, outline one, pull the exact messages you want, and export a clean slice.** For each, I'll show the plain-English thing you'd type and sketch what comes back. I'm skipping the wire format on purpose; the argument names and return shapes live in the repo for anyone who wants them.
+The server exposes five tools, all read-only, all pointed at the same files the UI reads. Rather than list them like a reference manual, let's walk them in the order you use them: **list your projects, find the sessions, outline one, pull the exact messages you want, and export a clean slice.** The last four chain into a tidy pipeline; listing projects is just where you get your bearings first. For each, I'll show the plain-English thing you'd type and sketch what comes back. I'm skipping the wire format on purpose; the argument names and return shapes live in the repo for anyone who wants them.
 
 ### Finding sessions
 
@@ -145,7 +145,7 @@ The server exposes five tools, all read-only, all pointed at the same files the 
 
 > *"Search my saved sessions for 'FTS5' and tell me which source each came from."*
 
-Claude turns that into a `list_sessions` call with your query, and gets back a list of sessions plus a total count, where each matching session carries a `match_count` telling you how many of its messages hit. A couple of arguments make this scale to a real archive. You can filter by `source` (`CLAUDE_AI` for your Desktop conversations, `CLAUDE_CODE` for your local Code sessions) and by `project` (a case-insensitive substring of the project name). Those two filters mirror the source and project dropdowns from the Part 2 UI exactly. I wanted one definition of *"search"* shared between how you browse manually and how Claude browses, because the alternative is the kind of quiet drift you only notice after you've trusted the tool for a month.
+Claude turns that into a `list_sessions` call with your query, and gets back a list of sessions plus a total count, where each matching session carries a `match_count` telling you how many of its messages hit. A couple of arguments make this scale to a real archive. You can filter by `source` (`CLAUDE_AI` for your Desktop conversations, `CLAUDE_CODE` for your local Code sessions, `CLAUDE_COWORK` for Cowork) and by `project` (a case-insensitive substring of the project name). Those two filters mirror the source and project dropdowns from the Part 2 UI exactly. I wanted one definition of *"search"* shared between how you browse manually and how Claude browses itself. To do otherwise would be just asking for confusion.
 
 ### Listing projects
 
