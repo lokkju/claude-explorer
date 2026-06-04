@@ -57,6 +57,17 @@ def test_source_filter_claude_code_returns_only_cc(mcp_data):
     assert all(s["source"] == "CLAUDE_CODE" for s in result["sessions"])
 
 
+def test_source_filter_claude_cowork_excludes_other_sources(mcp_data):
+    # Regression: CLAUDE_COWORK was silently dropped to "all" (and
+    # returned everything) because the MCP source filter only allowed
+    # AI/CODE. With no Cowork sessions present, the filter must exclude
+    # the desktop + CC sessions and return nothing.
+    mcp_data.add_desktop_session("u-1")
+    mcp_data.add_cc_session("cc-1")
+    result = _call(source="CLAUDE_COWORK")
+    assert result == {"sessions": [], "total": 0}
+
+
 def test_invalid_source_falls_back_to_all(mcp_data):
     mcp_data.add_desktop_session("u-1")
     mcp_data.add_cc_session("cc-1")

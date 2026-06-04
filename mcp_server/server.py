@@ -379,7 +379,7 @@ def list_sessions(
     Args:
         query: Full-text search across session names and message content.
                Omit to list all sessions.
-        source: Filter by source: "CLAUDE_AI" or "CLAUDE_CODE".
+        source: Filter by source: "CLAUDE_AI", "CLAUDE_CODE", or "CLAUDE_COWORK".
         project: Filter by project name (substring match, case-insensitive).
         organization_id: Workspace UUID — restrict to conversations whose
                          organization_id matches exactly. Mirrors the
@@ -403,8 +403,8 @@ def list_sessions(
     limit = min(max(1, limit), 100)
     offset = max(0, offset)
 
-    src: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all"
-    if source in ("CLAUDE_AI", "CLAUDE_CODE"):
+    src: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all"
+    if source in ("CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"):
         src = source  # type: ignore[assignment]
 
     if query:
@@ -489,12 +489,12 @@ def list_projects(
     Only call when the user explicitly asks to list or browse projects.
 
     Args:
-        source: Filter by source: "CLAUDE_AI" or "CLAUDE_CODE".
+        source: Filter by source: "CLAUDE_AI", "CLAUDE_CODE", or "CLAUDE_COWORK".
     """
     store = _get_store()
 
-    src: Literal["all", "CLAUDE_AI", "CLAUDE_CODE"] = "all"
-    if source in ("CLAUDE_AI", "CLAUDE_CODE"):
+    src: Literal["all", "CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"] = "all"
+    if source in ("CLAUDE_AI", "CLAUDE_CODE", "CLAUDE_COWORK"):
         src = source  # type: ignore[assignment]
 
     convs = store.list_conversations(source=src)

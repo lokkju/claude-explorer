@@ -77,11 +77,19 @@ def isolated_data_dir(
 
     data_dir = tmp_path / "data"
     claude_dir = tmp_path / "claude"
+    desktop_app_dir = tmp_path / "desktop_app"
     data_dir.mkdir()
     claude_dir.mkdir()
+    # Create the Cowork sessions root empty so the reader finds nothing.
+    (desktop_app_dir / "local-agent-mode-sessions").mkdir(parents=True)
 
     monkeypatch.setenv("CLAUDE_EXPLORER_DATA_DIR", str(data_dir))
     monkeypatch.setenv("CLAUDE_DIR", str(claude_dir))
+    # Isolate the Cowork reader too — it walks
+    # ``CLAUDE_DESKTOP_APP_DIR/local-agent-mode-sessions``. Without this,
+    # any "all" or CLAUDE_COWORK query leaks the developer's real Cowork
+    # sessions into the result (and makes those tests non-deterministic).
+    monkeypatch.setenv("CLAUDE_DESKTOP_APP_DIR", str(desktop_app_dir))
 
     config.get_settings.cache_clear()
     try:
