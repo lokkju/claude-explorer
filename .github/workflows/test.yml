@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:   # lets release.yml run this exact suite as a pre-publish gate
 
 jobs:
   python:

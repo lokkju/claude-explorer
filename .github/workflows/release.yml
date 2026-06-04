@@ -40,8 +40,15 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: Test suite (release gate)
+    # Same checks CI runs on every push/PR, pinned to the tagged commit.
+    # If anything fails, build and publish never run.
+    uses: ./.github/workflows/test.yml
+
   build:
     name: Build wheel
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
