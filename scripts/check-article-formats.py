@@ -5,9 +5,12 @@ The Medium series is read on GitHub AND Medium (co-equal surfaces). GitHub's
 blob-Markdown renderer is the strict one, so this checker enforces the formats
 that survive it (and Obsidian, where the author drafts). Run from the repo root:
 
-    python3 scripts/check-article-formats.py
+    python3 scripts/check-article-formats.py                 # scan every articles/*.md
+    python3 scripts/check-article-formats.py a.md b.md       # check only these files
 
-It scans every ``articles/*.md`` (the published surface) and FAILS (exit 1) on:
+With no arguments it scans every ``articles/*.md`` (the published surface). Given
+explicit paths it checks exactly those (and a path that doesn't exist is a hard
+error, exit 2 — never a silent pass). It FAILS (exit 1) on:
 
   1. Obsidian image embeds ``![[...]]``  -> GitHub shows literal text.
   2. Obsidian wikilinks    ``[[...]]``   -> GitHub shows literal text.
@@ -24,6 +27,7 @@ Files in KNOWN_PENDING are skipped with a loud warning (a WIP part whose images
 are not in the repo yet). Empty that set before publishing those parts.
 """
 from __future__ import annotations
+import argparse
 import glob
 import os
 import re
@@ -92,12 +96,51 @@ def check_file(path: str, tracked: set[str]) -> list[tuple[int, str, str]]:
     return viol
 
 
-def main() -> int:
+def resolve_targets(paths: list[str]) -> tuple[list[str], list[str]]:
+    """Map CLI args to files to check.
+
+    No paths -> every ``articles/*.md`` (the full pre-push scan). Explicit paths
+    -> exactly those, with any that don't exist returned separately so the caller
+    can hard-error instead of silently passing (the 2026-06-03 false-green bug).
+    """
+    if not paths:
+        return sorted(glob.glob("articles/*.md")), []
+    files: list[str] = []
+    missing: list[str] = []
+    for p in paths:
+        (files if os.path.isfile(p) else missing).append(p)
+    return files, missing
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        help="Specific article files to check. Default: every articles/*.md.",
+    )
+    args = parser.parse_args(argv)
+
+    explicit = bool(args.paths)
+    files, missing = resolve_targets(args.paths)
+    if missing:
+        for p in missing:
+            print(f"error: no such file: {p}", file=sys.stderr)
+        return 2
+    if not files:
+        print("error: no article files to check", file=sys.stderr)
+        return 2
+
     tracked = tracked_under_articles()
     failed = False
     skipped: list[str] = []
-    for path in sorted(glob.glob("articles/*.md")):
-        if path in KNOWN_PENDING:
+    for path in sorted(files):
+        # KNOWN_PENDING only auto-skips during a full (no-args) scan; a file named
+        # explicitly on the command line is always checked.
+        if not explicit and path in KNOWN_PENDING:
             skipped.append(path)
             continue
         viol = check_file(path, tracked)
