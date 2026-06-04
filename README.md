@@ -456,125 +456,55 @@ uv run --directory /path/to/claude-explorer claude-explorer mcp
 
 ### Claude Code setup (all platforms)
 
-The simplest path is the `claude mcp add` CLI, which writes the config for you:
+The simplest path is the `claude mcp add` CLI, which writes the config for you and runs the published package via `uvx` — nothing to clone, no path to hard-code:
 
 ```bash
-claude mcp add claude-sessions \
-  -- uv run --directory /absolute/path/to/claude-explorer claude-explorer mcp
+claude mcp add --scope user claude-sessions -- uvx claude-explorer mcp
 ```
 
-Use `--scope user` to make it available in every project, or `--scope project` (default) to scope it to the current repo (writes to `.mcp.json`).
-
-Verify with:
+`--scope user` makes the server available in every project (written to `~/.claude.json`). Swap it for `--scope project` to scope it to the current repo instead (written to a `.mcp.json` at the repo root). A bare `claude mcp add` defaults to `local` scope (private to the current project, also stored in `~/.claude.json`). Verify with:
 
 ```bash
 claude mcp list
 ```
 
-Or edit the config files directly:
-
-- **User scope:** `~/.claude.json` (key: `mcpServers`)
-- **Project scope:** `.mcp.json` in the project root
+To edit the config by hand instead, the `mcpServers` block is identical at both scopes; only the file differs — `~/.claude.json` for user scope, `.mcp.json` at the repo root for project scope. (MCP servers do **not** live under `.claude/`, which holds other settings like permissions.)
 
 ```json
 {
   "mcpServers": {
     "claude-sessions": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/absolute/path/to/claude-explorer",
-        "claude-explorer",
-        "mcp"
-      ]
+      "command": "uvx",
+      "args": ["claude-explorer", "mcp"]
     }
   }
 }
 ```
 
-> **Note:** Use the **absolute path** to the repo. MCP clients do not inherit your shell's `cwd`. If `uv` is not on the default `PATH` the client sees, replace `"uv"` with the absolute path from `which uv` (typically `~/.local/bin/uv` or `/opt/homebrew/bin/uv`).
+> **Note:** If the MCP client can't find `uvx` on the `PATH` it sees, replace `"uvx"` with its absolute path (from `which uvx` / `where uvx`). Contributors running from a checkout can instead use `"command": "uv"` with `"args": ["run", "--directory", "/path/to/claude-explorer", "claude-explorer", "mcp"]`.
 
 ### Claude Desktop setup
 
-Claude Desktop reads from a `claude_desktop_config.json` file whose location depends on the OS. Create or edit it and add the `claude-sessions` entry under `mcpServers`, then fully quit and relaunch Claude Desktop.
+The easiest way to open the config file is from inside the app: **Settings → Developer → Edit Config**. (The Extensions browser is only for packaged "Desktop Extension" bundles; this is a plain stdio server, so it's a quick paste into the config, not a one-click install.) Or open the file directly — its location depends on the OS:
 
-#### macOS
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json` (typically `C:\Users\YOU\AppData\Roaming\Claude\claude_desktop_config.json`)
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
-Config path:
-```
-~/Library/Application Support/Claude/claude_desktop_config.json
-```
-
-```json
-{
-  "mcpServers": {
-    "claude-sessions": {
-      "command": "/opt/homebrew/bin/uv",
-      "args": [
-        "run",
-        "--directory",
-        "/Users/YOU/Source/claude-explorer",
-        "claude-explorer",
-        "mcp"
-      ]
-    }
-  }
-}
-```
-
-If you installed `uv` via the standalone installer instead of Homebrew, it will be at `~/.local/bin/uv`. Use `which uv` to confirm.
-
-#### Windows
-
-Config path:
-```
-%APPDATA%\Claude\claude_desktop_config.json
-```
-(typically `C:\Users\YOU\AppData\Roaming\Claude\claude_desktop_config.json`)
+Add the same block you'd use for Claude Code, then **fully quit and relaunch** Claude Desktop (it only reads the config at startup):
 
 ```json
 {
   "mcpServers": {
     "claude-sessions": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "C:\\Users\\YOU\\Source\\claude-explorer",
-        "claude-explorer",
-        "mcp"
-      ]
+      "command": "uvx",
+      "args": ["claude-explorer", "mcp"]
     }
   }
 }
 ```
 
-Use double-backslashes (`\\`) in JSON string paths. If `uv` is not on the system `PATH` as seen by Claude Desktop, use its absolute path (e.g. `C:\\Users\\YOU\\.local\\bin\\uv.exe`).
-
-#### Linux
-
-Config path:
-```
-~/.config/Claude/claude_desktop_config.json
-```
-
-```json
-{
-  "mcpServers": {
-    "claude-sessions": {
-      "command": "/home/YOU/.local/bin/uv",
-      "args": [
-        "run",
-        "--directory",
-        "/home/YOU/Source/claude-explorer",
-        "claude-explorer",
-        "mcp"
-      ]
-    }
-  }
-}
-```
+> **Note:** A GUI app may not inherit your shell's `PATH`, so if Desktop can't find `uvx`, put its absolute path (from `which uvx` / `where uvx`) in `command`.
 
 ### Verifying it works
 
@@ -586,8 +516,8 @@ In Claude Code you can also run `/mcp` to see the server status and the list of 
 
 ### Troubleshooting
 
-- **"command not found: uv"** — the MCP client doesn't see your shell `PATH`. Use the absolute path to `uv` in `command`.
-- **"Session not found" / empty results** — run `uv run claude-explorer fetch` first; the MCP server reads from `~/.claude-explorer/conversations/`.
+- **"command not found: uvx"** — the MCP client doesn't see your shell `PATH`. Use the absolute path to `uvx` in `command`.
+- **"Session not found" / empty results** — run `uvx claude-explorer fetch` first (or use the web app's Refresh button); the MCP server reads from `~/.claude-explorer/conversations/`.
 - **Need to use a non-default data dir** — set `CLAUDE_EXPLORER_DATA_DIR` via an `env` block in the MCP config:
   ```json
   "env": { "CLAUDE_EXPLORER_DATA_DIR": "/path/to/conversations" }

@@ -1,132 +1,131 @@
 <!--
   Medium series: Unlocking Your Claude History
-  Part 3 of 5 — Draft (Council synthesis: Gemini 3 Pro + GPT-5.2 drafters via OpenRouter, Opus synthesis)
-  Sources: Part 1 + Part 2 tone threading, PROCESS/99_voice_cheatsheet.md, mcp_server/SPEC.md (ground truth)
-  Voice: Raymond Peck's "Best Practices for Modern REST APIs in Python" series
+  Part 3 of 7 — Story-led restructure (2026-06-02).
+  Focus: real, receipt-backed use cases of the claude-sessions MCP server, light on implementation.
+  Sources: the project's own build + drafting sessions, mined through the MCP server itself
+  (citations live in PLANS/articles/part3_mcp_server_plan.md and part3-tuning-loop-run.md).
+  Voice: Raymond Peck's "Best Practices for Modern REST APIs in Python" series (PROCESS/99_styleguide.md).
 -->
 
 # Part 3 — Claude Querying Its Own History: The MCP Server
 
-***In this part of the series, we'll set up the built-in Model Context Protocol (MCP) server and walk through the five tools that let a fresh Claude session search, browse, outline, read, and export your saved Claude history programmatically.***
+***In this part of the series, we point a fresh Claude session at your saved Claude history through a small MCP server, then put it to real work: finding the old session you half-remember, boiling a giant one down to its decisions, turning Claude's recurring mistakes into sharper rules, and mining this series out of the project's own build history.***
 
 > **Disclaimer**: This is an independent, community-built project. It is not affiliated with, endorsed by, sponsored by, or supported by Anthropic, PBC. "Claude" and "Claude Code" are trademarks of Anthropic, PBC. This project consumes Anthropic's products as a user would, via the same APIs and on-disk file formats the official clients use, but nothing here represents an Anthropic-sanctioned interface, and the formats this project depends on may change without notice.
 
-In the previous installation of this series, we covered the web app: how it unifies Claude Desktop conversations (fetched down to disk) and Claude Code sessions (read live from `~/.claude/projects/`), plus search, keyboard navigation, and exports. If you missed that, make sure to go back and read [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) and [Part 2](https://medium.com/@raymondpeck/part-2-using-the-web-app) first; Part 3 assumes you already have a mental model of the on-disk corpus, because the MCP server is simply another way to read it.
+![An ouroboros: the MCP server reading the very session that built it](Attachments/ouroboros.png)
 
-## Why an MCP Server?
+In the previous installation of this series, we covered the web app: how it unifies your Claude Desktop conversations (fetched down to disk) with your Claude Code sessions (read live from `~/.claude/projects/`), plus full-text search, keyboard navigation, and exports. If you missed that, make sure to go back and read [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) and [Part 2](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-2-using-the-claude-explorer-web-app-user-guide-109191dc24d4) first, because Part 3 assumes you already have a mental model of the on-disk archive.
 
-The web UI is how *we* read: scan a sidebar, run a full-text query, hop between matches, export a session, move on. That's a human workflow, and it's right for the kinds of questions humans ask when we're willing to put our eyeballs on the page.
+Part 2 was about how *you* read your archive: you scan the sidebar, run a query, jump between matches, export a session, and so on. In this part, your robot friend is the reader. Another Claude session reads and analyzes the same conversations for you.
 
-The MCP server exists for the other workflow, the one that becomes obvious the first time you've got a few hundred sessions and a question that sounds like: *"Find the three conversations where we discussed X, extract the decisions, and quote the relevant turns."* That is still a human goal, but it's a machine's *execution plan*, and once you have a local corpus, it is deeply satisfying to let another Claude session do the rummaging for you.
+That is worth more than it sounds. Once you've got a few hundred Claude conversations behind you, your best thinking lies buried in them somewhere, and you're never going to scroll back to find it: the decision you half-remember, the config that finally worked, the bug you've now hit twice, or more importantly the *process* that led to that bug, are all sitting in transcripts you'll never reopen by hand. Handing that to a fresh session turns it from something you vaguely recall into a library you can put a direct question to and get a straight answer back.
 
-Put differently: the UI is how you browse your archive; the MCP server is how Claude browses your archive. Same underlying files, same definitions of "session" and "project", same exports; different consumer.
+So here's the plan: we'll get the server connected to Claude Code and Claude Desktop on your machine, then walk its five tools, four of which chain into a simple pipeline: find, outline, read, export. After that we'll spend most of our time on the first two uses I made of this server: mining this project's own build history into the series you're reading, and pointing it at my own sessions to find the mistakes Claude Code keeps making, in order to draft sharper rules against them. 
 
-## What MCP Is (One Paragraph, Promise)
+Along the way I'll be clear about what I've actually used the server for and what it can do that I haven't put to work yet.
 
-**Model Context Protocol (MCP)** is a standard for letting an LLM client (Claude Desktop, Claude Code, and other MCP-aware clients) call tools exposed by a local or remote server, with structured arguments and structured results. If you want the canonical reference, the spec lives at <https://modelcontextprotocol.io/>. In this project we implement the server side using [FastMCP](https://github.com/jlowin/fastmcp), which handles JSON-RPC over stdio, tool registration, and schema generation from Python type hints, so our job stays focused on the interesting part: translating "search my history" into a safe, explicit, token-efficient query interface. I love it when a library just gets out of your way and lets you focus on the business logic!
+## Contents
 
-## Install and First Run
+- [The First Useful Query](#the-first-useful-query)
+- [Connecting It](#connecting-it)
+- [The Five Tools, by Example](#the-five-tools-by-example)
+- [The Workflow That Mined This Series](#the-workflow-that-mined-this-series)
+- [Running the CLAUDE.md Tuning Loop for Real](#running-the-claude-md-tuning-loop-for-real)
+- [What I've Actually Used It For (and What I Haven't)](#what-ive-actually-used-it-for-and-what-i-havent)
+- [Security and Scope](#security-and-scope)
+- [Wrapping Up!](#wrapping-up)
 
-There are two practical ways you'll run this server: from the released tool (the same way you run the rest of `claude-explorer`), or from a local clone (which is what you'll do if you're hacking on it). Either way, the MCP server is launched as a subprocess by your MCP client and spoken to over stdio. No ports, no listeners, no "is my firewall open" debugging, which is exactly how I want local developer tooling to behave.
+<a id="the-first-useful-query"></a>
 
-### Start the server by hand (sanity check)
+## The First Useful Query
 
-You typically won't "start" the server yourself because Claude (or your MCP client) spawns it, but it's useful to know the entry points:
+This server speaks **Model Context Protocol (MCP)**, the standard that lets an LLM client (Claude Desktop, Claude Code, or any MCP-aware client) call tools you expose, with structured arguments and structured results. It's deliberately limited: it runs locally as a subprocess your client launches, talks over stdin and stdout with no ports and no network listener, and exposes exactly five read-only tools over your saved archive. [FastMCP](https://github.com/PrefectHQ/fastmcp) handles the protocol plumbing, so I could keep my attention on the one interesting problem: turning *"search my history"* into a safe, explicit, token-efficient query surface.
+
+The best way to get a feel for it is to show you the first real thing it ever did. The moment I finished wiring it into Claude Code, I didn't type a "hello world". I typed an actual question the whole project had been building toward:
+
+> *"Find all the sessions for project claude-desktop-message-exporter"*
+
+Note the project name in this prompt: it began life as a simple message exporter for Claude Desktop. As I used it I expanded its scope and renamed it Claude Explorer.
+
+A fresh Claude session turned that one sentence into a tool call, queried my local archive, and answered: nine sessions for that project. The one at the top, with more than five thousand messages, was *"the main development history for this project"*, which is to say it was the very session I had been working in to build the server that just answered the question. The tool's first act was to find itself. Claude's verdict was deadpan: *"The MCP server is working."*
+<a id="connecting-it"></a>
+## Connecting It
+
+Before any of the fun you need to attach the server to a client, so let's get that out of the way. The good news is that there's nothing to run and nothing to keep alive: your MCP client spawns the server as a subprocess on demand and speaks to it over stdio, so there's no port to open and no "is my firewall blocking it" debugging. That's how I want local developer tooling to behave.
+
+Setup is nearly identical on macOS, Windows, and Linux: the Claude Code command is the same everywhere, and for Claude Desktop the only thing that changes is where the config file lives, which I give for all three below.
+
+### Adding it to Claude Code
+
+Claude Code can attach the server at two scopes worth knowing. **User scope** lives in `~/.claude.json` and makes the tool available in every project; **project scope** lives in a `.mcp.json` file at a repo's root and travels with that repo, so anyone who clones it gets the tool too. (One trap worth flagging: MCP servers don't live under `.claude/`, which is for other settings like permissions. Project servers go in `.mcp.json` at the repo root.)
+
+The easy path is the CLI helper: it writes the config for you and pulls the published package from PyPI with `uvx`, so there's nothing to clone and no path to hard-code. For user scope, run:
 
 ```bash
-# If you installed the tool (for example via uvx), you can run:
-uvx claude-explorer mcp
-
-# If you have a local clone, run it from that directory:
-uv run --directory /absolute/path/to/claude-explorer claude-explorer mcp
-
-# And if you're in Python-module land:
-python -m mcp_server.server
+claude mcp add --scope user claude-sessions -- uvx claude-explorer mcp
 ```
 
-When the client launches it, the process speaks JSON-RPC on stdin/stdout. If you run it directly, you'll mostly see "waiting for handshake" behavior, which is fine; the important part is that it starts without crashing.
-
-![[Pasted image 20260514010722.png]]
-
-### Configure Claude Code
-
-Claude Code supports MCP servers in either user scope (`~/.claude.json`) or project scope (`.mcp.json` in a repo). I like user scope when I want the tool everywhere, and project scope when I'm working in a codebase with stricter boundary rules.
-
-There's also a CLI helper that writes the config for you, which is the path I use because I'm lazy, and as I often say, laziness is the mother of invention!
-
-```bash
-# Add a server named "claude-sessions" using Claude Code's helper.
-# Note the "--" separator, it tells Claude "everything after this is the command to run".
-claude mcp add claude-sessions -- \
-  uv run --directory /absolute/path/to/claude-explorer claude-explorer mcp
-```
-
-If you prefer to edit JSON yourself, here is the user-scope config in `~/.claude.json`. This is a common newcomer trap, so I'll say it plainly: **MCP servers do not live in `~/.claude/settings.json`**.
-
-```json
-{
-  "mcpServers": {
-    "claude-sessions": {
-      "command": "uv",
-      "args": ["run", "--directory", "/absolute/path/to/claude-explorer", "claude-explorer", "mcp"]
-    }
-  }
-}
-```
-
-For project scope, drop the same `mcpServers` block into `.mcp.json` at the repo root. I often keep this one committed for team projects, but only when everyone on the team agrees about the data boundary, because attaching a history-reading tool to a work repo has real policy implications.
-
-### Verify in Claude Code
-
-Once added, verify it from the CLI:
+Swap `--scope user` for `--scope project` to write a `.mcp.json` in the current repo instead. Confirm either way with:
 
 ```bash
 claude mcp list
 ```
 
-You should see your server name (`claude-sessions`) and, once you start a session, the tools should be available. The MCP server advertises itself as `Claude Session Explorer`, and the tool list is the same five we'll tour below:
-
-```text
-Tools
-• list_sessions       (claude-sessions) - Search and list saved Claude conversation sessions.
-• list_projects       (claude-sessions) - List distinct projects that have saved conversation sessions.
-• get_session_outline (claude-sessions) - Get lightweight per-message summaries for a session.
-• get_messages        (claude-sessions) - Get full message content for specific messages.
-• export_session      (claude-sessions) - Export a session (or portion) as Markdown text.
-```
-
-![[Pasted image 20260514011205.png]]
-
-### Configure Claude Desktop (macOS, Windows, Linux)
-
-Claude Desktop reads its MCP config from a `claude_desktop_config.json` file, and the path varies by OS:
-
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json` (typically `C:\Users\<you>\AppData\Roaming\Claude\claude_desktop_config.json`)
-- Linux: `~/.config/Claude/claude_desktop_config.json`
-
-The JSON block is the same shape as Claude Code. Add it under `mcpServers`, then fully quit and relaunch Claude Desktop (it reads the config at startup, so a "close window" does not always cut it).
+If you'd rather edit JSON by hand, the `mcpServers` block is identical at both scopes; only the file differs. For **user scope**, add it to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
     "claude-sessions": {
-      "command": "uv",
-      "args": ["run", "--directory", "/absolute/path/to/claude-explorer", "claude-explorer", "mcp"]
+      "command": "uvx",
+      "args": ["claude-explorer", "mcp"]
     }
   }
 }
 ```
 
-If you installed `claude-explorer` as a tool and want to use `uvx`, you can; the important part is that the command you configure must be something Claude Desktop can run as a subprocess. I tend to stick to `uv run --directory` for the local-clone case because `mcp_server/` ships inside the project as a co-located module.
+For **project scope**, put the same block in a `.mcp.json` at the repo root, the file your collaborators get when they clone:
 
-Once it's configured, Claude Desktop should expose the tools in its MCP tooling UI for the conversation. I'm intentionally not being prescriptive about where every toggle lives in Desktop, because that UI moves; the invariant is that after relaunch, you can start a new chat and see the five tools available from the attached server.
+```json
+{
+  "mcpServers": {
+    "claude-sessions": {
+      "command": "uvx",
+      "args": ["claude-explorer", "mcp"]
+    }
+  }
+}
+```
 
-![[Pasted image 20260514012144.png]]
+You should see `claude-sessions` in `claude mcp list`, and once you start a Claude Code session, its five tools become available. The server advertises itself as `Claude Session Explorer`, and the tools are the same five we tour below. (Hacking on the project itself? Point `command` at your clone instead: `"command": "uv"` with `"args": ["run", "--directory", "/path/to/claude-explorer", "claude-explorer", "mcp"]`.)
 
-### A note about "explicit-only"
+### Adding it to Claude Desktop
 
-Before we get into the fun part, there's a design decision baked into the server that matters operationally. The server-level instructions passed at handshake are:
+Claude Desktop keeps its MCP servers in `claude_desktop_config.json`, and the friendliest way to open that file is from inside the app: **Settings → Developer → Edit Config** drops you right into it. (Settings also has an Extensions browser, but that's only for packaged "Desktop Extension" bundles, which this server isn't, so a plain stdio server like ours is a quick paste into the config rather than a one-click install.) If you'd rather open the file yourself, it lives at:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json` (usually `C:\Users\<you>\AppData\Roaming\Claude\…`)
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+Paste the same block you'd use for Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "claude-sessions": {
+      "command": "uvx",
+      "args": ["claude-explorer", "mcp"]
+    }
+  }
+}
+```
+
+Then **fully quit and relaunch** Claude Desktop, because it only reads that file at startup and closing the window doesn't always cut it. After it reopens, a new chat will have the five tools. One cross-platform gotcha: a GUI app doesn't always inherit your shell's `PATH`, so if Desktop can't find `uvx`, put its full path (from `which uvx` or `where uvx`) in `command`.
+
+### One deliberate guardrail
+
+There's a design decision built into the connection that matters the moment you attach the server, so it's worth learning now. The instructions the server hands the client say, in the bluntest language I could justify:
 
 ```text
 These tools query saved Claude conversation history. ONLY use them when the
@@ -134,484 +133,130 @@ user EXPLICITLY asks to search, browse, analyze, or export past conversation
 sessions. Never call these tools proactively or speculatively.
 ```
 
-That is not decoration. Attaching an MCP server has a fixed context cost (we'll quantify it later), and it also creates the temptation for an LLM client to "helpfully" call tools in the background. The instruction is a guardrail, and it's written in the bluntest language I could justify.
+That isn't decoration. We'll see why it's worth it when we talk token cost, but the short version is that an attached tool tempts an eager client to "helpfully" go rummaging through your history on prompts that have nothing to do with it, and I would rather it sat on its hands until you ask.
+<a id="the-five-tools-by-example"></a>
+## The Five Tools, by Example
 
-## The Five Tools (Tour)
+The server exposes five tools, all read-only, all pointed at the same files the UI reads. Rather than list them like a reference manual, let's walk them in the order you use them, because they're designed as a pipeline: **find the sessions, outline one, pull the exact messages you want, and export a clean slice.** For each, I'll show the plain-English thing you'd type and sketch what comes back. I'm skipping the wire format on purpose; the argument names and return shapes live in the repo for anyone who wants them.
 
-The server exposes five tools, all read-only, all operating on the same on-disk corpus the UI reads. We'll walk them in the order you'll use them in practice: `list_sessions`, `list_projects`, `get_session_outline`, `get_messages`, and finally `export_session`. As we go, I'll show the user-facing prompt you might type, then a sketch of the tool call Claude would make. The exact tool-call envelope differs by client, so I'm going to focus on the part that matters: the arguments and the returned shape.
+### Finding sessions
 
-### `list_sessions`
+`list_sessions` is the front door. It either lists everything or runs a full-text search across session titles and message content and hands back the matches. A prompt I use constantly looks like:
 
-`list_sessions` is the bread-and-butter entry point. It either lists everything, or it runs a full-text search across session titles and message content and returns the matching sessions.
+> *"Search my saved sessions for 'FTS5' and tell me which source each came from."*
 
-A prompt I regularly use looks like this:
+Claude turns that into a `list_sessions` call with your query, and gets back a list of sessions plus a total count, where each matching session carries a `match_count` telling you how many of its messages hit. A couple of arguments make this scale to a real archive. You can filter by `source` (`CLAUDE_AI` for your Desktop conversations, `CLAUDE_CODE` for your local Code sessions) and by `project` (a case-insensitive substring of the project name). Those two filters mirror the source and project dropdowns from the Part 2 UI exactly. I wanted one definition of *"search"* shared between how you browse manually and how Claude browses, because the alternative is the kind of quiet drift you only notice after you've trusted the tool for a month.
 
-> *"Search my saved sessions for 'FTS5', show me the most relevant ones, and tell me which source they came from."*
+### Listing projects
 
-Conceptually, that becomes:
+If you live in Claude Code, you tend to remember work by repo before you remember it by session title, so `list_projects` turns that into a first-class question:
 
-```json
-{
-  "tool": "list_sessions",
-  "arguments": {
-    "query": "FTS5",
-    "source": null,
-    "project": null,
-    "limit": 20,
-    "offset": 0
-  }
-}
-```
+> *"What projects do I have saved, and how many sessions does each have?"*
 
-The returned payload includes a `sessions` list plus a `total` count (the total matches *before* paging), and when you provided a `query`, each session row includes a `match_count` indicating how many messages matched in that session.
+It returns each project with its session count and sorts them by count. It's a small tool, more of a stepping stone than a destination; you run it to get your bearings, then narrow with `list_sessions`.
 
-A representative result looks like:
+### Outlining a long session
 
-```json
-{
-  "sessions": [
-    {
-      "uuid": "8f2c3c1e-....",
-      "name": "Investigate slow search and indexing options",
-      "source": "CLAUDE_CODE",
-      "project": "claude-explorer",
-      "message_count": 214,
-      "human_message_count": 71,
-      "model": "claude-sonnet-4-6",
-      "created_at": "2026-05-10T14:22:18Z",
-      "updated_at": "2026-05-10T18:07:55Z",
-      "match_count": 9
-    }
-  ],
-  "total": 6
-}
-```
-
-A few details here are intentionally pragmatic:
-
-- `source` filters accept only `"CLAUDE_AI"` and `"CLAUDE_CODE"`; any other value silently falls back to "all". That makes it tolerant of client-side typos, but it also means you should not assume a bad filter will fail loudly.
-- `project` filtering is a case-insensitive substring match against the stored `project_name`, and it's applied *after* the list or search step. That keeps the tool implementation simple and predictable, and since project filtering is usually a coarse narrowing, the post-filter cost is fine.
-- `limit` is clamped to `[1, 100]`, which keeps a single tool call from returning an absurd payload and burning context for no reason.
-
-If you're thinking "this sounds like the REST endpoint the UI uses", you're exactly right; the MCP server is a facade over the same `backend.store` and `backend.search` logic. I wanted one definition of "search", because the alternative is the kind of subtle drift you only notice after you've trusted the tool for a month.
-
-### `list_projects`
-
-If you use Claude Code heavily, you tend to remember work by directory or repo before you remember it by session title. `list_projects` is the tool that turns that into a first-class query: *"What projects even exist in my saved archive, and how many sessions does each have?"*
-
-A prompt might be:
-
-> *"List my projects with the most sessions, then narrow to just Claude Code."*
+This is the load-bearing idea in the whole server, so it gets the most words. Long sessions are the norm once you do real engineering with Claude Code, and the naive way to query one is also the ruinous way: pour the entire transcript into context and hope. That fails three ways at once. It costs tokens you can't justify, it makes the model wade through material you never needed, and it falls over unpredictably when the session is bigger than the window.
 
-Conceptually:
+`get_session_outline` solves that by handing back a lightweight summary per message: a stable position, the sender, a 200-character gist, a character count, a tool count, and a timestamp. You skim the outline like a table of contents, decide which handful of messages matter, and only then read them in full. A prompt looks like:
 
-```json
-{
-  "tool": "list_projects",
-  "arguments": {
-    "source": "CLAUDE_CODE"
-  }
-}
-```
+> *"Open that session, give me an outline, and point me at where we decided on the indexing approach."*
 
-The return value is a list (not a wrapped object), each entry containing `project` and `session_count`, sorted descending by count:
-
-```json
-[
-  { "project": "claude-explorer", "session_count": 42 },
-  { "project": "client-foo", "session_count": 17 }
-]
-```
-
-One caveat: conversations that have `project_name == null` are excluded from the aggregation entirely. That's deliberate, because the alternative is to invent a fake "(none)" project and then teach every consumer to special-case it; it's cleaner to say "projects are only the sessions that actually have one".
-
-### `get_session_outline`
-
-This is the load-bearing idea in the whole server: **outline-first, messages-on-demand**.
-
-Long sessions are the norm once you start doing real engineering work with Claude Code, and the naive way to query a long session is also the expensive way: dump the entire transcript into context. That fails for three reasons at once: token cost you can't justify, the model wading through material you didn't need to surface, and workflows that become unreliable because context limits hit at unpredictable points.
-
-`get_session_outline` solves that by returning a lightweight summary per message, with stable positions, message UUIDs, sender, a 200-character summary, character count, tool count, and timestamp. You use the outline to decide which messages are worth reading, then you call `get_messages` for the exact positions you want.
-
-A prompt looks like:
-
-> *"Open session `8f2c3c1e-...`, give me an outline, and point out where the decision about indexing was made."*
-
-The tool call is simple:
-
-```json
-{
-  "tool": "get_session_outline",
-  "arguments": {
-    "session_id": "8f2c3c1e-...."
-  }
-}
-```
-
-The response is:
-
-```json
-{
-  "session_id": "8f2c3c1e-....",
-  "name": "Investigate slow search and indexing options",
-  "model": "claude-sonnet-4-6",
-  "source": "CLAUDE_CODE",
-  "project": "claude-explorer",
-  "message_count": 214,
-  "created_at": "2026-05-10T14:22:18Z",
-  "updated_at": "2026-05-10T18:07:55Z",
-  "messages": [
-    {
-      "message_uuid": "2a73...",
-      "position": 0,
-      "sender": "human",
-      "summary": "We need faster full-text search across Desktop JSON and Code JSONL; current linear scan feels slow and...",
-      "char_count": 182,
-      "tool_count": 0,
-      "timestamp": "2026-05-10T14:22:18Z"
-    },
-    {
-      "message_uuid": "9b11...",
-      "position": 1,
-      "sender": "assistant",
-      "summary": "Proposes indexing approaches; suggests SQLite FTS5 with a background builder and fallback path...",
-      "char_count": 612,
-      "tool_count": 1,
-      "timestamp": "2026-05-10T14:22:37Z"
-    }
-  ]
-}
-```
-
-A few semantics matter if you plan to use this for real work:
-
-- The `summary` is derived from `text` blocks only. Tool calls and tool results do not contribute; this keeps the outline readable and cheap.
-- Whitespace is normalized (newlines collapse), then the text is truncated at 200 characters at a word boundary, with `"..."` appended when truncated.
-- The outline is for the session's **active branch**. Branching exists in Claude transcripts, and this server chooses the active branch rather than trying to return a tree in V1; when the "leaf" changes, the cache regenerates (we'll talk about that in the caching section).
-
-Why am I spending so much prose on this tool? Because it turns "query history" from a gimmick into a workflow. Once you can ask for an outline, you can ask for a plan: *"find the four most important decision points, then fetch those messages, then write me a summary."* That is the mental model I wanted when I designed this server.
-
-### `get_messages`
-
-Once the outline tells you where the interesting parts are, `get_messages` pulls full content for specific messages.
-
-You can address messages in two ways:
-
-- By `positions` (0-indexed positions from the outline)
-- By `message_uuids`
-
-In practice, I use positions almost every time because they're easy to select after scanning an outline; UUIDs exist for clients that want stable identifiers.
+The outline is where querying your history stops being a parlor trick and becomes a workflow. Once Claude can skim, it can plan: *"find the four decision points, fetch those messages, and summarize them."* Two of the cheap fields turn out to be surprisingly strong signal. A high `tool_count` stretch is usually where something concrete happened on disk, and a long assistant message is usually where Claude explained a decision, so it can navigate by those without reading a word of the body. One caveat worth knowing: the outline follows the session's active branch, because Claude transcripts can branch and this server picks the live path rather than trying to hand you a tree.
 
-A prompt might be:
+### Reading the messages that matter
 
-> *"Fetch positions 47 through 55, and include tool calls and results."*
+Once the outline tells you where to look, `get_messages` pulls full content for the specific messages you name, by position or by message ID. I use positions almost every time, because they're easy to read straight off an outline:
 
-Conceptually:
+> *"Fetch positions 120 through 135, text only."*
 
-```json
-{
-  "tool": "get_messages",
-  "arguments": {
-    "session_id": "8f2c3c1e-....",
-    "positions": [47, 48, 49, 50, 51, 52, 53, 54, 55],
-    "message_uuids": null,
-    "include_tool_calls": true,
-    "include_tool_results": true
-  }
-}
-```
-
-The return value is a list of message dicts. In "text-only mode" (the default, with tools off) each message is:
-
-```json
-{
-  "position": 50,
-  "uuid": "c1d2...",
-  "sender": "assistant",
-  "timestamp": "2026-05-10T15:03:09Z",
-  "text": "Here is the approach: build a SQLite FTS5 index at startup, then keep a fallback linear scan..."
-}
-```
-
-When you include tools, the payload becomes structured content blocks:
+By default you get just the text, which keeps the common case small. When the text references tool output (*"the grep showed…"*, *"the traceback said…"*), you re-ask for the same positions with tools included, and now you can quote exact user phrasing, exact assistant wording, and exact command output. That matters if you want your retrospective to be accurate, because paraphrased technical details are where errors breed.
 
-```json
-{
-  "position": 51,
-  "uuid": "d4e5...",
-  "sender": "assistant",
-  "timestamp": "2026-05-10T15:04:11Z",
-  "content": [
-    { "type": "text", "text": "Let's verify sqlite3 was built with FTS5 support on this machine." },
-    { "type": "tool_use", "name": "bash", "input": { "cmd": "python -c \"import sqlite3; print(sqlite3.sqlite_version)\"" } },
-    { "type": "tool_result", "content": [{ "type": "text", "text": "3.45.1" }] }
-  ]
-}
-```
+### Exporting a durable slice
 
-And there are a few important quirks, which I'm calling out because they're the kind of thing you only notice after you've wired this into another workflow:
+Finally, `export_session` turns *"we found the right spot"* into *"give me something I can paste into a doc."*
 
-- If you pass `positions`, any out-of-range positions are silently dropped. The tool returns what it can and keeps moving.
-- If you pass both `positions` and `message_uuids`, `positions` wins and UUIDs are ignored (without warning).
-- If `include_tool_results=True`, it implies `include_tool_calls=True`, since a tool result without a tool call is meaningless.
+> *"Export positions 112 through 168 as Markdown, including the tool calls."*
 
-One known gap in the current implementation is worth saying explicitly: **image content blocks are not emitted** in the structured output mode. The server filters `text`, `tool_use`, and `tool_result` blocks, but it does not currently emit `image` blocks, so if you are trying to reconstruct a session that included screenshots, `export_session` is the better "faithful rendering" path today. I filed this as a follow-up because it's fixable, and because it's the kind of rough edge you want to know about before you build something on top of it.
-
-### `export_session`
-
-Finally, `export_session` is how you turn "we found the right place" into "now I want an artifact I can paste into a doc".
-
-A prompt might be:
+It hands back a single Markdown string, produced by the same export code the UI's "Markdown export" button uses, so the artifact matches what you'd have gotten by clicking in the browser. One small, intentional asymmetry: `export_session` includes tools by default, while `get_messages` excludes them by default. When you ask for an export you usually want a faithful record, and tool calls are part of the record; when you ask to read messages you're usually trying to keep the payload small. I commented the heck out of that in the source so I wouldn't second-guess it later.
 
-> *"Export the session as Markdown, including tools, but only the portion around the final decision."*
-
-Conceptually:
-
-```json
-{
-  "tool": "export_session",
-  "arguments": {
-    "session_id": "8f2c3c1e-....",
-    "start_position": 40,
-    "end_position": 78,
-    "include_tools": true
-  }
-}
-```
-
-The return value is a single Markdown string, produced by the same export function the UI uses (the Inline Markdown variant). Slicing uses **inclusive** `end_position`, and out-of-range values clamp instead of erroring, which makes it tolerant when the model guesses a range and then corrects itself.
-
-Also note a subtle, practical detail: `export_session(include_tools=...)` defaults to `True`, while `get_messages(include_tool_calls=...)` defaults to `False`. That's intentional. When you ask for an export, you're usually asking for something you want to preserve as a record, and tool calls are part of the record; when you ask to read messages, you're often trying to keep the payload small. I commented the heck out of it in the source so I would not forget why I built it that way.
-
-![[Pasted image 20260514013433.png]]
-
-## A Real Workflow (End to End): Writing This Series From the Archive
-
-Part 2 ended by teasing the self-referential fact: I used this MCP server to mine this project's own history to write the series you're reading. Here is what that looks like when it's done on purpose, with the outline-first approach as the spine.
-
-The human goal is straightforward:
-
-> *"Summarize the development history of this project, extract the decisions, find the memorable quotes, and produce a drafting brief that can become a Medium series."*
-
-If you try to do that by hand, you open the UI, search a few terms, click around, copy a bunch of snippets, then lose an afternoon. That can be pleasant, but it doesn't scale; the point of having your archive queryable is to do the boring rummaging once, then keep the interesting synthesis for the human.
-
-So the flow I used was, in order: (1) find the relevant sessions project-wide; (2) for each one, pull an outline to find the important phases; (3) fetch specific message ranges where the decisions were made; (4) export the most relevant chunks as Markdown so they can be quoted accurately; (5) write the synthesized brief, then draft articles from that brief. Here's what that looks like as a transcript of intent plus tool calls.
-
-### Step 1: list projects, then list sessions
-
-The first prompt to the drafting Claude was something like:
-
-> *"I'm writing a retrospective about the `claude-explorer` project. List the projects in my archive, then find the sessions that belong to `claude-explorer`."*
+One more thing before we move on: you almost never call these five tools one at a time yourself. You ask a single plain-English question, *"find the session where we argued about the indexing approach and show me how it resolved,"* and a capable client chains them for you, running `list_sessions` to find the candidates, `get_session_outline` to skim the likely one, then `get_messages` on the handful of positions where the argument reached an answer. The five tools are the vocabulary; the client writes the sentences. That's why the tool descriptions matter so much, and why the next thing I want to talk about is keeping the client from getting too eager with them.
 
-It starts with `list_projects` to get an inventory:
+### Keeping the client from getting too eager
 
-```json
-{
-  "tool": "list_projects",
-  "arguments": { "source": "CLAUDE_CODE" }
-}
-```
+Now back to that explicit-only guardrail, because here's the cost it's protecting you from. Attaching an MCP server isn't free: the client injects the tool definitions into the prompt of *every* conversation, whether you ever call them or not. I measured it on the live server, and the five definitions total 4,681 characters, roughly 1,200 to 1,600 tokens depending on tokenization, which you pay per conversation as a fixed tax. That number is small, but it's the reason the server tells the client to keep its hands off until you explicitly ask. So there are two costs: the fixed tax you pay just by attaching, and the per-call cost you keep in check with the outline-first pipeline above. What I wanted to avoid was a third: an eager client spending tokens on calls you never requested, piled on top of a tax you'd already paid. I baked that whole "burn through a zillion tokens" worry, in my own words from the build session, right into the tool descriptions.
 
-Then it narrows via `list_sessions` with a `project` filter (the filter is substring match, so `"claude-explorer"` is enough):
+<a id="the-workflow-that-mined-this-series"></a>
 
-```json
-{
-  "tool": "list_sessions",
-  "arguments": {
-    "query": null,
-    "source": "CLAUDE_CODE",
-    "project": "claude-explorer",
-    "limit": 100,
-    "offset": 0
-  }
-}
-```
+## The Workflow That Mined This Series
 
-At this stage, we're not "reading" anything; we're building an index of what exists.
+Part 2 ended on a self-referential tease: I used this MCP server to mine this project's own history to write the series you're reading. Here's what that actually looked like, with the outline-first pipeline as its spine, plus one caveat I'll get to at the end.
 
-### Step 2: outline-first on the sessions that matter
+The goal was the kind of thing that sounds reasonable and turns into a lost weekend if you do it by hand:
 
-From the sessions list, the agent picks the most relevant ones (by recency, message count, or title) and starts asking for outlines:
+> *"Summarize the development history of this project, pull out the decisions and the memorable moments, and turn it into a drafting brief for a Medium series."*
 
-```json
-{
-  "tool": "get_session_outline",
-  "arguments": { "session_id": "..." }
-}
-```
+The raw material was a single Claude Code build session that, at the April snapshot I worked from, held **5,207 total messages**. Of those, **5,006** lived on the active branch, and of *those*, only **312** were real prompts I had typed; the rest were tool results that Claude Code records with a human sender tag. So the real shape of the problem was 312 human intentions buried in five thousand messages. No one is reading that by hand, and pouring it into a context window is the mistake the outline tool exists to prevent.
 
-The outline is where the workflow becomes token-efficient. It lets the agent do a pass that feels like "skimming", because the outline is mostly short, and because it carries `tool_count` and `char_count`, which are surprisingly useful signals; tool-heavy stretches are often where something concrete happened on disk, while long assistant messages are often where a decision was explained.
+So I ran the pipeline. First, `get_session_outline` collapsed the whole session into a 5,006-row index, one skimmable line per message. Then a pass over that outline detected phase boundaries, the natural seams where the work changed character (scaffolding, then the fetcher, then attachments, then the search index, and so on), which grouped the session into 21 phases. Then, phase by phase, a bounded `get_messages` call pulled only the dozen-or-so real prompts and their immediate answers from that phase's position range, never the whole thing. Twenty of those targeted pulls, plus a couple of synthesis passes, produced a small set of on-disk briefs: the themes, the memorable quotes, a timeline, the use cases. The articles draft from those briefs.
 
-And this is where you see why "position" is such a good API. Once the agent identifies a chunk (say, positions 120 through 160) as "this is where the decision was made", it can fetch only that range.
+That's the workflow, and it's the strongest argument for outline-first I have. The outline is what made a five-thousand-message session queryable at all, and "position 4843 through 4993" is a far better way to say "the part where we designed this server" than dumping the transcript and hoping the model finds it.
 
-### Step 3: fetch only the relevant messages
+To make that concrete, here's one thing the extraction handed back: the prompt this server grew from, typed into that build session months earlier and then buried under thousands of messages. It read, *"I want to build an MCP server into this project, so that Claude Code and Claude Desktop can query our saved sessions… read through the session(s) for a project and write a comprehensive blog post about the work that went into it. We might use this session's project as a test case for this."* That's a needle you'd never find by scrolling, and the outline-plus-bounded-fetch pattern pulled it back out in a couple of cheap calls. The whole series, including the test-case-is-itself idea you're reading the payoff of right now, traces to that one line.
 
-Now `get_messages` comes in. For drafting, I often start without tools:
+Now the caveat, because the accurate version matters more than the impressive one. The dogfooding here was **front-loaded rather than end-to-end**. I used the server hard, *once*, to turn a giant build transcript into stable, citable artifacts on disk. After that, the article writing looked much more ordinary: I edited Markdown files against those briefs and the live codebase, and I did not keep re-querying the session store for every paragraph. Only two sessions ever touched this series at all. So the true claim is *"I used the MCP server to mine the build history that seeded the series,"* and the engineering lesson underneath it is simple: use the tool to excavate once, write the result to disk, and don't spend context re-fetching what you've already stabilized. The recursion stops there on purpose, and I'd rather tell you that than imply some always-on loop that never existed.
 
-```json
-{
-  "tool": "get_messages",
-  "arguments": {
-    "session_id": "...",
-    "positions": [120, 121, 122, 123, 124, 125],
-    "include_tool_calls": false,
-    "include_tool_results": false
-  }
-}
-```
+<a id="running-the-claude-md-tuning-loop-for-real"></a>
 
-If the text references tool output (*"the grep showed…"*, *"the traceback said…"*) then I re-fetch the same positions with tool results on, which is a nice pattern because it keeps the common case small while still letting you zoom in:
+## Running the CLAUDE.md Tuning Loop for Real
 
-```json
-{
-  "tool": "get_messages",
-  "arguments": {
-    "session_id": "...",
-    "positions": [120, 121, 122, 123, 124, 125],
-    "include_tool_calls": true,
-    "include_tool_results": true
-  }
-}
-```
+Here's the workflow I'm most excited about, and the one I'd most want you to steal. Every project I run with Claude Code accumulates a `CLAUDE.md`: a file of rules that encode the mistakes I got tired of seeing. The question that nags at me is whether that file actually matches reality, or whether it's a wish list I stopped editing six weeks ago. So I pointed the server at my own archive and asked a fresh Claude to audit it:
 
-At this point, the agent can quote exact user phrasing, exact assistant wording, and exact tool output. That matters if you want your retrospective to be honest, because otherwise you end up paraphrasing technical details, and paraphrased technical details are where errors breed.
+> *"Read back through my sessions for this project, find the mistakes that keep recurring, and propose sharper rules for my CLAUDE.md."*
 
-### Step 4: export the chunk as Markdown for a durable artifact
+The run itself used the same pipeline as everything else here, just pointed at a different target. A fresh session pulled outlines across the project's sessions, zoomed in on the stretches where I'd corrected it (the *"no"*, the *"that's still broken"*, the *"look for yourself"* moments), then clustered the repeats into candidate rules and checked each one against what my `CLAUDE.md` already said. No eyeballing five thousand messages, no guessing; outline first, then bounded reads of exactly the turns that mattered.
 
-When I wanted to hand the drafting pipeline a stable text artifact (for example, *"this is the section where we realized the search path needed FTS5"*), I used `export_session` to produce Markdown slices:
+I want to tell you it surfaced a pile of shocking new insights, because that's the better story. What actually happened is better than that, just quieter. Most of the recurring mistakes it flagged, roughly seven in ten, were *already written down*, often almost word for word: scope every process-kill to a port, never broad-`pkill`; assert on the browser console in end-to-end tests, not just the DOM; treat "the tests pass" as meaningless until you've checked the run actually executed. They were already there because I add the rule the instant a mistake annoys me, right in the session where it bit me, so my `CLAUDE.md` grows in the same commits as the code. So the loop wasn't meeting my failures for the first time; it was auditing whether that in-the-moment habit had kept pace, and the answer was mostly yes. That's exactly what you want from a loop like this: confirmation that fixing the rule the moment it bites keeps the file current, plus a short, specific list of the gaps it let through.
 
-```json
-{
-  "tool": "export_session",
-  "arguments": {
-    "session_id": "...",
-    "start_position": 112,
-    "end_position": 168,
-    "include_tools": true
-  }
-}
-```
+The loop did earn its keep on a handful of genuinely new rules, and two of them are worth showing you in full because they're the kind of mistake every coding agent makes.
 
-That string is pasteable into notes, checklists, or a drafting brief, and because it's the same export logic the UI uses, it matches what you would have gotten if you had clicked "Markdown export" in the browser.
+The first: **read the actual data shape on disk before you write code against it.** Twice in this project, Claude Code wrote code against an *imagined* schema, and it failed silently. Once, it assumed a PDF attachment exposed a flat `thumbnail_url` field when the real payload nested it under `document_asset.url`, so PDFs just quietly didn't render, with no error to chase. Another time, it assumed each line of a JSONL file was a whole message when the real file split messages across streaming chunks, which produced blank messages and forced a rewrite rather than a patch. Same root cause both times: a confident mental model of the data that didn't survive contact with a real file. The rule the loop proposed, which I'll be adding, is blunt: if your change parses or renders an external payload, open a real example first and cite the exact field path you're reading. A schema from memory is a bug waiting to happen.
 
-### Step 5: synthesize the retrospective
+The second: **never hard-code or stub a user-visible value to hit a performance budget.** During an early speed pass, Claude Code hard-coded `message_count` to zero "for speed", and every session in the sidebar cheerfully reported "0 msgs". In the same pass, it sped up another reader by loading only the first 30 lines of a session, which quietly broke full-text search, because search can't match text the reader never loaded. The catch, in my own words at the time, was a single skeptical question: *"If you're reading only 30 lines will you have the full count?"* The rule generalizes past this project, which is why it's headed for my cross-project coding-agent ruleset, not just this repo's `CLAUDE.md`. I won't trade the correctness of a displayed value for a faster number, even when the number genuinely improves.
 
-Once you have outlines, targeted message pulls, and a few exported slices, the final step is the part the LLM is actually good at: turning a pile of excerpts into structure. That's the part where I can say:
+A few smaller ones came along too, mostly sharper versions of rules I already had (cross-check a surprising count against the raw files; re-read a doc before editing it in case it's changing under me). I've staged every one as a proposed diff for my own review before it goes in, because a rule you adopt without reading is just a different way to be wrong. But the headline holds: writing rules in the moment had already caught most of what recurs here, and the loop handed me the few I'd let slip. I'll take that trade every time.
 
-> *"Now write a five-part article series outline; Part 1 should explain what the project is and why, Part 2 should tour the UI, Part 3 should explain the MCP server, then bridge to the reverse-engineering story."*
+<a id="what-ive-actually-used-it-for-and-what-i-havent"></a>
 
-It's also the part where you can ask for second-order artifacts: *"give me the memorable quotes,"* *"extract the durable decisions,"* *"list the times we corrected wrong assumptions."* Those are exactly the kinds of things that are present in transcripts but hard to mine manually, and once you've got a tool surface that makes the transcripts queryable, the friction drops.
+## What I've Actually Used It For (and What I Haven't)
 
-![[Pasted image 20260514015009.png]]
+I want to draw a clean line here between what I've done with this server, what it can plausibly do, and what I'm not claiming, because an article about an AI tool is the easiest place in the world to drift into capability theater, and I'd rather under-sell.
 
-One personal note here, because it is the reason I keep working on this project: the loop is fun. I mean "fun" in the substantive sense; this changes how I work.
+What I've actually used it for, with receipts: the project-scoped self-test that opens this article; the outline-first extraction of a five-thousand-message build session into the briefs that seeded this series; and the tuning-loop audit of my own `CLAUDE.md` against my own history. Those happened, and the quotes and numbers in this piece come straight out of the transcripts.
 
-When a new Claude Code session can read my old sessions as structured data, I stop treating my prior work as something I vaguely remember, and start treating it as something I can query. I figured out a way, and you're reading this!
+What it *enables* but I haven't leaned on yet is broader than that, and I'll flag the gap rather than paper over it. Part 2 mentioned that the MCP search path raises its match cap to 5,000, well above the UI's 1,000, so a Claude session can sweep wider before it has to narrow down. That cap is real and live on every search the server runs, but I should be precise about what it is: pure headroom. No query I ran ever came close to five thousand matches, so I'm describing room the design leaves you, and I don't want to dress it up as a feat I actually pulled off. It's also a different number from the one that limits how many *sessions* a single `list_sessions` call returns, which caps at 100; one bounds the breadth of a full-text search, the other bounds a page of results, and conflating them would be my mistake to hand you.
 
-## Token Cost and Caching Architecture
+Two more bits of fine print while we're here. The message counts in this article (5,207 total, 5,006 active, 312 real prompts) are an April snapshot. That build session is still alive and has grown to 25,689 messages as I write this, so if you re-run the tools today you'll see bigger numbers; I cite the snapshot I worked from, and I lean on stable message IDs rather than positions internally, because positions drift as a session grows.
 
-Now for the "be paranoid about the tax" section.
+The reason outlining a now-twenty-five-thousand-message session stays fast is a small, boring piece of engineering: the server caches each session's outline and, because a Claude transcript only ever grows, it summarizes just the new tail instead of re-reading the whole thing. That append-only trick wasn't an afterthought either; it came straight out of a question I'd asked in the build session, *"aren't the project message data only appended to by Claude Code and Claude Desktop, so the 'head' summaries could be kept?"*, and the cache is just that observation turned into code. That's all I'll say about it here; the schema's in the repo if you want it.
 
-When you attach an MCP server, you pay two kinds of cost: (1) a **fixed context cost** on every conversation, because the client injects the tool definitions and server instructions into the prompt; and (2) a **per-call cost** when you actually invoke tools, which depends on how much data you retrieve. The server is designed to keep the per-call cost controllable via outline-first querying, but the fixed cost is unavoidable, so we should treat it as a real budget item.
+<a id="security-and-scope"></a>
 
-### The fixed context cost (tool definitions)
+## Security and Scope
 
-Measured on the live server, the five tool definitions total about **4,681 characters**, which is roughly **1,200 to 1,600 tokens** depending on tokenization. That is paid per conversation even if you never call the tools.
+When you hear *"I attached my entire conversation history to an agent,"* the right next question is whether you just opened a hole in your machine. The server's boundary is intentionally narrow, in ways you can check. It is read-only: none of the five tools mutate your store. It is local and stdio-only: there's no network listener, and the client has to spawn it as a subprocess and talk over stdin and stdout. It doesn't touch credentials: the Desktop fetch cookies live elsewhere, and this server never reads them. And it resists path traversal, because the server addresses sessions by ID and resolves them through the store's own enumeration, never through a file path you hand it.
 
-The breakdown is:
+That said, the tool is a file reader with a schema, and it will read whatever is in your local archive, so the human-judgment part stays yours. Don't attach a history-reading tool to a work context whose data boundary you haven't thought about, and remember that the explicit-only instruction is a guardrail against an over-eager client, not a substitute for you deciding where this belongs. Use it on purpose: *"search for X,"* *"outline session Y,"* *"fetch positions 40 to 55,"* *"export that chunk."* That's the rhythm, and it's a calm one.
 
-- `list_sessions`: 1,054 chars
-- `list_projects`: 657 chars
-- `get_session_outline`: 695 chars
-- `get_messages`: 1,317 chars
-- `export_session`: 958 chars
-- Total: 4,681 chars
-
-This is why the "explicit-only" instruction exists at both the server level and tool level. Without it, it's too easy for an agent to say *"I have tools, I should use them"*, and now you're spending tokens on tool calls you never asked for, on top of the fixed attachment tax you already paid.
-
-### The outline cache (SQLite, append-only)
-
-The second part of the architecture is the one that makes `get_session_outline` viable as a default operation. If the server had to re-summarize every message in a long session every time you asked for an outline, you'd either wait too long or you'd stop using it, because latency is how a good idea becomes a dead feature.
-
-So the server caches outlines in SQLite at:
-
-- `~/.claude-explorer/cache.db` by default (specifically, it's stored at `<data_dir>.parent / "cache.db"`)
-
-The schema is small and practical:
-
-```sql
-CREATE TABLE IF NOT EXISTS session_files (
-    session_id TEXT PRIMARY KEY,
-    file_path TEXT NOT NULL,
-    file_mtime REAL NOT NULL,
-    leaf_message_uuid TEXT NOT NULL DEFAULT '',
-    message_count INTEGER NOT NULL,
-    cached_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS message_summaries (
-    message_uuid TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    position INTEGER NOT NULL,
-    sender TEXT NOT NULL,
-    summary TEXT,
-    char_count INTEGER NOT NULL,
-    tool_count INTEGER DEFAULT 0,
-    timestamp TEXT,
-    FOREIGN KEY (session_id)
-        REFERENCES session_files(session_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_msg_session
-    ON message_summaries(session_id, position);
-```
-
-The caching behavior is where the "append-only" idea shows up:
-
-- If the cache has no row for a session, it builds the outline and stores it.
-- If the cache matches the on-disk session's `file_mtime`, `message_count`, and `leaf_message_uuid`, it returns cached rows without doing work.
-- If the active branch leaf changes, or the message count shrinks, it regenerates the whole outline.
-- If the leaf is the same and the message count increased, it summarizes only the new messages and appends them.
-
-That last case is the common one for Claude Code sessions, because sessions tend to grow over time; if you keep working in the same session, the outline grows incrementally and the server pays only for the new tail.
-
-Why store `leaf_message_uuid`? Because *"same session ID, different active branch"* is a real state, and you want the cache to reflect the actual active conversation path. Caching the wrong branch outline would be worse than not caching at all, because you'd trust it.
-
-Also, a small but important operational detail: the server opens a new SQLite connection per call, rather than holding a global connection. It's boring, but boring is correct here, because `sqlite3.Connection` thread-safety pitfalls are not the kind of excitement I want in a local tool.
-
-## Security Considerations (Short, Because It's Simple)
-
-When you hear *"I attached my entire conversation history to an agent"*, the reasonable question is: *"Did I just open a hole in my machine?"*
-
-The MCP server's security boundary is intentionally narrow:
-
-- It is **read-only**. None of the tools mutate your conversation store.
-- It is **local-only** and **stdio-only**. There is no network listener; the client must spawn the server as a subprocess and speak over stdin/stdout.
-- It does **not** handle credentials. The Desktop fetch credentials live in `~/.claude-explorer/credentials.json` for the fetcher, but the MCP server does not read them.
-- It is resistant to path traversal because sessions are addressed by UUID and resolved through the store's enumeration logic, not by user-supplied file paths.
-
-This doesn't absolve you of the human responsibility piece. If you attach this to a work context, it can read whatever is in your local archive; data hygiene is still on you. The tool is a file reader with a schema.
-
-## What This Is Not For
-
-The MCP server is powerful, but it's intentionally scoped.
-
-It's not a "memory daemon" that should be consulted on every prompt; the server-level instructions explicitly tell the client to never call tools proactively or speculatively, because that behavior burns tokens and surprises users.
-
-It's not workflow automation across sessions. This server does not run your commands, change files, or create tickets. It reads your history and returns structured slices of it; any "automation" happens in the client's reasoning step after you asked for it.
-
-It's not a substitute for good note-taking, good READMEs, or a well-maintained `CLAUDE.md`. In fact, one of the best uses of this server is to improve those artifacts by mining your own correction patterns, but the artifacts still matter, because they are the human-readable contract your future self will thank you for.
-
-If you want to use it well, use it on purpose: *"Search for X,"* *"Outline session Y,"* *"Fetch positions 40 to 55,"* *"Export this chunk."* That's the rhythm.
+<a id="wrapping-up"></a>
 
 ## Wrapping Up!
 
-Ok, that's enough for today! We covered the MCP server end to end: why it exists (same archive, different consumer), a quick MCP primer, install and configuration for Claude Code and Claude Desktop, and a tour of the five tools (`list_sessions`, `list_projects`, `get_session_outline`, `get_messages`, `export_session`) with the outline-first pattern as the key design idea. We also talked about the fixed token cost of attaching the server (about 4,681 characters, roughly 1,200 to 1,600 tokens per conversation) and the SQLite outline cache that keeps "outline-first" fast by staying append-only when sessions grow.
+Ok, that's enough for today! We connected the `claude-sessions` MCP server to Claude Code and Claude Desktop on macOS, Windows, or Linux, toured all five tools (`list_sessions`, `list_projects`, `get_session_outline`, `get_messages`, `export_session`), four of them forming one simple pipeline, and then spent our time where it counts: on the outline-first pattern that makes a giant session queryable, the front-loaded dogfooding that mined this project's build history into the briefs behind this series, and the tuning loop that audited my own `CLAUDE.md` against the mistakes Claude Code actually keeps making and mostly told me my rules were already right. If you remember one thing, make it the outline-first habit: don't pour a huge session into context, skim its outline and fetch the slices that matter.
 
-Next time we'll pivot from "using the tool" to "how the tool got made." Part 4 starts the reverse-engineering story: mitmproxy capture, the unofficial `chat_conversations` API shape, the early credential-capture approach, and the eventual pivot to Playwright for a cleaner login flow. If you enjoyed the systems-archaeology side of Part 1, you'll like Part 4.
+Next time we pivot from *using* the tool to *building* it. Part 4 starts the reverse-engineering story: mitmproxy capture, the unofficial `chat_conversations` API shape, the early credential-capture approach, and the eventual pivot to Playwright for a cleaner login. If you liked the systems-archaeology side of Part 1, you'll like Part 4.
 
-Like last time, please comment below with any questions, corrections, or pushback. I'd especially love to hear what you'd ask a fresh Claude session to do with your history, because the best workflows here tend to be the ones nobody thinks of until the tool exists.
-
-If you liked this, please clap and follow me here and on LinkedIn.
+Like last time, please comment below with any questions, corrections, or pushback. I'd love to hear what you'd ask a fresh Claude session to do with your own history, because the best workflows here tend to be the ones nobody thinks of until the tool exists. If you liked this, please clap and follow me here and on LinkedIn.
 
 See you next time! 🤓
