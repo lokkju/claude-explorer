@@ -75,7 +75,6 @@
   "current_leaf_message_uuid": "fa504360-824e-981c-4676-531d8f59bf5d",
   "has_branches": false,
   "is_starred": false,
-  "is_temporary": false,
   "model": "claude-sonnet-4-6",
   "name": "Phase 5 fixture: Tool calls",
   "organization_id": "00000000-1111-2222-3333-444444444444",

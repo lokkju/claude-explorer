@@ -545,7 +545,6 @@
   "current_leaf_message_uuid": "d7a4e89e-982e-6f1e-0389-da8242eb794e",
   "has_branches": false,
   "is_starred": false,
-  "is_temporary": false,
   "model": "claude-sonnet-4-6",
   "name": "Phase 5 fixture: TLS handshakes (long)",
   "organization_id": "00000000-1111-2222-3333-444444444444",

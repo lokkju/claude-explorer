@@ -77,7 +77,6 @@
   "current_leaf_message_uuid": "d080483b-90a6-a8ee-4a53-578a945a0e53",
   "has_branches": true,
   "is_starred": false,
-  "is_temporary": false,
   "model": "claude-sonnet-4-6",
   "name": "Phase 5 fixture: Branch tree",
   "organization_id": "00000000-1111-2222-3333-444444444444",
