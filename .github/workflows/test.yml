@@ -10,7 +10,7 @@ on:
 
 jobs:
   python:
-    name: Python (backend + fetcher pytest)
+    name: Python (backend + fetcher + mcp_server pytest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -28,6 +28,9 @@ jobs:
 
       - name: Fetcher pytest
         run: uv run pytest fetcher/tests/ --tb=short
+
+      - name: MCP server pytest
+        run: uv run pytest mcp_server/tests/ --tb=short
 
   e2e:
     name: Playwright (fixture mode)
