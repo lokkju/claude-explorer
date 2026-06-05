@@ -56,6 +56,16 @@ playwright-report/
 frontend/test-results/
 frontend/playwright-report/
 
+# Runtime SQLite leakage from the e2e fixture-mode backend
+# (frontend/playwright.config.ts points CLAUDE_EXPLORER_DATA_DIR at
+# backend/tests/fixtures/desktop; the summary cache + search index
+# resolve their sqlite path off `data_dir.parent`, so a Playwright run
+# leaves these next to the committed fixtures even though the
+# DISABLE_SEARCH_INDEX / DISABLE_SUMMARY_CACHE_WARM flags are set —
+# the modules still construct the connection to check schema/version).
+backend/tests/fixtures/search-index.sqlite*
+backend/tests/fixtures/summary-cache.sqlite*
+
 # Profiler output
 profile_*
 

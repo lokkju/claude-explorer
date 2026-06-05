@@ -1,14 +1,41 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const REPO_ROOT = path.resolve(__dirname, '..')
 
 /**
  * Playwright E2E test configuration.
  *
- * Specs that import from `./fixtures` use `mockBackend()` (see
- * `e2e/fixtures.ts`) to intercept the network layer with an in-memory
- * mock backend, including a load-bearing catch-all guard that turns any
- * unmocked `/api/*` request into a noisy 500. As a result, no live
- * Python backend is required to run the suite — only Vite (the frontend
- * dev server) is booted here.
+ * Runs TWO web servers in parallel: a real FastAPI backend pinned at the
+ * committed e2e fixtures, and the Vite dev server. Playwright waits on
+ * both `url`s before starting tests, so there is no startup race.
+ *
+ * Why a real backend (rearchitected 2026-06-04, see PLANS/2026.06.04-
+ * e2e-console-gate-failures-and-fix-plan.md Option C):
+ *
+ *   - The previous Vite-only setup proxied any un-mocked `/api/*` to
+ *     a dead `:8765`, returning 500. The §5.15 console-error fixture
+ *     captured those 500s and failed every test that touched a new
+ *     startup endpoint, even when the spec's own assertions passed.
+ *   - The real backend serves config / orgs / conversations / search
+ *     against the deterministic fixtures in `backend/tests/fixtures/`,
+ *     so the catch-all 500 only fires for endpoints that genuinely
+ *     haven't been wired (a real bug, not test infra noise).
+ *
+ * The shared `mockBackend()` fixture in `e2e/fixtures.ts` is still
+ * available for specs that want deterministic mutative state
+ * (preferences, bookmarks, watcher health). Without these in-memory
+ * mocks, parallel workers would race over the real backend's mutable
+ * state (preferences.json under data_dir.parent, bookmarks.json under
+ * ~/.claude-explorer/) and dirty the fixtures tree.
+ *
+ * Background tasks that would otherwise write into `data_dir` (or its
+ * parent) — search index, summary cache, file cache warmers, CC
+ * watcher — are disabled via env vars so the `git diff --quiet
+ * backend/tests/fixtures` freshness check in CI stays green.
  */
 export default defineConfig({
   testDir: './e2e',
@@ -45,12 +72,50 @@ export default defineConfig({
     // },
   ],
 
-  // Run the Vite dev server before tests. No Python backend is needed —
-  // see the docblock above.
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 30000,
-  },
-});
+  webServer: [
+    {
+      command: 'uv run uvicorn backend.main:app --port 8765',
+      cwd: REPO_ROOT,
+      url: 'http://localhost:8765/api/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        // Point the backend at the committed fixtures. The data_dir
+        // already has the `by-org/.migrated_v2` sentinel so the
+        // lifespan migration short-circuits; the explicit SKIP_MIGRATION
+        // is defense in depth.
+        CLAUDE_EXPLORER_DATA_DIR: path.join(REPO_ROOT, 'backend/tests/fixtures/desktop'),
+        CLAUDE_DIR: path.join(REPO_ROOT, 'backend/tests/fixtures/claude'),
+        CLAUDE_DESKTOP_APP_DIR: path.join(REPO_ROOT, 'backend/tests/fixtures/cowork'),
+
+        // Disable every background task that would dirty the fixtures
+        // tree. Without these the search index sqlite, summary cache
+        // sqlite, and file-cache warmers all write files next to
+        // `backend/tests/fixtures/desktop/`, failing the CI freshness
+        // check.
+        CLAUDE_EXPLORER_SKIP_MIGRATION: '1',
+        CLAUDE_EXPLORER_DISABLE_CC_WATCHER: '1',
+        CLAUDE_EXPLORER_DISABLE_SEARCH_INDEX: '1',
+        CLAUDE_EXPLORER_DISABLE_CC_WARM: '1',
+        CLAUDE_EXPLORER_DISABLE_FTS5_WARM: '1',
+        CLAUDE_EXPLORER_DISABLE_SUMMARY_CACHE_WARM: '1',
+        CLAUDE_EXPLORER_DISABLE_FILECACHE_WARM: '1',
+
+        // macOS dev only: WeasyPrint links against system libs from
+        // Homebrew. Harmless on Linux CI (the env var is ignored).
+        // The backend doesn't import WeasyPrint at module top, but
+        // leaving the path set keeps PDF-export-touching specs
+        // deterministic across host environments.
+        DYLD_FALLBACK_LIBRARY_PATH: '/opt/homebrew/lib',
+      },
+    },
+    {
+      command: 'npm run dev',
+      url: 'http://localhost:5173',
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
+  ],
+})
