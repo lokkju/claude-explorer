@@ -52,12 +52,21 @@ jobs:
     name: Playwright (fixture mode)
     # Skipped only when an explicit `playwright: false` is passed via
     # workflow_call / workflow_dispatch. On push and pull_request the
-    # `inputs` context is unavailable and `inputs.playwright` evaluates
-    # to an empty string, which is `!= false` — so the e2e job runs
-    # by default on every push and PR, and also when release.yml calls
-    # this workflow without args. The input exists only as a future
-    # debugging escape hatch via `gh workflow run`.
-    if: ${{ inputs.playwright != false }}
+    # `inputs` context is unavailable and `inputs.playwright` is null;
+    # GitHub Actions performs loose-equality with type coercion to
+    # number, so `null != false` evaluates to `0 != 0` → false → the
+    # job silently SKIPS. (This bit us on the 2026-06-04 push
+    # immediately after restoring the release gate: Tests #34 on main
+    # went "green" in 1m 8s because only Python ran; Release #5
+    # validated e2e correctly because workflow_call populates inputs
+    # from the `default: true` declaration above.)
+    #
+    # `toJSON(inputs.playwright)` serializes null/true/false to the
+    # literal strings 'null'/'true'/'false', so the comparison is
+    # type-stable across all four triggers (push, pull_request,
+    # workflow_dispatch, workflow_call) and skips only on an explicit
+    # `playwright: false` opt-out.
+    if: ${{ toJSON(inputs.playwright) != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
