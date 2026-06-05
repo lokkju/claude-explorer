@@ -24,7 +24,7 @@ import click
 
 
 @click.group()
-@click.version_option(version="0.1.0")
+@click.version_option(package_name="claude-explorer", prog_name="claude-explorer")
 def main() -> None:
     """Claude Explorer - Export and browse your Claude conversations."""
     pass
