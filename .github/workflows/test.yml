@@ -6,7 +6,23 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      playwright:
+        description: 'Run the Playwright e2e job'
+        type: boolean
+        default: true
   workflow_call:   # lets release.yml run this exact suite as a pre-publish gate
+    inputs:
+      playwright:
+        description: |
+          Run the Playwright e2e job. Defaults to true; release.yml
+          consumes that default so the e2e suite gates publish. The
+          input is kept (vs. unconditionally running) so a future
+          workflow_dispatch can re-skip it for debugging without
+          editing release.yml again.
+        type: boolean
+        required: false
+        default: true
 
 jobs:
   python:
@@ -34,6 +50,14 @@ jobs:
 
   e2e:
     name: Playwright (fixture mode)
+    # Skipped only when an explicit `playwright: false` is passed via
+    # workflow_call / workflow_dispatch. On push and pull_request the
+    # `inputs` context is unavailable and `inputs.playwright` evaluates
+    # to an empty string, which is `!= false` — so the e2e job runs
+    # by default on every push and PR, and also when release.yml calls
+    # this workflow without args. The input exists only as a future
+    # debugging escape hatch via `gh workflow run`.
+    if: ${{ inputs.playwright != false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -75,8 +99,10 @@ jobs:
 
       - name: Playwright e2e (fixture mode)
         working-directory: frontend
-        # CLAUDE_EXPORTER_DATA_DIR + CLAUDE_DIR are set by playwright.config.ts
-        # webServer command. fixture mode is the default in CI.
+        # playwright.config.ts now starts a real FastAPI backend in
+        # fixture mode alongside Vite (see the webServer array there).
+        # CLAUDE_EXPLORER_DATA_DIR + CLAUDE_DIR + CLAUDE_DESKTOP_APP_DIR
+        # + the DISABLE_* flags are all injected via webServer[0].env.
         run: npx playwright test --reporter=line
 
       - name: Upload Playwright report on failure

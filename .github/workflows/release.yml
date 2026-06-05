@@ -42,8 +42,12 @@ permissions:
 jobs:
   test:
     name: Test suite (release gate)
-    # Same checks CI runs on every push/PR, pinned to the tagged commit.
-    # If anything fails, build and publish never run.
+    # Pinned to the tagged commit. Runs the full test.yml suite:
+    # backend + fetcher + mcp_server pytest AND the Playwright e2e
+    # job (now in real-backend fixture mode, see PLANS/2026.06.04-
+    # e2e-console-gate-failures-and-fix-plan.md Option C). The
+    # `playwright` workflow_call input is kept as a workflow_dispatch
+    # escape hatch for future debugging but defaults to true.
     uses: ./.github/workflows/test.yml
 
   build:
