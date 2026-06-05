@@ -88,7 +88,7 @@ test.describe('Image attachments — single image (Phase 2)', () => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockImageBytes(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const bubble = page.locator('[data-message-uuid="m-1"]')
     await expect(bubble).toBeVisible()
 
@@ -133,7 +133,7 @@ test.describe('Image attachments — multi-image grid + lightbox nav (Phase 2)',
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockImageBytes(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const attachments = page.locator('[data-message-uuid="m-multi"] [data-message-attachments]')
     await expect(attachments).toHaveAttribute('data-attachment-count', '3')
 
@@ -188,7 +188,7 @@ test.describe('Image attachments — overflow "+N" tile (Phase 2)', () => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockImageBytes(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const attachments = page.locator('[data-message-uuid="m-six"] [data-message-attachments]')
     await expect(attachments).toHaveAttribute('data-attachment-count', '6')
 
@@ -226,7 +226,7 @@ test.describe('Image attachments — files + files_v2 dedup (Phase 2)', () => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockImageBytes(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const attachments = page.locator('[data-message-uuid="m-dupe"] [data-message-attachments]')
     await expect(attachments).toHaveAttribute('data-attachment-count', '1')
   })
@@ -251,7 +251,7 @@ test.describe('Image attachments — broken image fallback (Phase 2)', () => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockImageBytes404(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const attachments = page.locator('[data-message-uuid="m-broken"] [data-message-attachments]')
     await expect(attachments).toHaveAttribute('data-attachment-count', '1')
     // Placeholder button surfaces "(unavailable)" via aria-label.
@@ -303,7 +303,7 @@ test.describe('Claude Code [Image: source: <path>] text markers (Pattern B)', ()
     const detail = makeDetail(summary, [m])
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const bubble = page.locator('[data-message-uuid="cc-marker"]')
     await expect(bubble).toBeVisible()
 
@@ -374,7 +374,7 @@ test.describe('Claude Code [Image: source: <path>] text markers (Pattern B)', ()
       },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const bubble = page.locator('[data-message-uuid="cc-multi-marker"]')
     await expect(bubble).toBeVisible()
     // Both markers replaced.
@@ -413,7 +413,7 @@ test.describe('Inline image content blocks (Claude Code shape)', () => {
     const detail = makeDetail(summary, [m])
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const bubble = page.locator('[data-message-uuid="cc-img"]')
     await expect(bubble).toBeVisible()
 
@@ -441,7 +441,7 @@ test.describe('Inline image content blocks (Claude Code shape)', () => {
     const detail = makeDetail(summary, [m])
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const bubble = page.locator('[data-message-uuid="cc-img-only"]')
     await expect(bubble).toBeVisible()
     await expect(bubble.locator('[data-content-image] img')).toBeVisible()
@@ -465,7 +465,7 @@ test.describe('Image attachments — independent of showToolCalls toggle (Phase 
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockImageBytes(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     // The bubble exists despite empty text/content because it has an image.
     const bubble = page.locator('[data-message-uuid="m-lone"]')
     await expect(bubble).toBeVisible()

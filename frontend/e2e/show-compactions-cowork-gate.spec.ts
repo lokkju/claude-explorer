@@ -55,7 +55,7 @@ test.describe('Show Compactions checkbox for non-CC conversations', () => {
       conversations: [summary],
       details: { [COWORK_UUID]: detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${COWORK_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${COWORK_UUID}`))
 
     // Settle: Show Tools is unconditional in the header — its presence
     // proves the header is fully rendered. Then assert Show Compactions
@@ -82,7 +82,7 @@ test.describe('Show Compactions checkbox for non-CC conversations', () => {
       conversations: [summary],
       details: { [COWORK_UUID]: detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${COWORK_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${COWORK_UUID}`))
 
     await expect(page.getByTestId('header-show-tools-checkbox')).toBeVisible()
     await expect(

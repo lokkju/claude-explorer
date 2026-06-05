@@ -20,7 +20,7 @@ test.describe('CF2 — atom name prefill', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.getByTestId('active-filter-select').click()
     await page.getByTestId('active-filter-manage').click()
     await page.getByTestId('manage-filters-new').click()

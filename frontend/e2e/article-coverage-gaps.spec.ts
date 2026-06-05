@@ -93,7 +93,7 @@ test.describe('Search returns hits whose snippets came from tool blocks', () => 
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockSearchHit(page, 'OnlyInToolUse src', 'm2')
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await expect(page.locator('[data-message-uuid="m1"]')).toBeVisible()
 
     await page.locator('main').click()
@@ -114,7 +114,7 @@ test.describe('Search returns hits whose snippets came from tool blocks', () => 
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockSearchHit(page, 'OnlyInToolResult: 3 hits', 'm2')
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await expect(page.locator('[data-message-uuid="m1"]')).toBeVisible()
 
     await page.locator('main').click()
@@ -133,7 +133,7 @@ test.describe('Search returns hits whose snippets came from tool blocks', () => 
 test.describe('Help modal lists bindings for both modes', () => {
   test('? help modal lists specific Emacs / Vim / global bindings', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.locator('main').click()
     await page.keyboard.type('?')
 
@@ -153,14 +153,14 @@ test.describe('Help modal lists bindings for both modes', () => {
 
 test.describe('Emacs Alt+< / Alt+> jump to first / last message', () => {
   test.beforeEach(async ({ page }) => {
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.evaluate(() => localStorage.setItem('keyboardMode', JSON.stringify('emacs')))
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
   })
 
   test('Alt+< and Alt+> do not crash and keep the URL stable', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await expect(page.locator('[data-message-uuid="m1"]')).toBeVisible()
 
     // Click a message to focus the detail pane.
@@ -174,7 +174,7 @@ test.describe('Emacs Alt+< / Alt+> jump to first / last message', () => {
 test.describe('Clicking pane background sets focus to that pane', () => {
   test('clicking the sidebar background applies the focusArea ring', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await expect(page.locator('[data-message-uuid="m1"]')).toBeVisible()
 
     // Start with focus elsewhere — click the conversation pane.

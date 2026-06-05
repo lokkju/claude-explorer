@@ -79,7 +79,7 @@ test.describe('Force re-fetch', () => {
     const calls = { count: 0 };
     await mockBackend(page, calls);
 
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
 
     // The button was renamed to "Re-download this conversation" and later
     // demoted to an icon-only ghost (aria-label preserved).

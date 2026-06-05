@@ -1,4 +1,4 @@
-import { test as base, expect, type Page, type Route } from '@playwright/test'
+import { test as base, expect, type Page, type Request, type Route } from '@playwright/test'
 import type {
   AppConfig,
   AppConfigStats,
@@ -107,6 +107,19 @@ const PROJECT_CONSOLE_ALLOWLIST: RegExp[] = [
   // MSW unhandled-request warnings only fire in vitest, not Playwright;
   // listed defensively in case a spec ever spins up the worker.
   /\[MSW\]/,
+  // Tailscale / macOS routing-table flip mid-navigation. The OS swaps
+  // routes when Tailscale re-associates or WiFi roams; any in-flight
+  // subresource load dies with `net::ERR_NETWORK_CHANGED` even though
+  // localhost is up. `withNetRetry` catches this at the action layer
+  // and (since 2026-06-04) at the subresource layer too — it retries
+  // until the routing tick passes. But Chromium has already written
+  // the `Failed to load resource:` line to the console for each failed
+  // subresource on every failed attempt, and that text persists past
+  // the retry. The pattern is anchored on the specific OS-routing-tick
+  // error class so §5.15 still catches every other Failed-to-load-
+  // resource shape (404, 500, 503, etc.). CI Linux runners don't see
+  // this class at all.
+  /Failed to load resource:.*net::ERR_NETWORK_CHANGED/,
   // Our own mockBackend leakage guard writes `[mockBackend] Unmocked
   // API call leaked through:` — that IS the failure mode (route not
   // mocked); leave it as an error so it fails the test, NOT allowlisted.
@@ -337,33 +350,79 @@ function synthesizeTree(detail: ConversationDetail): ConversationTree {
  * changed error even though the localhost dev server is still up.
  * Retrying within a few hundred milliseconds always wins.
  *
+ * Two failure surfaces, both handled:
+ *
+ *  1. The action itself rejects with the error in its message
+ *     (`page.reload()` / `page.goto()` fails because the main document
+ *     request died). Caught in the catch block.
+ *
+ *  2. The action resolves (main document loaded fine), but one or more
+ *     subresources — JS chunks, CSS, API calls fired during React
+ *     mount — failed mid-navigation with the same error class. The
+ *     half-loaded page never reaches a usable DOM state, so downstream
+ *     assertions time out. Detected via `page.on('requestfailed')`
+ *     filtered to ERR_NETWORK_CHANGED; treated as a transient retry
+ *     trigger. This case shipped as the 2026-06-04 fix for
+ *     `settings.spec.ts` flakes (PLANS/2026.06.04-e2e-console-gate-
+ *     failures-and-fix-plan.md).
+ *
  * Catches that specific error class only — any other failure (real
- * test bug, server down, navigation timeout) propagates unchanged.
+ * test bug, server down, navigation timeout, mocked 404) propagates
+ * unchanged. The §5.15 console-error guard also allowlists the
+ * `Failed to load resource: net::ERR_NETWORK_CHANGED` line that
+ * Chromium emits per failed subresource, so the post-retry console
+ * stays clean.
  *
  * Use in place of `page.reload()` / `page.goto(...)` for tests that
  * exercise navigation early in setup (before the page has settled),
  * or anywhere a Tailscale-style routing tick has been observed to
  * intercept a navigation. CI without Tailscale will never trip the
- * retry path.
+ * retry path (subresource detection is a no-op when no failures
+ * fire).
  *
  * Usage:
- *   await withNetRetry(() => page.reload())
- *   await withNetRetry(() => page.goto('/conversations'))
+ *   await withNetRetry(page, () => page.reload())
+ *   await withNetRetry(page, () => page.goto('/conversations'))
  */
-export async function withNetRetry<T>(action: () => Promise<T>, maxAttempts = 4): Promise<T> {
+export async function withNetRetry<T>(
+  page: Page,
+  action: () => Promise<T>,
+  maxAttempts = 4,
+): Promise<T> {
   let lastError: unknown
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const subresourceFailures: string[] = []
+    const onRequestFailed = (req: Request) => {
+      const failure = req.failure()
+      if (failure?.errorText.includes('net::ERR_NETWORK_CHANGED')) {
+        subresourceFailures.push(req.url())
+      }
+    }
+    page.on('requestfailed', onRequestFailed)
     try {
-      return await action()
+      const result = await action()
+      if (subresourceFailures.length === 0) {
+        return result
+      }
+      // Action resolved (main doc loaded) but one or more subresource
+      // loads died mid-navigation. The page is half-loaded; retry the
+      // whole action so React can mount against a stable routing table.
+      lastError = new Error(
+        `net::ERR_NETWORK_CHANGED on ${subresourceFailures.length} ` +
+          `subresource(s) during navigation (attempt ${attempt + 1}/${maxAttempts}). ` +
+          `First failure: ${subresourceFailures[0]}`,
+      )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       if (!message.includes('net::ERR_NETWORK_CHANGED')) {
         throw err
       }
       lastError = err
-      // Tiny backoff so the next OS routing tick lands first.
-      await new Promise((resolve) => setTimeout(resolve, 100))
+    } finally {
+      page.off('requestfailed', onRequestFailed)
     }
+    // Tiny backoff so the next OS routing tick lands first.
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
   throw lastError
 }

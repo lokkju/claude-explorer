@@ -48,7 +48,7 @@ function minimalPdfBytes(): Buffer {
 }
 
 async function gotoConversation(page: Page) {
-  await withNetRetry(() => page.goto(`/conversations/${PDF}`))
+  await withNetRetry(page, () => page.goto(`/conversations/${PDF}`))
   await expect(page.locator('[data-message-uuid="pdf-m1"]')).toBeVisible()
 }
 

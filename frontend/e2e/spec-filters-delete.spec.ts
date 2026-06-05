@@ -60,7 +60,7 @@ test.describe('Delete UX', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
 
     // 2026-06-01: the previous role-based confirm selector
@@ -109,7 +109,7 @@ test.describe('Delete UX', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
 
     const trash = modal.getByRole('button', { name: /^delete/i }).first()
@@ -154,7 +154,7 @@ test.describe('Delete UX', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
 
     // Find the trash button for AtomUsed specifically.
@@ -195,7 +195,7 @@ test.describe('Delete UX', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Pre-condition: filter is active. Foo hidden.
     await expect(page.getByText('Foo morning')).toHaveCount(0)

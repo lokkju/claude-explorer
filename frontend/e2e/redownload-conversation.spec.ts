@@ -99,7 +99,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { uuid: FAKE_UUID, status: 'refetched', name: baseConv.name },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
 
     // The renamed button MUST be visible.
     const button = page.getByRole('button', { name: /re-download this conversation/i });
@@ -112,7 +112,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { uuid: FAKE_UUID, status: 'refetched', name: baseConv.name },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     await page.getByRole('button', { name: /re-download this conversation/i }).click();
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -132,7 +132,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { detail: friendly },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     await page.getByRole('button', { name: /re-download this conversation/i }).click();
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -151,7 +151,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { detail: friendly },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     await page.getByRole('button', { name: /re-download this conversation/i }).click();
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -168,7 +168,7 @@ test.describe('Re-download this conversation (Bug 3)', () => {
       body: { detail: sessionExpired },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     await page.getByRole('button', { name: /re-download this conversation/i }).click();
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();

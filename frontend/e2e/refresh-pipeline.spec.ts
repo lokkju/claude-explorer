@@ -55,7 +55,7 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -92,7 +92,7 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     const refreshButton = page.locator('aside button[title="Refresh conversation list"]');
     await refreshButton.click();
@@ -127,7 +127,7 @@ test.describe('Refresh pipeline (capture + fetch)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const errorToast = page.locator('[data-sonner-toast][data-type="error"]').first();

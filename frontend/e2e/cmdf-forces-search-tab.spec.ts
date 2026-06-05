@@ -29,7 +29,7 @@ test('Cmd+F forces the right-pane tab to "search" regardless of persisted prefer
     preferences: { rightPaneTab: 'bookmarks', 'searchPanel.isOpen': true },
   })
 
-  await withNetRetry(() => page.goto('/'))
+  await withNetRetry(page, () => page.goto('/'))
   await page.locator('main').click()
   const aside = page.locator('aside[aria-label="Search panel"]')
   await expect(aside).toBeVisible()
@@ -58,7 +58,7 @@ test('Cmd+F from a closed panel opens AND switches to search tab', async ({ page
     preferences: { rightPaneTab: 'bookmarks', 'searchPanel.isOpen': false },
   })
 
-  await withNetRetry(() => page.goto('/'))
+  await withNetRetry(page, () => page.goto('/'))
   await page.locator('main').click()
 
   // Press Cmd+F. Even though rightPaneTab=bookmarks in prefs, the

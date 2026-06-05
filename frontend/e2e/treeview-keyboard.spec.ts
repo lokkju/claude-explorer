@@ -74,7 +74,7 @@ test.describe('TreeView keyboard activation (Phase 1 a11y)', () => {
       },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     await expect(page.getByText('BRANCH-A reply 1')).toBeVisible();
 
     await page.getByRole('button', { name: /view branches/i }).click();
@@ -119,7 +119,7 @@ test.describe('TreeView keyboard activation (Phase 1 a11y)', () => {
       },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     await expect(page.getByText('BRANCH-A reply 1')).toBeVisible();
 
     await page.getByRole('button', { name: /view branches/i }).click();

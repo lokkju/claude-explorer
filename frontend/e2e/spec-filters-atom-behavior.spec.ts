@@ -59,7 +59,7 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Bar afternoon')).toBeVisible()
     await expect(page.getByText('Baz evening')).toBeVisible()
@@ -89,7 +89,7 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Bar afternoon')).toBeVisible()
     await expect(page.getByText('Foo morning')).toHaveCount(0)
@@ -119,7 +119,7 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo morning')).toBeVisible()
     await expect(page.getByText('Bar afternoon')).toHaveCount(0)
@@ -149,7 +149,7 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo morning')).toBeVisible()
     await expect(page.getByText('Bar afternoon')).toHaveCount(0)
@@ -179,7 +179,7 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo morning')).toBeVisible()
     await expect(page.getByText('Bar afternoon')).toBeVisible()
@@ -209,7 +209,7 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Disabled active = no-op. All three rows still visible.
     await expect(page.getByText('Foo morning')).toBeVisible()
@@ -250,7 +250,7 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Pin to the contract-implicit testid; the migration banner exposes
     // aria-label="Filter update" which would conflict with a /filter/i
@@ -287,7 +287,7 @@ test.describe('Atom semantics — Behavior, mode, empty, disabled', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo morning')).toHaveCount(0)
 

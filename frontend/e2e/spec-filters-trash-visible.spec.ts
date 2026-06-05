@@ -128,7 +128,7 @@ test.describe('Manage Filters modal: trash icon visibility (canary)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     const picker = page.getByTestId('active-filter-select')
     await picker.click()

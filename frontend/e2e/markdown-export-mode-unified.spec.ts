@@ -78,7 +78,7 @@ test.describe('Markdown export mode unification', () => {
     await mockBackend({ conversations: [summary], details: { [ME]: detail } })
     const { state, patches } = await installPrefsRoute(page, {})
 
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
 
     // Three options live under the Export section now: Inline /
     // Bundle CommonMark / Bundle Obsidian. Choose Bundle Obsidian.
@@ -112,7 +112,7 @@ test.describe('Markdown export mode unification', () => {
 
     // 3) Open the dialog from a conversation page — its radio must
     // reflect the choice made in Settings (same key).
-    await withNetRetry(() => page.goto(`/conversations/${ME}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${ME}`))
     await page.getByRole('button', { name: 'Markdown', exact: true }).click()
     const dialog = page.getByTestId('markdown-export-dialog')
     await expect(dialog).toBeVisible()
@@ -123,7 +123,7 @@ test.describe('Markdown export mode unification', () => {
     await mockBackend({ conversations: [summary], details: { [ME]: detail } })
     const { patches } = await installPrefsRoute(page, {})
 
-    await withNetRetry(() => page.goto(`/conversations/${ME}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${ME}`))
     await page.getByRole('button', { name: 'Markdown', exact: true }).click()
 
     const dialog = page.getByTestId('markdown-export-dialog')
@@ -148,7 +148,7 @@ test.describe('Markdown export mode unification', () => {
     expect(sawModePatch).toBe(true)
 
     // Settings page reads the same key.
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
     const settingsExport = page.locator('[data-section="markdown-export"]')
     await expect(settingsExport).toBeVisible()
     await expect(
@@ -160,7 +160,7 @@ test.describe('Markdown export mode unification', () => {
     await mockBackend({ conversations: [summary], details: { [ME]: detail } })
     await installPrefsRoute(page, { markdownExportMode: 'bundle-obsidian' })
 
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
     const settingsExport = page.locator('[data-section="markdown-export"]')
     await expect(settingsExport).toBeVisible()
     await expect(

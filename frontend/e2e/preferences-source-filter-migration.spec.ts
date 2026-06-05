@@ -69,9 +69,9 @@ test.describe('SourceFilterContext + showPhantomSessions preferences migration (
     await mockBackend({})
     const { patches } = await installPrefsRoute(page, {})
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.evaluate(() => localStorage.clear())
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
 
     // Open the source-filter Select and click Claude Code.
     // CF1: the active-filter picker is now the first combobox in the
@@ -102,9 +102,9 @@ test.describe('SourceFilterContext + showPhantomSessions preferences migration (
     await mockBackend({})
     await installPrefsRoute(page, { sourceFilter: 'CLAUDE_CODE' })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.evaluate(() => localStorage.clear())
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
 
     // SelectTrigger renders the current value as text content.
     // CF1: filter by content to avoid matching the active-filter picker.
@@ -122,9 +122,9 @@ test.describe('SourceFilterContext + showPhantomSessions preferences migration (
     await mockBackend({})
     const { patches } = await installPrefsRoute(page, {})
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.evaluate(() => localStorage.clear())
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
 
     // Sidebar "Empty" checkbox toggles showPhantomSessions.
     const toggle = page.getByTestId('show-phantom-sessions-toggle')

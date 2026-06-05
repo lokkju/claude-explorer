@@ -107,7 +107,7 @@ test.describe('Branch switching (Build-8 #6)', () => {
   });
 
   test('selecting a branch in TreeViewModal updates the message stream and URL', async ({ page }) => {
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
 
     // Initial: branch A is the displayed branch.
     await expect(page.getByText('BRANCH-A reply 1')).toBeVisible();

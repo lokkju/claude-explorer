@@ -12,7 +12,7 @@ test.describe('Mobile responsive layout', () => {
 
   test.beforeEach(async ({ page, mockBackend }) => {
     await mockBackend();
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
   });
 
   test('sidebar is hidden on mobile by default and hamburger toggles it', async ({ page }) => {

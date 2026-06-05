@@ -68,7 +68,7 @@ test.describe('CF1 — active-filter picker', () => {
       preferences: { filters: filtersBlob },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // The exclude atom is active via its parent group -> matching row hidden.
     await expect(page.getByText('React refactor')).toBeVisible()
@@ -95,7 +95,7 @@ test.describe('CF1 — active-filter picker', () => {
 
     // Reload -> selection persists (mockBackend's prefs store survives the
     // navigation because page.route handlers stay registered for the page).
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
     await expect(
       page.getByText('Scan Gmail for meeting invites and calendar invites')
     ).toHaveCount(0)

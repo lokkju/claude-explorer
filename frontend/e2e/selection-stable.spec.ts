@@ -97,7 +97,7 @@ async function selectedUuid(page: import('@playwright/test').Page): Promise<stri
 test.describe('Selection follows message UUID across Tools toggle (Issue #2)', () => {
   test('selecting a text message and toggling Tools ON keeps the same message selected', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [SS]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${SS}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${SS}`))
 
     // Wait for the conversation header to render.
     await expect(page.getByRole('heading', { level: 1, name: /Selection-stability/ })).toBeVisible()
@@ -126,7 +126,7 @@ test.describe('Selection follows message UUID across Tools toggle (Issue #2)', (
 
   test('selecting a text message and toggling Tools OFF keeps the same message selected', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [SS]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${SS}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${SS}`))
 
     await expect(page.getByRole('heading', { level: 1, name: /Selection-stability/ })).toBeVisible()
 

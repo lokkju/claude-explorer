@@ -87,7 +87,7 @@ test.describe('G3 — cc-image rotation: frontend re-requests on reload', () => 
     })
 
     // First load — should fetch PNG_A.
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     const tile = page
       .locator('[data-message-uuid="msg-rot"]')
       .locator('[data-cc-image-marker]')
@@ -123,7 +123,7 @@ test.describe('G3 — cc-image rotation: frontend re-requests on reload', () => 
 
     // Reload — frontend MUST re-issue the same URL.
     const hitsBeforeReload = hits
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
     await expect(tile).toBeVisible({ timeout: 5000 })
     await expect(tile.locator('img')).toBeVisible({ timeout: 5000 })
 

@@ -65,7 +65,7 @@ test.describe('Keyboard nav: Alt+< after Alt+> recovers viewport across virtuali
   test('Alt+< brings first message back into viewport even after virtualizer unmounted it', async ({
     page,
   }) => {
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
 
     // Wait for the first message to mount (initial render lands at top).
     const firstBubble = page.locator('[data-message-uuid="kmsg-0000"]')

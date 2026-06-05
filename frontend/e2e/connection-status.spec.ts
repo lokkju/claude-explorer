@@ -26,7 +26,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Dialog opens at retry 2 (4s + initial check). 15s timeout > the 12s
     // worst case (4s first retry + check timeout slack).
@@ -42,7 +42,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for dialog (opens at retry 2 — see V1 polish note above).
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
@@ -65,7 +65,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for dialog (opens at retry 2 — V1 polish).
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
@@ -88,7 +88,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for dialog (opens at retry 2 — V1 polish).
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
@@ -115,7 +115,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for Connection Failed (V1 polish: 60s for 4+8+10+10+10 = 42s schedule).
     await expect(page.getByText('Connection Failed')).toBeVisible({ timeout: 60000 });
@@ -136,7 +136,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for Connection Failed (V1 polish: 60s for the 42s retry schedule).
     await expect(page.getByText('Connection Failed')).toBeVisible({ timeout: 60000 });
@@ -170,7 +170,7 @@ test.describe('Connection Status', () => {
       }
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for dialog to appear (V1 polish: opens at retry 2, 4s+ wait).
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
@@ -196,7 +196,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for dialog (V1 polish: opens at retry 2, 4s+ wait).
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15000 });
@@ -216,7 +216,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Dialog opens at retry 2 — by then lastError is set ("Failed to fetch")
     // but we should NOT render the red "Last error: …" line; the spinner
@@ -235,7 +235,7 @@ test.describe('Connection Status', () => {
       route.abort('connectionrefused');
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // The previous shape (poll for length ≥ 3 then read gaps) returned
     // immediately after the StrictMode-doubled mount fired ~2-4 nearly
@@ -297,7 +297,7 @@ test.describe('Connection Status', () => {
       await route.fallback();
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // The first /api/config 404s, but the second succeeds before retry 2
     // would open the dialog. The dialog must NEVER become visible.

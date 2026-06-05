@@ -66,7 +66,7 @@ test.describe('Details modal: live pipeline state (Bug 1)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     // Wait for the toast to appear, then open the Details modal.
@@ -98,7 +98,7 @@ test.describe('Details modal: live pipeline state (Bug 1)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     await expect(page.locator('[data-sonner-toast]').first()).toBeVisible({
@@ -117,7 +117,7 @@ test.describe('Details modal: live pipeline state (Bug 1)', () => {
     // user normally uses. The button itself doesn't open the modal in
     // Build-9 (the toast does), so this test asserts the cached behavior
     // by opening the dialog and asserting against the static existing_count.
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // We open the modal indirectly by triggering a refresh and clicking
     // Details, but using a never-started SSE so the pipeline stays in

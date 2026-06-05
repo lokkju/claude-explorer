@@ -69,7 +69,7 @@ test.describe('Search typing latency (manual finding 2026-05-04)', () => {
       })
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await expect(page.locator('[data-message-uuid="m-0"]')).toBeVisible({ timeout: 10_000 })
 
     // Open the SearchPanel.

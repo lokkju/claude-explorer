@@ -90,7 +90,7 @@ test.describe('Migration v1 → v2 + banner', () => {
       await route.fallback()
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Wait for the migration PATCH to land. Poll for tombstones AND the
     // new filters blob.
@@ -187,7 +187,7 @@ test.describe('Migration v1 → v2 + banner', () => {
       await route.fallback()
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Wait for v2 migration patch.
     await expect.poll(() => {
@@ -259,7 +259,7 @@ test.describe('Migration v1 → v2 + banner', () => {
       await route.fallback()
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     // Wait briefly to allow any async migration effect to fire.
     await page.waitForTimeout(500)
 
@@ -303,7 +303,7 @@ test.describe('Migration v1 → v2 + banner', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Banner is visible: contains "composable" (per the plan's banner copy).
     await expect(page.getByText(/composable/i)).toBeVisible()
@@ -349,7 +349,7 @@ test.describe('Migration v1 → v2 + banner', () => {
       await route.fallback()
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Banner present.
     await expect(page.getByText(/composable/i)).toBeVisible()
@@ -373,7 +373,7 @@ test.describe('Migration v1 → v2 + banner', () => {
     }, { timeout: 5000 }).toBe(true)
 
     // Reload — banner should NOT reappear.
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
     await expect(page.getByText(/composable/i)).toHaveCount(0)
   })
 
@@ -391,7 +391,7 @@ test.describe('Migration v1 → v2 + banner', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // No "composable" banner.
     await expect(page.getByText(/composable/i)).toHaveCount(0)

@@ -109,7 +109,7 @@ test.describe('CC compact-aware rendering', () => {
       details: { [UUID]: detail },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${UUID}`));
 
     // Deterministic settle barrier: wait until the message stream has
     // hydrated (per feedback_playwright_settle_signals — never assume
@@ -164,7 +164,7 @@ test.describe('CC compact-aware rendering', () => {
       details: { [UUID]: detail },
     });
 
-    await withNetRetry(() => page.goto(`/conversations/${UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${UUID}`));
     await expect(page.locator('[data-message-uuid="pre-msg-1"]')).toBeVisible();
 
     // Bounding-box ordering check: compact marker's y-position lies
@@ -199,7 +199,7 @@ test.describe('CC compact-aware rendering', () => {
       details: { [UUID]: detail },
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // NEW behavior: friendly title from `name` field surfaces in the
     // sidebar conversation list.

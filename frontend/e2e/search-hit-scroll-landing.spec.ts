@@ -145,7 +145,7 @@ test.describe('Search — clicking a hit LANDS the target bubble at viewport cen
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     await page.keyboard.press('Meta+k')
@@ -329,7 +329,7 @@ test.describe('Search — clicking a hit LANDS the target bubble at viewport cen
     await mockSearch(page, twoHitResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     await page.keyboard.press('Meta+k')

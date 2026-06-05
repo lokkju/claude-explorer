@@ -73,7 +73,7 @@ test.describe('Group combinator semantics', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo and Bar')).toBeVisible()
     await expect(page.getByText('Foo morning')).toHaveCount(0)
@@ -123,7 +123,7 @@ test.describe('Group combinator semantics', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo morning')).toBeVisible()
     await expect(page.getByText('Bar afternoon')).toBeVisible()
@@ -177,7 +177,7 @@ test.describe('Group combinator semantics', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo morning')).toBeVisible()
     await expect(page.getByText('Foo and Bar')).toBeVisible()
@@ -206,7 +206,7 @@ test.describe('Group combinator semantics', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo morning')).toBeVisible()
     await expect(page.getByText('Bar afternoon')).toBeVisible()
@@ -266,7 +266,7 @@ test.describe('Group combinator semantics', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Correct: only Foo-titled visible. Buggy short-circuit would let
     // Bar/Baz through.
@@ -342,7 +342,7 @@ test.describe('Group combinator semantics', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     await expect(page.getByText('Foo morning')).toBeVisible()
     await expect(page.getByText('Bar afternoon')).toBeVisible()
@@ -373,7 +373,7 @@ test.describe('Group combinator semantics', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // App must load (no crash). Stale activeId acts as no-op: every
     // conversation visible.

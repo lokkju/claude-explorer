@@ -225,7 +225,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Set source to Claude Code via the sidebar dropdown.
     const sourceSelect = page.locator('[data-testid]').nth(0) // fallback; use generic
@@ -272,7 +272,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Pick the secondary workspace from the dropdown.
     const workspaceTrigger = page.getByTestId('workspace-select')
@@ -334,7 +334,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Sanity: the "bar" conversation should be HIDDEN from the sidebar.
     await expect(page.getByText('bar project chat')).toHaveCount(0)
@@ -404,7 +404,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     const input = await openSearchPanel(page)
     await input.fill('needle')
@@ -483,7 +483,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Type "chat" in the sidebar title-search — all three titles contain "chat",
     // but the active filter hides "bar". The visible list should be only the
@@ -542,7 +542,7 @@ test.describe('Search scope propagation — full-text search honors sidebar scop
       }
       return convs.map((c) => makeSearchResult(c.uuid, c.name))
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Set source = Claude Code.
     // The Sidebar mounts three <Select>s in order:

@@ -80,7 +80,7 @@ async function mockSearch(page: Page, returnFor: (params: URLSearchParams) => un
 test.describe('Search pin scope (manual finding 2026-05-04)', () => {
   test('Pin button appears on conversation header with conv + project options', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
 
     const pin = page.getByTestId('pin-scope-button')
     await expect(pin).toBeVisible({ timeout: 5000 })
@@ -94,7 +94,7 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
 
   test('Pinning conversation writes ?pin=conv:<uuid> and dims out-of-scope sidebar rows', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
 
     await page.getByTestId('pin-scope-button').click()
     await page.getByTestId('pin-this-conversation').click()
@@ -113,7 +113,7 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
 
   test('Pinning project dims sessions outside the project', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
 
     await page.getByTestId('pin-scope-button').click()
     await page.getByTestId('pin-this-project').click()
@@ -129,7 +129,7 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
 
   test('SearchPanel header shows scope chip mirroring the pin', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
 
     await page.getByTestId('pin-scope-button').click()
     await page.getByTestId('pin-this-conversation').click()
@@ -168,7 +168,7 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
       })
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
     await page.getByTestId('pin-scope-button').click()
     await page.getByTestId('pin-this-conversation').click()
 
@@ -188,7 +188,7 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
   test('Empty results in scoped search show "Unpin and search all →" CTA', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
     await mockSearch(page, () => [])
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
     await page.getByTestId('pin-scope-button').click()
     await page.getByTestId('pin-this-conversation').click()
 
@@ -207,7 +207,7 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
 
   test('Sidebar title-search typing clears the pin', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
     await page.getByTestId('pin-scope-button').click()
     await page.getByTestId('pin-this-conversation').click()
     await expect(page).toHaveURL(new RegExp(`pin=conv(?::|%3A)${A}`))
@@ -220,7 +220,7 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
 
   test('Unpin item is always visible in dropdown (disabled when no pin)', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
     // Open dropdown WITHOUT pinning anything.
     await page.getByTestId('pin-scope-button').click()
     await expect(page.getByTestId('pin-scope-menu')).toBeVisible()
@@ -231,7 +231,7 @@ test.describe('Search pin scope (manual finding 2026-05-04)', () => {
 
   test('Pin survives reload via URL param', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: summaries, details })
-    await withNetRetry(() => page.goto(`/conversations/${A}?pin=conv:${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}?pin=conv:${A}`))
 
     // Chip visible after Cmd+F without re-pinning.
     const isMac = process.platform === 'darwin'

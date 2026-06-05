@@ -60,7 +60,7 @@ test.describe('Stream C: Cmd+R triggers /api/fetch/refresh', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Focus the main pane so the keydown listener runs against the
     // app, not an input element. The handler in
@@ -125,7 +125,7 @@ test.describe('Stream C: Cmd+R triggers /api/fetch/refresh', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.locator('main').click()
 
     await page.keyboard.press('Control+r')
@@ -170,7 +170,7 @@ test.describe('Stream C: Cmd+R triggers /api/fetch/refresh', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.locator('main').click()
 
     await page.keyboard.press('Meta+r')

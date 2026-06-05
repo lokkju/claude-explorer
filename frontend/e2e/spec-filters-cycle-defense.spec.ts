@@ -77,7 +77,7 @@ test.describe('Cycle defense', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
 
     await modal.getByText(/^GroupG$/).first().click()
@@ -128,7 +128,7 @@ test.describe('Cycle defense', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Sidebar still functional. With a cycle that short-circuits to "passes",
     // every conversation is visible.

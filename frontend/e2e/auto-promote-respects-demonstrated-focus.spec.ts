@@ -228,7 +228,7 @@ test.describe('Bug 3 (2026-05-26): auto-promote respects demonstrated focus', ()
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     // Open search, type the needle, wait for the 5 matches to appear.
@@ -356,7 +356,7 @@ test.describe('Bug 3 (2026-05-26): auto-promote respects demonstrated focus', ()
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     await page.keyboard.press('Meta+k')
@@ -404,7 +404,7 @@ test.describe('Bug 3 (2026-05-26): auto-promote respects demonstrated focus', ()
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     // Trigger the search so a match exists for auto-promote to fight
@@ -498,7 +498,7 @@ test.describe('Bug 3 (2026-05-26): auto-promote respects demonstrated focus', ()
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     await page.keyboard.press('Meta+k')

@@ -188,7 +188,7 @@ test.describe('Header toggle preserves focused-message viewport position (2026-0
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     // Open search, type the needle, wait for the result envelope.
@@ -311,7 +311,7 @@ test.describe('Header toggle preserves focused-message viewport position (2026-0
     await mockSearch(page, searchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     await page.keyboard.press('Meta+k')
@@ -362,7 +362,7 @@ test.describe('Header toggle preserves focused-message viewport position (2026-0
     await mockSearch(page, [])
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_UUID}`))
     await expect(page.locator('[data-message-uuid="m-0000"]')).toBeVisible()
 
     // Scroll to a known mid-conversation position (NOT via search — so

@@ -6,9 +6,9 @@ import { test, expect, withNetRetry } from './fixtures'
 
 test('Escape on Settings page navigates back to previous route', async ({ page, mockBackend }) => {
   await mockBackend();
-  await withNetRetry(() => page.goto('/'));
+  await withNetRetry(page, () => page.goto('/'));
 
-  await withNetRetry(() => page.goto('/settings'));
+  await withNetRetry(page, () => page.goto('/settings'));
   await expect(
     page.getByRole('heading', { name: /Settings/i }).first(),
   ).toBeVisible({ timeout: 5000 });

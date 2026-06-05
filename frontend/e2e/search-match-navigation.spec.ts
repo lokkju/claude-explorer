@@ -75,7 +75,7 @@ test.describe('Search — clicking a result jumps to the matching message UUID (
     // scroll-to-match actually happened (target visible after click).
     await page.setViewportSize({ width: 1024, height: 1200 })
 
-    await withNetRetry(() => page.goto(`/conversations/${SM}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${SM}`))
     await expect(page.locator('[data-message-uuid="sm-m1"]')).toBeVisible()
 
     // Open the search panel and run a query.

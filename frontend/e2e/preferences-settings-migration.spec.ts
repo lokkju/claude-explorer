@@ -74,10 +74,10 @@ test.describe('SettingsContext preferences migration (P3c)', () => {
     await mockBackend({})
     const { patches } = await installPrefsRoute(page, {})
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.evaluate(() => localStorage.clear())
 
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
 
     // Click the Dark theme radio. SettingsPage renders a RadioGroup of
     // Light/Dark/System labels.
@@ -104,9 +104,9 @@ test.describe('SettingsContext preferences migration (P3c)', () => {
     await installPrefsRoute(page, { theme: 'dark' })
 
     // Make sure we are not relying on a stale local value.
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.evaluate(() => localStorage.clear())
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
 
     // After mount the server says theme=dark, so <html> must carry the
     // `dark` class regardless of the browser color-scheme media.

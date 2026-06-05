@@ -46,7 +46,7 @@ test.describe('Mobile viewport — basic regression', () => {
         }),
       ],
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Page title is the document-level signal the SPA bootstrapped.
     await expect(page).toHaveTitle(/Claude/i)
@@ -89,7 +89,7 @@ test.describe('Mobile viewport — basic regression', () => {
         }),
       ],
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     const hamburger = page.getByRole('button', { name: /open sidebar|menu/i }).first()
     await expect(hamburger).toBeVisible({ timeout: 10_000 })
@@ -108,7 +108,7 @@ test.describe('Mobile viewport — basic regression', () => {
 
   test('main pane renders content on mobile (HintState or ConversationDetail)', async ({ page, mockBackend }) => {
     await mockBackend({})
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     // Either the HintState ("Press Enter…") OR an actual conversation pane
     // is in the DOM. With an empty mocked backend the app mounts the empty
     // HintState; this test is a smoke check that the shell mounts at all.

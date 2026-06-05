@@ -53,7 +53,7 @@ test.describe('Refresh error toast duration (Bug C)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -77,7 +77,7 @@ test.describe('Refresh error toast duration (Bug C)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -103,7 +103,7 @@ test.describe('Refresh error toast duration (Bug C)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -128,7 +128,7 @@ test.describe('Refresh error toast duration (Bug C)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();
@@ -150,7 +150,7 @@ test.describe('Refresh error toast duration (Bug C)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast][data-type="error"]').first();

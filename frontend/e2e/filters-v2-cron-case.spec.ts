@@ -33,7 +33,7 @@ test.describe('CFR1 — cron case (one atom, hide, OR\'d patterns)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Sanity: all 4 rows visible before any filter is active.
     for (const c of conversations) {

@@ -43,7 +43,7 @@ test.describe('Cmd+K always opens the Search tab (regression 2026-05-14)', () =>
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${C1}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     const searchAside = page.locator('aside[aria-label="Search panel"]')
@@ -87,7 +87,7 @@ test.describe('Cmd+K always opens the Search tab (regression 2026-05-14)', () =>
       details: { [C1]: c1Detail },
       preferences: { rightPaneTab: 'bookmarks' },
     })
-    await withNetRetry(() => page.goto(`/conversations/${C1}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     const searchAside = page.locator('aside[aria-label="Search panel"]')
@@ -108,7 +108,7 @@ test.describe('Cmd+K always opens the Search tab (regression 2026-05-14)', () =>
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${C1}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     const searchAside = page.locator('aside[aria-label="Search panel"]')

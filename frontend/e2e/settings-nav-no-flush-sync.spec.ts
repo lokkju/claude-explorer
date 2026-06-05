@@ -73,7 +73,7 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
 
     // Wait for the virtualizer to mount at least one bubble (proves the
     // virtualizer is initialized and ResizeObserver is attached — the
@@ -125,7 +125,7 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
     await expect(
       page.getByRole('heading', { name: /settings/i, level: 1 }),
     ).toBeVisible()
@@ -134,7 +134,7 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
     // virtualizer; if flushSync fires during the mount-time
     // ResizeObserver callback under React 19, the URL would bounce
     // back to /settings via the same error-rollback mechanism.
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
     await expect(page.locator('[data-message-uuid="m1"]')).toBeVisible()
 
     await page.waitForTimeout(500)
@@ -199,7 +199,7 @@ test.describe('Navigating to Settings does not flash-and-disappear (2026-05-24)'
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
     await expect(page.locator('[data-message-uuid="m1"]')).toBeVisible()
 
     // Open search panel, type query, IMMEDIATELY navigate to Settings

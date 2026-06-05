@@ -35,7 +35,7 @@ test.describe('Command Palette Full-Text Search', () => {
       conversations: [summary],
       details: { [TLS_UUID]: detail },
     });
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Press Cmd+K (or Ctrl+K on Windows/Linux)
     await page.keyboard.press('Meta+k');
@@ -46,7 +46,7 @@ test.describe('Command Palette Full-Text Search', () => {
 
   test('shows hint for short queries', async ({ page, mockBackend }) => {
     await mockBackend();
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Open command palette
     await page.keyboard.press('Meta+k');
@@ -74,7 +74,7 @@ test.describe('Command Palette Full-Text Search', () => {
         });
       },
     });
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Open command palette
     await page.keyboard.press('Meta+k');
@@ -136,7 +136,7 @@ test.describe('Command Palette Full-Text Search', () => {
         });
       },
     });
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // The TLS conversation is in the sidebar.
     await expect(page.getByText(/Phase 5 fixture: TLS handshakes/)).toBeVisible({
@@ -157,7 +157,7 @@ test.describe('Command Palette Full-Text Search', () => {
 
   test('closes command palette via keyboard (Escape)', async ({ page, mockBackend }) => {
     await mockBackend();
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Open command palette.
     await page.keyboard.press('Meta+k');
@@ -172,7 +172,7 @@ test.describe('Command Palette Full-Text Search', () => {
 
   test('Cmd+K toggles open and closed', async ({ page, mockBackend }) => {
     await mockBackend();
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     const searchAside = page.locator('aside[aria-label="Search panel"]');
     await page.keyboard.press('Meta+k');
@@ -183,7 +183,7 @@ test.describe('Command Palette Full-Text Search', () => {
 
   test('shows keyboard hint in sidebar', async ({ page, mockBackend }) => {
     await mockBackend();
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Should show the Cmd+K hint
     await expect(page.getByText('to search messages')).toBeVisible();

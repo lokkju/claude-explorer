@@ -121,7 +121,7 @@ test.describe('Sidebar — source filter (B1)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     // Both rows visible initially (no source filter).
     await expect(page.getByText(desktop.name)).toBeVisible()
     await expect(page.getByText(cc.name)).toBeVisible()
@@ -149,7 +149,7 @@ test.describe('Sidebar — project grouping is collapsible (B2)', () => {
     await mockBackend({
       conversations: [cc, ccSecondInSameProject],
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Switch source to Claude Code so the "Group by project" toggle appears.
     // CF1: the active-filter picker is now the first combobox in the sidebar,
@@ -192,7 +192,7 @@ test.describe('Sidebar — row metadata (B3)', () => {
     await mockBackend({
       conversations: [desktop, cc],
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     const desktopRow = page.locator('[role="button"]', { hasText: desktop.name })
     await expect(desktopRow).toBeVisible()
@@ -235,7 +235,7 @@ test.describe('Sidebar — phantom session toggle (B6)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     // Phantom hidden by default.
     await expect(page.getByText(cc.name)).toBeVisible()
     await expect(page.getByText(phantomSession.name)).toHaveCount(0)
@@ -257,7 +257,7 @@ test.describe('Sidebar — Caveat-with-content session retains its real title (B
     await mockBackend({
       conversations: [caveatWithContent],
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // The backend already resolved the title to the first non-system
     // message; the frontend just displays whatever name the API returned.
@@ -275,7 +275,7 @@ test.describe('Sidebar — starred group always at top (B4 reinforcement)', () =
       // Order shuffled to prove the UI re-orders, not the API.
       conversations: [desktop, starred, cc],
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Starred section header is present.
     await expect(page.getByText('Starred', { exact: true })).toBeVisible()

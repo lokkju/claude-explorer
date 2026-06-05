@@ -146,7 +146,7 @@ test.describe('URL-parameter navigation', () => {
   });
 
   test('/projects/:slug filters the sidebar to that project', async ({ page }) => {
-    await withNetRetry(() => page.goto('/projects/claude-explorer'));
+    await withNetRetry(page, () => page.goto('/projects/claude-explorer'));
     // Both claude-explorer-bound conversations should appear; the some-other one should not.
     await expect(page.getByText('MCP server bootstrap notes')).toBeVisible();
     await expect(page.getByText('MCP workspace integration')).toBeVisible();
@@ -154,14 +154,14 @@ test.describe('URL-parameter navigation', () => {
   });
 
   test('/conversations/:id opens that conversation', async ({ page }) => {
-    await withNetRetry(() => page.goto('/conversations/aaaa-1111-1111-1111-111111111111'));
+    await withNetRetry(page, () => page.goto('/conversations/aaaa-1111-1111-1111-111111111111'));
     await expect(
       page.getByRole('heading', { name: /MCP server bootstrap notes/ })
     ).toBeVisible();
   });
 
   test('/conversations/:id?m=:msgUuid scrolls to and flashes the target message', async ({ page }) => {
-    await withNetRetry(() => page.goto('/conversations/aaaa-1111-1111-1111-111111111111?m=msg-2-deep-link'));
+    await withNetRetry(page, () => page.goto('/conversations/aaaa-1111-1111-1111-111111111111?m=msg-2-deep-link'));
     const target = page.locator('[data-message-uuid="msg-2-deep-link"]');
     await expect(target).toBeVisible();
     // Flash class is applied for ~2s; assert at least once.
@@ -169,7 +169,7 @@ test.describe('URL-parameter navigation', () => {
   });
 
   test('/conversations?q=<text> applies search to the sidebar', async ({ page }) => {
-    await withNetRetry(() => page.goto('/conversations?q=MCP'));
+    await withNetRetry(page, () => page.goto('/conversations?q=MCP'));
     // Should filter to titles containing MCP (case-insensitive).
     await expect(page.getByText('MCP server bootstrap notes')).toBeVisible();
     await expect(page.getByText('MCP workspace integration')).toBeVisible();
@@ -181,20 +181,20 @@ test.describe('URL-parameter navigation', () => {
   });
 
   test('/conversations?title=*MCP*&filterMode=glob applies transient glob title filter', async ({ page }) => {
-    await withNetRetry(() => page.goto('/conversations?title=*MCP*&filterMode=glob'));
+    await withNetRetry(page, () => page.goto('/conversations?title=*MCP*&filterMode=glob'));
     await expect(page.getByText('MCP server bootstrap notes')).toBeVisible();
     await expect(page.getByText('MCP workspace integration')).toBeVisible();
     await expect(page.getByText('React component refactor')).toHaveCount(0);
   });
 
   test('/conversations?title=^React&filterMode=regex applies regex title filter', async ({ page }) => {
-    await withNetRetry(() => page.goto('/conversations?title=' + encodeURIComponent('^React') + '&filterMode=regex'));
+    await withNetRetry(page, () => page.goto('/conversations?title=' + encodeURIComponent('^React') + '&filterMode=regex'));
     await expect(page.getByText('React component refactor')).toBeVisible();
     await expect(page.getByText('MCP server bootstrap notes')).toHaveCount(0);
   });
 
   test('combined params project+q+title compose', async ({ page }) => {
-    await withNetRetry(() => page.goto('/conversations?project=claude-explorer&q=MCP&title=*workspace*&filterMode=glob'));
+    await withNetRetry(page, () => page.goto('/conversations?project=claude-explorer&q=MCP&title=*workspace*&filterMode=glob'));
     // Only "MCP workspace integration" matches all three.
     await expect(page.getByText('MCP workspace integration')).toBeVisible();
     await expect(page.getByText('MCP server bootstrap notes')).toHaveCount(0);

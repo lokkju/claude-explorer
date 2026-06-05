@@ -111,7 +111,7 @@ test.describe('CC Case 3 — canned response absorbed into /exit marker', () => 
       details: { [FOLD_UUID]: postFoldDetail },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${FOLD_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${FOLD_UUID}`))
 
     // Settle: message stream + marker bubble rendered.
     await expect(page.getByTestId('message-stream')).toBeVisible()
@@ -218,7 +218,7 @@ test.describe('CC Case 3 — canned response absorbed into /exit marker', () => 
       details: { [counterUuid]: counterDetail },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${counterUuid}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${counterUuid}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
 
     // Settle: marker rendered.

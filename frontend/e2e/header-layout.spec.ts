@@ -60,7 +60,7 @@ test.describe('Header layout — actions must not occlude metadata (Issue #3)', 
     test(`buttons do not overlap UUID/file-path metadata at ${width}px`, async ({ page, mockBackend }) => {
       await page.setViewportSize({ width, height: 900 })
       await mockBackend({ conversations: [summary], details: { [HL]: detail } })
-      await withNetRetry(() => page.goto(`/conversations/${HL}`))
+      await withNetRetry(page, () => page.goto(`/conversations/${HL}`))
 
       // Wait for the header to render. Scope to <header> from the
       // start: the sidebar ships its own <h1>Claude Explorer</h1>, so

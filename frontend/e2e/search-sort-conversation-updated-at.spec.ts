@@ -197,7 +197,7 @@ test.describe('Search sort — Bug B v2: conversation_updated_at, not max msg', 
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await expect(input).toBeVisible()
@@ -236,7 +236,7 @@ test.describe('Search sort — Bug B v2: conversation_updated_at, not max msg', 
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await expect(input).toBeVisible()

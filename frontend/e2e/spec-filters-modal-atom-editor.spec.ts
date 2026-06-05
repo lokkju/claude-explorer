@@ -70,7 +70,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
 
     // Select the row to edit
@@ -103,7 +103,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/My atom/).first().click()
 
@@ -134,7 +134,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/My atom/).first().click()
 
@@ -166,7 +166,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/Hide Foo/).first().click()
 
@@ -198,7 +198,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/Show Foo/).first().click()
 
@@ -229,7 +229,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/Empty atom/).first().click()
 
@@ -259,7 +259,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/Toggleme/).first().click()
 
@@ -304,7 +304,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Glob "^Bar" matches no titles → show-only with empty match → 0 rows.
     await expect(page.getByText('Foo morning')).toHaveCount(0)
@@ -340,7 +340,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
 
     // Click "New filter" or equivalent affordance.
@@ -367,7 +367,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     const newBtn = modal.getByRole('button', { name: /new filter|add filter|\+ new/i }).first()
     await newBtn.click()
@@ -395,7 +395,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     const newBtn = modal.getByRole('button', { name: /new filter|add filter|\+ new/i }).first()
     await newBtn.click()
@@ -439,7 +439,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/TogglerOne/).first().click()
 
@@ -485,7 +485,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/TogglerTwo/).first().click()
 
@@ -543,7 +543,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
     await modal.getByText(/AtomFoo/).first().click()
 
@@ -598,7 +598,7 @@ test.describe('Manage Filters modal — atom editor', () => {
         },
       },
     })
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const modal = await openModal(page)
 
     const deletes = modal.getByRole('button', { name: /^delete/i })

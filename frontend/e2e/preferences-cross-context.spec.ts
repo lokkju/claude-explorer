@@ -172,7 +172,7 @@ test.describe('G1 — preferences persist across browser contexts', () => {
     // Context A — make all three pref changes.
     const a = await newPage(browser, prefsState)
     try {
-      await withNetRetry(() => a.page.goto('/settings'))
+      await withNetRetry(a.page, () => a.page.goto('/settings'))
 
       const exportSection = a.page.locator('[data-section="markdown-export"]')
       await expect(exportSection).toBeVisible()
@@ -215,7 +215,7 @@ test.describe('G1 — preferences persist across browser contexts', () => {
     // contract we're proving.
     const b = await newPage(browser, prefsState)
     try {
-      await withNetRetry(() => b.page.goto('/settings'))
+      await withNetRetry(b.page, () => b.page.goto('/settings'))
 
       // Theme: dark class on <html>.
       await expect(b.page.locator('html')).toHaveClass(/dark/)
@@ -245,7 +245,7 @@ test.describe('G1 — preferences persist across browser contexts', () => {
 
     const a = await newPage(browser, stateA)
     try {
-      await withNetRetry(() => a.page.goto('/settings'))
+      await withNetRetry(a.page, () => a.page.goto('/settings'))
       const patch = waitForPrefsPatch(a.page)
       await a.page.locator('label:has-text("Dark")').click()
       await patch
@@ -256,7 +256,7 @@ test.describe('G1 — preferences persist across browser contexts', () => {
 
     const b = await newPage(browser, stateB)
     try {
-      await withNetRetry(() => b.page.goto('/settings'))
+      await withNetRetry(b.page, () => b.page.goto('/settings'))
       // <html> must NOT have the dark class because stateB never
       // received a PATCH.
       const htmlClass = (await b.page.locator('html').getAttribute('class')) ?? ''

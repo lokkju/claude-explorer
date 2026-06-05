@@ -255,7 +255,7 @@ test.describe('Multi-word search AND semantics (V1 polish 2026-05-14)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await expect(input).toBeVisible()
@@ -292,7 +292,7 @@ test.describe('Multi-word search AND semantics (V1 polish 2026-05-14)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.keyboard.press('Meta+k')
     await page.getByPlaceholder('Search messages...').fill('comprehensive medium article')
 
@@ -326,7 +326,7 @@ test.describe('Multi-word search AND semantics (V1 polish 2026-05-14)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.keyboard.press('Meta+k')
     await page
       .getByPlaceholder('Search messages...')

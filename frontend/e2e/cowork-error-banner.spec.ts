@@ -51,7 +51,7 @@ test.describe('Cowork D9 — error banner', () => {
       details: { [ERROR_UUID]: erroredDetail },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${ERROR_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${ERROR_UUID}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
 
     const banner = page.getByTestId('cowork-error-banner')
@@ -65,7 +65,7 @@ test.describe('Cowork D9 — error banner', () => {
       details: { [CLEAN_UUID]: cleanDetail },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${CLEAN_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CLEAN_UUID}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
 
     // Bidirectional: banner explicitly absent.

@@ -302,7 +302,7 @@ test.describe('Search hit on a compact marker → marker auto-expands (2026-05-2
   })
 
   test('SAME-conv auto-promote: typing into search expands the compact marker', async ({ page }) => {
-    await withNetRetry(() => page.goto(`/conversations/${CONV_A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_A}`))
 
     // Precondition: marker is in the DOM but the panel is COLLAPSED.
     const marker = page.locator('[data-message-uuid="a-compact-msg"]')
@@ -333,7 +333,7 @@ test.describe('Search hit on a compact marker → marker auto-expands (2026-05-2
     // Start on conv A; type a query that hits BOTH conversations.
     // Auto-promote on the first result (which will be one of them —
     // we don't care which; whichever it lands on must auto-expand).
-    await withNetRetry(() => page.goto(`/conversations/${CONV_A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_A}`))
     const input = await openSearchPanel(page)
     await input.click()
     await input.fill(NEEDLE)
@@ -430,7 +430,7 @@ test.describe('Search hit on a compact marker → marker auto-expands (2026-05-2
       })
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV_A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_A}`))
 
     // Wait for the conv to load (any bubble visible).
     await expect(page.locator('[data-message-uuid="filler-0000"]')).toBeVisible({ timeout: 5000 })
@@ -468,7 +468,7 @@ test.describe('Search hit on a compact marker → marker auto-expands (2026-05-2
     // explicitly click the result card. The marker must open AND
     // gain focus (so Cmd+C copies its content — the 2026-05-23
     // GATE 4 contract).
-    await withNetRetry(() => page.goto(`/conversations/${CONV_A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV_A}`))
 
     // Make sure the marker is collapsed before we start.
     await expect(page.locator('[data-compact-marker-panel]')).toHaveCount(0)

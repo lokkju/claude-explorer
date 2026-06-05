@@ -12,14 +12,14 @@ import { test, expect, withNetRetry } from './fixtures'
 test.describe('Dark mode runtime', () => {
   test.beforeEach(async ({ page, mockBackend }) => {
     await mockBackend();
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await page.evaluate(() => localStorage.clear());
-    await withNetRetry(() => page.reload());
+    await withNetRetry(page, () => page.reload());
   });
 
   test('toggling to dark theme applies .dark to <html> and dark-mode CSS to the body', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
-    await withNetRetry(() => page.goto('/settings'));
+    await withNetRetry(page, () => page.goto('/settings'));
 
     // Light mode first: capture body bg.
     await page.click('label:has-text("Light")');

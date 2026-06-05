@@ -77,7 +77,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
 
     const toolsCheckbox = page.locator(
       '[data-testid="header-show-tools-checkbox"]',
@@ -103,7 +103,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
 
     const toolsCheckbox = page.locator(
       '[data-testid="header-show-tools-checkbox"]',
@@ -127,7 +127,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
 
     const compactionsCheckbox = page.locator(
       '[data-testid="header-show-compactions-checkbox"]',
@@ -195,7 +195,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       })
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
 
     const compactionsCheckbox = page.locator(
       '[data-testid="header-show-compactions-checkbox"]',
@@ -246,7 +246,7 @@ test.describe('Conversation header toggles render as checkboxes (2026-05-24)', (
       conversations: [summary],
       details: { [CONV]: detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
 
     const compactionsCheckbox = page.locator(
       '[data-testid="header-show-compactions-checkbox"]',

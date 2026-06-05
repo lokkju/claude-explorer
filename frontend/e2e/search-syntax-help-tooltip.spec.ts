@@ -34,7 +34,7 @@ test.describe('Search syntax help tooltip (2026-05-14)', () => {
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${C1}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     // Open the SearchPanel.
@@ -73,7 +73,7 @@ test.describe('Search syntax help tooltip (2026-05-14)', () => {
       conversations: [c1Summary],
       details: { [C1]: c1Detail },
     })
-    await withNetRetry(() => page.goto(`/conversations/${C1}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C1}`))
     await expect(page.locator('[data-message-uuid="c1-m1"]')).toBeVisible()
 
     await page.keyboard.press('Meta+k')

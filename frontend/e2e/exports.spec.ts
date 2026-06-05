@@ -97,7 +97,7 @@ test.describe('Markdown export endpoint shape (B24)', () => {
     // Trigger the route by navigating through the page so the mock is in
     // effect; then make the request via the page's fetch context so it
     // goes through the same routing.
-    await withNetRetry(() => page.goto(`/conversations/${EX}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${EX}`))
 
     const resp = await page.evaluate(async (uuid) => {
       const r = await fetch(`/api/conversations/${uuid}/export/markdown?include_tools=false`)
@@ -137,7 +137,7 @@ test.describe('PDF export endpoint shape (B25)', () => {
     await mockBackend({ conversations: [summary], details: { [EX]: detail } })
     const calls: ExportCall[] = []
     await mockExports(page, calls)
-    await withNetRetry(() => page.goto(`/conversations/${EX}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${EX}`))
 
     const resp = await page.evaluate(async (uuid) => {
       const r = await fetch(`/api/conversations/${uuid}/export/pdf?include_tools=true`)
@@ -161,7 +161,7 @@ test.describe('Export endpoints honor include_tools query param (B26)', () => {
     await mockBackend({ conversations: [summary], details: { [EX]: detail } })
     const calls: ExportCall[] = []
     await mockExports(page, calls)
-    await withNetRetry(() => page.goto(`/conversations/${EX}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${EX}`))
 
     const withTools = await page.evaluate(async (uuid) => {
       const r = await fetch(`/api/conversations/${uuid}/export/markdown?include_tools=true`)
@@ -190,7 +190,7 @@ test.describe('Header export buttons pass showToolCalls through (B21 export half
     const calls: ExportCall[] = []
     await mockExports(page, calls)
 
-    await withNetRetry(() => page.goto(`/conversations/${EX}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${EX}`))
     await expect(page.locator('[data-message-uuid="ex-m1"]')).toBeVisible()
 
     // showToolCalls defaults to false. Click the Markdown export button.

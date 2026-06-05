@@ -176,7 +176,7 @@ test.describe('Message bookmarks (Build-4)', () => {
   });
 
   test('right pane has Search and Bookmarks tabs', async ({ page }) => {
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     // Settle signal: the bubble being in the DOM is the deterministic
     // signal that the App tree (including useKeyboardShortcuts' window
     // keydown handler) has mounted. Without this, a race between the
@@ -202,7 +202,7 @@ test.describe('Message bookmarks (Build-4)', () => {
   });
 
   test('hover-revealed star creates a bookmark; another click removes it', async ({ page }) => {
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     const bubble = page.locator('[data-message-uuid="msg-B"]');
     await bubble.hover();
 
@@ -228,7 +228,7 @@ test.describe('Message bookmarks (Build-4)', () => {
   });
 
   test('pressing b on a focused message toggles its bookmark', async ({ page }) => {
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     const bubble = page.locator('[data-message-uuid="msg-B"]');
     await bubble.click();
     // The 'b' handler reads `getSelectedMessageId()` from React context.
@@ -250,7 +250,7 @@ test.describe('Message bookmarks (Build-4)', () => {
   });
 
   test('bookmark deep-link from Bookmarks tab scrolls and flashes the message', async ({ page }) => {
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     const bubble = page.locator('[data-message-uuid="msg-B"]');
     await bubble.hover();
     await bubble.getByRole('button', { name: /bookmark/i }).click();
@@ -273,7 +273,7 @@ test.describe('Message bookmarks (Build-4)', () => {
   });
 
   test('Export to Markdown button on Bookmarks tab triggers a download', async ({ page }) => {
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`));
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`));
     const bubble = page.locator('[data-message-uuid="msg-B"]');
     await bubble.hover();
     await bubble.getByRole('button', { name: /bookmark/i }).click();

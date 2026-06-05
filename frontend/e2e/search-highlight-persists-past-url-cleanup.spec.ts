@@ -98,7 +98,7 @@ test.describe('Search-hit highlights persist past the URL-cleanup timer (2026-05
       details: { [CONV]: detail },
     })
     await mockSearch(page)
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
 
     // Open search panel, type the needle. Auto-promote should land on
     // msg-with-needle.
@@ -142,7 +142,7 @@ test.describe('Search-hit highlights persist past the URL-cleanup timer (2026-05
       details: { [CONV]: detail },
     })
     await mockSearch(page)
-    await withNetRetry(() => page.goto(`/conversations/${CONV}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CONV}`))
 
     const isMac = process.platform === 'darwin'
     await page.keyboard.press(isMac ? 'Meta+f' : 'Control+f')

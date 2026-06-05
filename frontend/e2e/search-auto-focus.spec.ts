@@ -102,7 +102,7 @@ test.describe('Search — auto-focus first match on results land (V1 polish)', (
     // by ring presence + visibility, not by viewport mathematics.
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${SM}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${SM}`))
     await expect(page.locator('[data-message-uuid="af-m1"]')).toBeVisible()
 
     // Open the search panel.
@@ -161,7 +161,7 @@ test.describe('Search — auto-focus first match on results land (V1 polish)', (
     await mockSearch(page, twoMatchResults)
     await page.setViewportSize({ width: 1024, height: 900 })
 
-    await withNetRetry(() => page.goto(`/conversations/${SM}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${SM}`))
     await page.locator('main').click()
     await page.keyboard.press('Meta+k')
     const searchInput = page.locator('input[placeholder="Search messages..."]')

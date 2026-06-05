@@ -52,7 +52,7 @@ test.describe('Cowork F12 — source indicator', () => {
       details: { [COWORK_UUID]: coworkDetail },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // The conversation name renders → list mounted.
     await expect(
@@ -73,7 +73,7 @@ test.describe('Cowork F12 — source indicator', () => {
       details: { [COWORK_UUID]: coworkDetail },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${COWORK_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${COWORK_UUID}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
 
     // The conversation-header region is the row directly under the

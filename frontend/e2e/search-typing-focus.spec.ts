@@ -144,7 +144,7 @@ test.describe('Search — typing keeps focus in input (2026-05-23 design)', () =
       details: { [A]: detailA, [B]: detailB },
     })
     await mockSearch(page)
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
     await expect(page.locator('[data-message-uuid="a-msg-1"]')).toBeVisible()
 
     const input = await openPanel(page)
@@ -177,7 +177,7 @@ test.describe('Search — typing keeps focus in input (2026-05-23 design)', () =
       details: { [A]: detailA, [B]: detailB },
     })
     await mockSearch(page)
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
     const input = await openPanel(page)
     await input.click()
     await input.fill('needle')
@@ -201,7 +201,7 @@ test.describe('Search — typing keeps focus in input (2026-05-23 design)', () =
       details: { [A]: detailA, [B]: detailB },
     })
     await mockSearch(page)
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
     await expect(page.locator('[data-message-uuid="a-msg-1"]')).toBeVisible()
 
     const input = await openPanel(page)
@@ -230,7 +230,7 @@ test.describe('Search — typing keeps focus in input (2026-05-23 design)', () =
       details: { [A]: detailA, [B]: detailB },
     })
     await mockSearch(page)
-    await withNetRetry(() => page.goto(`/conversations/${A}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${A}`))
     const input = await openPanel(page)
     await input.click()
     await input.fill('needle')

@@ -138,7 +138,7 @@ test.describe('CC Case 6 — thinking blocks silently dropped in viewer', () => 
       details: { [C]: detail },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
 
     // Step 1: page-level settle.
     await expect(page.getByTestId('message-stream')).toBeVisible()
@@ -177,7 +177,7 @@ test.describe('CC Case 6 — thinking blocks silently dropped in viewer', () => 
       details: { [C]: detail },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
 
     const bubble = page.locator('[data-message-uuid="th-assistant"]')
@@ -256,7 +256,7 @@ test.describe('CC Case 6 — thinking blocks silently dropped in viewer', () => 
       details: { [noThinkUuid]: noThinkDetail },
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${noThinkUuid}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${noThinkUuid}`))
     await expect(page.getByTestId('message-stream')).toBeVisible()
     const bubble = page.locator('[data-message-uuid="nt-a"]')
     await expect(bubble).toBeVisible()

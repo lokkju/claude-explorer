@@ -88,7 +88,7 @@ test.describe('Image lightbox cross-message navigation (manual finding 2026-05-0
     const detailX = makeDetail(summaryX, [m1, m2])
     await mockBackend({ conversations: [summaryX], details: { [summaryX.uuid]: detailX } })
 
-    await withNetRetry(() => page.goto(`/conversations/${summaryX.uuid}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${summaryX.uuid}`))
     // Click into the message pane so focusArea === 'detail' (otherwise
     // the global keyboard handler's gate doesn't apply and the test
     // doesn't reproduce the user's path).
@@ -132,7 +132,7 @@ test.describe('Image lightbox cross-message navigation (manual finding 2026-05-0
 test.describe('Image lightbox keyboard + open-original (manual finding 2026-05-04)', () => {
   test('Esc closes the lightbox', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await openLightboxWithDetailFocus(page)
     const lightbox = page.getByTestId('image-lightbox')
     await expect(lightbox).toBeVisible({ timeout: 5000 })
@@ -143,7 +143,7 @@ test.describe('Image lightbox keyboard + open-original (manual finding 2026-05-0
 
   test('ArrowRight / ArrowLeft navigate between images', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await openLightboxWithDetailFocus(page)
     const lightbox = page.getByTestId('image-lightbox')
     await expect(lightbox).toBeVisible({ timeout: 5000 })
@@ -168,7 +168,7 @@ test.describe('Image lightbox keyboard + open-original (manual finding 2026-05-0
 
   test('Open original button uses a non-data: URL (works in all browsers)', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await openLightboxWithDetailFocus(page)
     const lightbox = page.getByTestId('image-lightbox')
     await expect(lightbox).toBeVisible({ timeout: 5000 })

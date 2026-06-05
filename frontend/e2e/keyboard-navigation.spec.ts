@@ -51,7 +51,7 @@ test.describe('Keyboard Navigation', () => {
   test.beforeEach(async ({ page, mockBackend }) => {
     const { conversations, details } = buildFixtures();
     await mockBackend({ conversations, details });
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     // Wait for conversations to load
     await expect(page.locator('[role="button"]').first()).toBeVisible({
       timeout: 10000,
@@ -167,14 +167,14 @@ test.describe('Vim Mode', () => {
     const { conversations, details } = buildFixtures();
     await mockBackend({ conversations, details });
     // Switch to Vim mode
-    await withNetRetry(() => page.goto('/settings'));
+    await withNetRetry(page, () => page.goto('/settings'));
     // Wait for the Vim label to be visible before clicking
     const vimLabel = page.locator('label:has-text("Vim")');
     await expect(vimLabel).toBeVisible({ timeout: 10000 });
     await vimLabel.click();
     // Wait for setting to be saved in localStorage
     await page.waitForTimeout(500);
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
   });
 
   test('help modal shows Vim shortcuts', async ({ page }) => {
@@ -205,11 +205,11 @@ test.describe('Emacs Mode', () => {
     const { conversations, details } = buildFixtures();
     await mockBackend({ conversations, details });
     // Ensure Emacs mode is selected
-    await withNetRetry(() => page.goto('/settings'));
+    await withNetRetry(page, () => page.goto('/settings'));
     await page.click('label:has-text("Emacs")');
     // Wait for setting to be saved
     await page.waitForTimeout(500);
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
   });
 
   test('help modal shows Emacs shortcuts', async ({ page }) => {
@@ -237,7 +237,7 @@ test.describe('Accessibility', () => {
   test('page has proper heading structure', async ({ page, mockBackend }) => {
     const { conversations, details } = buildFixtures();
     await mockBackend({ conversations, details });
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for page to load
     await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
@@ -258,7 +258,7 @@ test.describe('Accessibility', () => {
   test('interactive elements are keyboard accessible', async ({ page, mockBackend }) => {
     const { conversations, details } = buildFixtures();
     await mockBackend({ conversations, details });
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for page to load
     await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
@@ -281,7 +281,7 @@ test.describe('Accessibility', () => {
   test('conversation list items have accessible names', async ({ page, mockBackend }) => {
     const { conversations, details } = buildFixtures();
     await mockBackend({ conversations, details });
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     // Wait for conversations
     await expect(page.getByRole('button', { name: /\d+ msgs/ }).first()).toBeVisible({
@@ -311,7 +311,7 @@ test.describe('Accessibility', () => {
     // placeholder, by convention; this proves a screen reader user
     // hears the same label the visual user sees).
     await mockBackend({});
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
 
     const searchInput = page.getByPlaceholder('Search titles and projects');
     await expect(searchInput).toBeVisible();
@@ -368,7 +368,7 @@ test.describe('Accessibility', () => {
       },
     });
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await expect.poll(() => listRequestCount).toBeGreaterThan(0)
 
     // Tag the window so we can detect a true browser reload (which would

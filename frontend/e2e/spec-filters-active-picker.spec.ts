@@ -72,7 +72,7 @@ test.describe('Active-filter picker', () => {
       await route.fallback()
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Currently filtered (Foo hidden).
     await expect(page.getByText('Foo morning')).toHaveCount(0)
@@ -128,7 +128,7 @@ test.describe('Active-filter picker', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const picker = await pickerLocator(page)
     await picker.click()
 
@@ -175,7 +175,7 @@ test.describe('Active-filter picker', () => {
       await route.fallback()
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Pre-condition: no filter active. Foo visible.
     await expect(page.getByText('Foo morning')).toBeVisible()
@@ -198,7 +198,7 @@ test.describe('Active-filter picker', () => {
 
     // (3) Reload: state persists; picker still reflects HideFoo and Foo
     // is still hidden.
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
     await expect(page.getByText('Foo morning')).toHaveCount(0)
     picker = await pickerLocator(page)
     await expect(picker).toContainText(/HideFoo/i)
@@ -228,7 +228,7 @@ test.describe('Active-filter picker', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const picker = await pickerLocator(page)
     // Wait for prefs hydration: the picker should reflect HideFoo BEFORE
     // we snapshot beforeText, otherwise it would still show the
@@ -272,7 +272,7 @@ test.describe('Active-filter picker', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const picker = await pickerLocator(page)
     await picker.click()
 

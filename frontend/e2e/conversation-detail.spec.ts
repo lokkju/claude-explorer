@@ -69,7 +69,7 @@ const detail = makeDetail(summary, messages)
 test.describe('Detail — Tools toggle hides tool blocks by default (B21 viewer)', () => {
   test('toggling Tools button changes button state', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [CD]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${CD}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CD}`))
 
     await expect(page.locator('[data-message-uuid="cd-m2"]')).toBeVisible()
     // 2026-05-25: Tools control converted from Button (variant flip) to
@@ -87,7 +87,7 @@ test.describe('Detail — Tools toggle hides tool blocks by default (B21 viewer)
 test.describe('Detail — Header "Expand / Collapse All Tools" (B19)', () => {
   test('header toggle button label flips between Expand and Collapse', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [CD]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${CD}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CD}`))
 
     // Enable tool visibility (Expand/Collapse only renders while tools shown).
     // 2026-05-25: Tools control is now a <input type="checkbox">.
@@ -114,7 +114,7 @@ test.describe('Detail — Header "Expand / Collapse All Tools" (B19)', () => {
 test.describe('Detail — Per-block hover-revealed copy icon (B20)', () => {
   test('copy icon appears on hover and copies message Markdown to the clipboard', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [CD]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${CD}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CD}`))
 
     const m1 = page.locator('[data-message-uuid="cd-m1"]')
     await expect(m1).toBeVisible()
@@ -193,7 +193,7 @@ test.describe('Detail — Per-block copy icon hidden on argless command markers 
 
   test('argless marker bubble: hover does NOT reveal a copy icon', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [xSummary], details: { [CDX]: xDetail } })
-    await withNetRetry(() => page.goto(`/conversations/${CDX}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CDX}`))
 
     const marker = page.locator('[data-message-uuid="cdx-m2"]')
     await expect(marker).toBeVisible()
@@ -220,7 +220,7 @@ test.describe('Detail — Per-block copy icon hidden on argless command markers 
 
   test('sibling regular bubble in same conversation STILL exposes copy icon on hover (counter-invariant)', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [xSummary], details: { [CDX]: xDetail } })
-    await withNetRetry(() => page.goto(`/conversations/${CDX}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CDX}`))
 
     const regular = page.locator('[data-message-uuid="cdx-m1"]')
     await expect(regular).toBeVisible()
@@ -244,7 +244,7 @@ test.describe('Detail — Per-block copy icon hidden on argless command markers 
 test.describe('Detail — Local timestamps on user AND assistant (B23)', () => {
   test('every visible bubble shows a timestamp', async ({ page, mockBackend }) => {
     await mockBackend({ conversations: [summary], details: { [CD]: detail } })
-    await withNetRetry(() => page.goto(`/conversations/${CD}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${CD}`))
 
     // Wait for the first bubble specifically, not just "any [data-message-uuid]"
     // — the locator can race the React mount.

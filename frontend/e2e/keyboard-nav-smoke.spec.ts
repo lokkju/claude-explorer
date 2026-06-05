@@ -109,18 +109,18 @@ test.describe('Keyboard nav integration smoke (2026-05-28)', () => {
   }) => {
     // Force Emacs mode (default), but pin it so a leaked localStorage from
     // a sibling test can't flip us into Vim.
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.evaluate(() =>
       localStorage.setItem('keyboardMode', JSON.stringify('emacs')),
     )
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
 
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
 
     // ─── Surface 1: Sidebar ─────────────────────────────────────────────
     // Load the conversations index so the keyboard-selected sidebar row
     // index is 0 and no detail pane is open.
-    await withNetRetry(() => page.goto('/conversations'))
+    await withNetRetry(page, () => page.goto('/conversations'))
     await expect(page.getByText('Smoke-test fixture')).toBeVisible()
 
     // Enter from the list opens the conversation and sets focusArea=detail

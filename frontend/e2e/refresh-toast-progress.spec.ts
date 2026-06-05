@@ -56,7 +56,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -87,7 +87,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -110,7 +110,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     // Wait for at least one toast.
@@ -140,7 +140,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();
@@ -179,7 +179,7 @@ test.describe('Refresh toast: live progress text (Bug 2)', () => {
       });
     });
 
-    await withNetRetry(() => page.goto('/'));
+    await withNetRetry(page, () => page.goto('/'));
     await clickRefresh(page);
 
     const toast = page.locator('[data-sonner-toast]').first();

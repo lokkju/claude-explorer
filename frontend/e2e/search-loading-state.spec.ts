@@ -70,7 +70,7 @@ test.describe('Search panel loading state (Bug B)', () => {
       })
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await page.locator('main').click()
     await page.keyboard.press('Meta+k')
     const input = page.locator('input[placeholder="Search messages..."]')
@@ -131,7 +131,7 @@ test.describe('Search panel loading state (Bug B)', () => {
       }
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
     await page.locator('main').click()
     await page.keyboard.press('Meta+k')
     const input = page.locator('input[placeholder="Search messages..."]')

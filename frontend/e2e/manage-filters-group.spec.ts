@@ -41,7 +41,7 @@ test.describe('CF2 — manage filters group editor', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
 
     // Open Manage filters.
     // CFR1: "Manage filters…" lives inside the active-filter picker

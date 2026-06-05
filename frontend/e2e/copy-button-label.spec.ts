@@ -27,7 +27,7 @@ test('conversation Copy button is labeled "Copy as Markdown"', async ({ page, mo
     details: { [uuid]: makeDetail(summary, messages) },
   });
 
-  await withNetRetry(() => page.goto('/'));
+  await withNetRetry(page, () => page.goto('/'));
 
   const firstConv = page.getByRole('button', { name: /\d+ msgs/ }).first();
   await firstConv.click();

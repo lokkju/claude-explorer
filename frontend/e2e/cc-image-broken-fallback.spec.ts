@@ -60,7 +60,7 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockCcImage404(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
 
     // F3 audit: scope to THIS message's tile rather than .first(). The
     // current fixture happens to render only one tile, but a sibling
@@ -98,7 +98,7 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockCcImage404(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
 
     // F3 audit: scope to msg-inline so a future sibling fixture can't
     // shift coverage to the wrong tile.
@@ -127,7 +127,7 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
     await mockBackend({ conversations: [summary], details: { [C]: detail } })
     await mockCcImage404(page)
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
 
     // F3 audit: scope to msg-marker-copy.
     const messageScope = page.locator('[data-message-uuid="msg-marker-copy"]')
@@ -188,7 +188,7 @@ test.describe('CC image broken-image fallback (manual finding 2026-05-04)', () =
       }
     })
 
-    await withNetRetry(() => page.goto(`/conversations/${C}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${C}`))
 
     // F3 audit: scope to cc-marker-retry message.
     const messageScope = page.locator('[data-message-uuid="cc-marker-retry"]')

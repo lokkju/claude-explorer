@@ -123,7 +123,7 @@ test.describe('M4: Per-block copy icon is hover-revealed', () => {
     page,
   }) => {
     await mockBackend(page)
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`))
 
     const bubble = page.locator('[data-message-uuid="msg-1"]')
     await expect(bubble).toBeVisible()
@@ -157,7 +157,7 @@ test.describe('M4: Per-block copy icon is hover-revealed', () => {
     page,
   }) => {
     await mockBackend(page)
-    await withNetRetry(() => page.goto(`/conversations/${FAKE_UUID}`))
+    await withNetRetry(page, () => page.goto(`/conversations/${FAKE_UUID}`))
 
     const bubble = page.locator('[data-message-uuid="msg-1"]')
     await expect(bubble).toBeVisible()

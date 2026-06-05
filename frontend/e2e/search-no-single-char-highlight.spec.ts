@@ -152,7 +152,7 @@ test.describe('Search highlight — Bug A v3: no single-char `m` marks', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await expect(input).toBeVisible()
@@ -205,7 +205,7 @@ test.describe('Search highlight — Bug A v3: no single-char `m` marks', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     await page.keyboard.press('Meta+k')
     const input = page.getByPlaceholder('Search messages...')
     await input.fill('comprehensive')

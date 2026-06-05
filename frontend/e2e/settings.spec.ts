@@ -3,7 +3,7 @@ import { test, expect, withNetRetry } from './fixtures'
 test.describe('Settings Page', () => {
   test.beforeEach(async ({ page, mockBackend }) => {
     await mockBackend()
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
   })
 
   test('can navigate to settings page', async ({ page }) => {
@@ -21,13 +21,13 @@ test.describe('Settings Page', () => {
   })
 
   test('theme selection persists across page reload', async ({ page }) => {
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
 
     // Select dark mode
     await page.click('label:has-text("Dark")')
 
     // Reload the page
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
 
     // Dark should still be selected (Radix UI uses button with role="radio" and data-state)
     const darkRadio = page.locator('button[role="radio"][value="dark"]')
@@ -35,13 +35,13 @@ test.describe('Settings Page', () => {
   })
 
   test('keyboard mode selection persists', async ({ page }) => {
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
 
     // Select Vim mode
     await page.click('label:has-text("Vim")')
 
     // Reload the page
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
 
     // Vim should still be selected (Radix UI uses button with role="radio" and data-state)
     const vimRadio = page.locator('button[role="radio"][value="vim"]')
@@ -49,7 +49,7 @@ test.describe('Settings Page', () => {
   })
 
   test('displays data directory from config', async ({ page }) => {
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
 
     // Data section should show the directory from API
     await expect(page.locator('text=Data Directory')).toBeVisible()
@@ -59,7 +59,7 @@ test.describe('Settings Page', () => {
   })
 
   test('displays conversation count', async ({ page }) => {
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
 
     // Should show conversation count
     await expect(page.locator('text=Total Conversations')).toBeVisible()
@@ -79,7 +79,7 @@ test.describe('Settings Page', () => {
   test('all three §16.1 preferences (theme, keyboard, markdownExportMode) persist together across reload', async ({
     page,
   }) => {
-    await withNetRetry(() => page.goto('/settings'))
+    await withNetRetry(page, () => page.goto('/settings'))
 
     const exportSection = page.locator('[data-section="markdown-export"]')
     await expect(exportSection).toBeVisible()
@@ -109,7 +109,7 @@ test.describe('Settings Page', () => {
     await modePatch
 
     // Hard reload — the persistence layer must serve all three prefs back.
-    await withNetRetry(() => page.reload())
+    await withNetRetry(page, () => page.reload())
 
     // Theme: <html> still carries the `dark` class.
     await expect(page.locator('html')).toHaveClass(/dark/)

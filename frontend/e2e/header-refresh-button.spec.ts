@@ -35,7 +35,7 @@ test.describe('Header Refresh button (Sidebar)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const headerRefresh = page.locator('aside button[title="Refresh conversation list"]')
     await expect(headerRefresh).toBeVisible()
     await headerRefresh.click()
@@ -81,7 +81,7 @@ test.describe('Header Refresh button (Sidebar)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     // Wait for the initial list load.
     await expect.poll(() => listRequestCount).toBeGreaterThan(0)
     const before = listRequestCount
@@ -111,7 +111,7 @@ test.describe('Header Refresh button (Sidebar)', () => {
       },
     })
 
-    await withNetRetry(() => page.goto('/'))
+    await withNetRetry(page, () => page.goto('/'))
     const headerRefresh = page.locator('aside button[title="Refresh conversation list"]')
     await headerRefresh.click()
 

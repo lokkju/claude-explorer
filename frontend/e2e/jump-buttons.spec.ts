@@ -42,7 +42,7 @@ function buildLongConversation() {
 }
 
 async function openLongConversation(page: import('@playwright/test').Page) {
-  await withNetRetry(() => page.goto('/'));
+  await withNetRetry(page, () => page.goto('/'));
   const row = page.getByText(LONG_TITLE);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();
