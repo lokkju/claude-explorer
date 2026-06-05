@@ -18,6 +18,7 @@ import json
 import sqlite3
 from collections import Counter
 from datetime import datetime, timezone
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any, Literal
 
@@ -44,6 +45,11 @@ mcp = FastMCP(
         "analyze, or export past conversation sessions. "
         "Never call these tools proactively or speculatively."
     ),
+    # Resolve at construction time so the MCP-protocol serverInfo.version
+    # field carries OUR package version, not FastMCP's own. Otherwise
+    # connecting clients see the framework's version (e.g. "3.2.4") and
+    # have no portable way to ask which claude-explorer they're talking to.
+    version=_pkg_version("claude-explorer"),
 )
 
 # MCP search LIMIT (plan §C). Higher than the HTTP route's 1000 cap
