@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claude-explorer"
-version = "1.0.3"
+version = "1.0.4"
 description = "Local archive + web viewer + MCP server for Claude Desktop and Claude Code conversations. Browse, search, export, and let Claude query its own history."
 readme = "README.md"
 license = "Apache-2.0"
