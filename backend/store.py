@@ -153,6 +153,12 @@ def _parse_content_blocks(content: list[dict[str, Any]]) -> list[ContentBlock]:
             input=block.get("input"),
             content=parsed_nested,
             source=block.get("source"),
+            # Anthropic content-block linking IDs (preserved so the
+            # MCP get_messages tool can surface them for call/result
+            # pairing — positional adjacency isn't reliable for
+            # parallel tool calls).
+            id=block.get("id"),
+            tool_use_id=block.get("tool_use_id"),
         )
         blocks.append(parsed)
     return blocks

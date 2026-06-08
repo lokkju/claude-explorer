@@ -307,9 +307,9 @@ The function returns `list[dict]`. Each entry's shape depends on the verbosity f
   "timestamp": "<iso8601>",
   "content": [
     {"type": "text", "text": "..."},
-    {"type": "tool_use", "name": "...", "input": {...}},
-    {"type": "tool_use", "name": "...", "input_preview": "<json>..."},  // if input JSON > 200 chars and include_tool_results=False
-    {"type": "tool_result", "content": [...]}  // only when include_tool_results=True
+    {"type": "tool_use", "id": "toolu_01ABC...", "name": "...", "input": {...}},
+    {"type": "tool_use", "id": "toolu_01DEF...", "name": "...", "input_preview": "<json>..."},  // if input JSON > 200 chars and include_tool_results=False
+    {"type": "tool_result", "tool_use_id": "toolu_01ABC...", "content": [...]}  // only when include_tool_results=True
   ]
 }
 ```
@@ -317,8 +317,8 @@ The function returns `list[dict]`. Each entry's shape depends on the verbosity f
 Content-block filtering (`_filter_content_blocks`, lines 278-316):
 
 - `text` blocks: included if `text.strip()` non-empty. Tool-placeholder strings stripped when `include_tool_calls=False`.
-- `tool_use` blocks: only included if `include_tool_calls=True`. The full `input` dict is included if `include_tool_results=True` *or* the JSON-serialized input is ≤200 chars; otherwise, `input_preview` carries the first 200 chars + `"..."`.
-- `tool_result` blocks: only included if `include_tool_results=True`. Their nested `content` is recursively filtered with the same flags.
+- `tool_use` blocks: only included if `include_tool_calls=True`. The full `input` dict is included if `include_tool_results=True` *or* the JSON-serialized input is ≤200 chars; otherwise, `input_preview` carries the first 200 chars + `"..."`. The Anthropic `id` (e.g. `"toolu_01ABC..."`) is emitted when present so callers can pair parallel calls to their results.
+- `tool_result` blocks: only included if `include_tool_results=True`. Their nested `content` is recursively filtered with the same flags. The `tool_use_id` back-reference is emitted when present — match it to a `tool_use.id` from the previous (or any nearby) message to reconstruct the call/result pair. Positional adjacency is NOT a reliable pairing signal: parallel calls may return out of order, and some results may be missing.
 - `image` blocks: **currently not emitted** by `_filter_content_blocks` (the function has no `image` branch). This is a known gap.
 
 **Errors:**

@@ -7,7 +7,14 @@ from pydantic import BaseModel, Field
 
 
 class ContentBlock(BaseModel):
-    """A content block within a message."""
+    """A content block within a message.
+
+    Anthropic content-block linking (``id`` and ``tool_use_id``) is
+    preserved through the parse — the MCP ``get_messages`` tool surfaces
+    these so an external caller can pair parallel tool_use calls to
+    their tool_result back-references. Both fields are optional because
+    legacy fixtures and non-tool blocks don't carry them.
+    """
 
     type: str  # text | tool_use | tool_result | image
     text: str | None = None
@@ -18,6 +25,13 @@ class ContentBlock(BaseModel):
     # {"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}.
     # claude.ai sometimes uses {"type": "image", "source": {"type": "url", "url": "..."}}.
     source: dict[str, Any] | None = None
+    # Anthropic content-block IDs. ``id`` is set on ``tool_use`` blocks;
+    # ``tool_use_id`` is the back-reference on the matching
+    # ``tool_result`` block. Pair calls to results by matching these
+    # — positional adjacency is NOT reliable (parallel calls return
+    # out of order, some may be missing).
+    id: str | None = None
+    tool_use_id: str | None = None
 
 
 class Message(BaseModel):

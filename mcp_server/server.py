@@ -311,6 +311,10 @@ def _filter_content_blocks(
                     "type": "tool_use",
                     "name": block.name or "",
                 }
+                # Surface the Anthropic tool_use id so callers can pair
+                # parallel calls to their matching tool_result blocks.
+                if block.id:
+                    entry["id"] = block.id
                 if include_tool_results and block.input:
                     entry["input"] = block.input
                 else:
@@ -327,7 +331,11 @@ def _filter_content_blocks(
                 nested = _filter_content_blocks(
                     block.content, include_tool_calls, include_tool_results
                 )
-                result.append({"type": "tool_result", "content": nested})
+                entry = {"type": "tool_result", "content": nested}
+                # Back-reference to the tool_use.id this is a result for.
+                if block.tool_use_id:
+                    entry["tool_use_id"] = block.tool_use_id
+                result.append(entry)
     return result
 
 
