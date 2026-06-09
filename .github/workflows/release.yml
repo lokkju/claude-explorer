@@ -105,6 +105,65 @@ jobs:
           path: dist/*.whl
           retention-days: 7
 
+  build-mcpb:
+    name: Build MCPB bundle
+    # Runs in parallel with `build` (wheel) — they share the test-gate
+    # dependency but don't depend on each other.
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required for action-gh-release to upload assets
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Set up Node (for the mcpb CLI)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: '20'
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.11'
+
+      - name: Install mcpb CLI
+        # Claude Desktop extension bundler. Spec lives at
+        # https://github.com/anthropics/dxt (repo not yet renamed
+        # to mcpb at time of writing). The CLI provides `pack`,
+        # `validate`, and `info` subcommands; build-mcpb.py shells
+        # out to `pack`.
+        run: npm install -g @anthropic-ai/mcpb
+
+      - name: Build MCPB artifact
+        # scripts/build-mcpb.py walks the import closure of
+        # mcp_server.server, copies the closed-over modules into a
+        # tiny self-contained bundle dir, writes manifest.json (read
+        # from mcp_server.__version__), then runs `mcpb pack` to
+        # produce dist/claude-explorer-${VERSION}.mcpb.
+        # Zero pip deps — pure stdlib script.
+        run: python scripts/build-mcpb.py
+
+      - name: Verify MCPB artifact
+        # Fail-loud guard: if the artifact is missing or empty, the
+        # subsequent release-attach step would still "succeed" with no
+        # files, silently shipping a release without the .mcpb.
+        run: |
+          set -euo pipefail
+          MCPB=$(ls dist/claude-explorer-*.mcpb | head -1)
+          if [ -z "$MCPB" ] || [ ! -s "$MCPB" ]; then
+            echo "::error::MCPB artifact missing or empty"
+            exit 1
+          fi
+          echo "MCPB artifact OK: $MCPB ($(du -h "$MCPB" | cut -f1))"
+
+      - name: Attach MCPB to GitHub Release
+        # action-gh-release auto-detects the tag from $GITHUB_REF.
+        # Idempotent: re-running on the same tag updates the asset.
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844  # v2
+        with:
+          files: dist/claude-explorer-*.mcpb
+          fail_on_unmatched_files: true
+
   publish:
     name: Publish to PyPI
     needs: build
