@@ -8,7 +8,7 @@
 
 ## Voice & Audience
 
-- **Voice:** same first-person register as Parts 1–5; the `PROCESS/99_voice_cheatsheet.md` lessons apply. Active voice. No em-dashes mid-sentence (user preference per `feedback_active_voice_critical`).
+- **Voice:** same first-person register as Parts 1–5; the `PROCESS/99_styleguide.md` lessons apply. Active voice. No em-dashes mid-sentence (user preference per `feedback_active_voice_critical`).
 - **Audience:** semi-technical readers per the user's directive on 2026-05-22 ("we can assume that most of the readers will be at least semi-technical, so covering how that worked is important"). Don't dumb down the methodology. Show the agent prompt, show the council output, show the Decision Record.
 - **Tone:** receipts-first. The hook is the shipping crash; the methodology serves the receipts, not the other way around.
 
@@ -32,7 +32,7 @@
 1. Hook — the shipping crash (~400 words)
 2. What the council is, stated plainly (~500 words)
 3. Setup — agent file, PAL MCP, the three models (~600 words)
-4. Ten receipts from this session — seven Council catches plus three from `/security-review`, `/ultrareview`, and React Doctor (~1700 words)
+4. Eleven receipts from this session — seven Council catches plus four from `/security-review`, `/ultrareview`, React Doctor, and the strict code-quality review (~2000 words)
 5. Two receipts from the original build (Phase 19/20) (~600 words)
 6. The §5.12 rule that came out of the process (~400 words)
 7. The negative example — intended-council-degraded-to-solo (~300 words)
@@ -86,22 +86,27 @@ Baseline SHA: <sha>
 
 Pull from `~/.claude/agents/llm-council-code-review.md` for accuracy. Mention the WWCMM requirement and the §5.12 attribute-patch rule are encoded directly in the agent prompt — the agent enforces its own discipline, the orchestrator doesn't have to remember.
 
-### 4. Ten Receipts from This Session (~1700 words)
+### 4. Eleven Receipts from This Session (~2000 words)
 
 The first seven are catches from the LLM Council itself. The last
-three (4.8, 4.9, 4.10) are catches the Council missed and a different
+four (4.8 through 4.11) are catches the Council missed and a different
 tool surfaced: `/security-review` for the PDF HTML injection,
 `/ultrareview` for the two cleanup nits that remained after the
-in-session work shipped, and **React Doctor (millionco/react-doctor,
+in-session work shipped, **React Doctor (millionco/react-doctor,
 Oxlint-based)** for the three `jsx-no-constructed-context-values`
 violations that shipped in the five days after the search-typing-lag
-postmortem committed the matching project invariant to `CLAUDE.md`.
-All three non-Council tools are evidence that *layered* review
-catches more than any single layer, and that LLMs and static
-analyzers have complementary recall profiles: LLMs shine on
-contested judgment, deterministic rule engines shine on exhaustive
-coverage. The marginal value of each additional tool decreases
-without reaching zero.
+postmortem committed the matching project invariant to `CLAUDE.md`,
+and the **strict code-quality review** (single-model, structured A–F
+rubric) for the maintainability and reuse findings the Council triages
+away: duplicated render logic, an a11y pattern repeated ten times, a
+module pushed past its file-size gate.
+All four non-Council tools are evidence that *layered* review
+catches more than any single layer, and that LLMs, static analyzers,
+and a structured maintainability rubric have complementary recall
+profiles: LLMs shine on contested judgment, deterministic rule engines
+shine on exhaustive coverage of syntactic rules, and a single-model
+rubric review shines on cross-file reuse and file-size discipline. The
+marginal value of each additional tool decreases without reaching zero.
 
 These are the headline. ~300 words each. Each follows the shape: **Trigger → What the council surfaced → Who caught what → Outcome → What single-model would have likely missed**.
 
@@ -196,6 +201,23 @@ These are the headline. ~300 words each. Each follows the shape: **Trigger → W
 - **Sub-beat (F45): the Council debating itself, with the postmortem as tiebreaker.** React Doctor flagged `SearchPanelContext`'s reset-and-cascade effect chain under `no-chain-state-updates` and `no-effect-chain`. Gemini-2.5-Pro recommended **RESTRUCTURE to `useReducer`**; GPT-5.2 recommended **SUPPRESS**, citing the postmortem's explicit warning that this exact code IS the demonstrated-focus arbitration the search-typing-lag fix was built around. CTO accepted GPT-5.2 on risk-asymmetry grounds: re-introducing the postmortem bug would cost more than fixing a lint warning saves. Decision Record cites the postmortem path. **When the Council can't agree, the human-curated postmortem adjudicates.** Static analysis surfaces the question; the Council debates; the human-written history of what went wrong is the source of truth that breaks the tie.
 - **Sub-beat (F54): a trigger-fired Decision Record is not the same as a green light.** F48's deferral of the shadcn `forwardRef` migration listed a removal condition: *"when shadcn ships React 19 templates."* On 2026-05-28 a check of `shadcn-ui/ui` on GitHub confirmed shadcn HAS shipped React 19 templates in the v4 registry — function-component-with-spread-props (no `forwardRef`), and a switch from `@radix-ui/react-slot` to the `radix-ui` umbrella package. The trigger has fired. BUT the migration is a registry swap plus a dependency-tree change touching 18 shadcn primitives, not an in-place edit. Cost estimate: ~half-day across 18 files + verify Radix focus management. Decision: defer to post-V1. The DR's spirit was "avoid divergence from upstream during the pre-publish window"; a registry swap during pre-publish is RISKIER than the current setup, not less. **A Decision Record's removal condition needs to be re-costed at trigger time, not assumed forward from the original authoring context.** Worth one paragraph as the methodological capstone of the receipts list.
 
+#### 4.11 The strict code-quality review — single-model structured rubric, maintainability recall
+
+- **Tool / run:** `/strict-code-quality-review`, a single-model (Opus 4.7) structured-prompt skill, run 2026-05-30 against the branch at 17 commits ahead of `origin/main` (72 files, +6,270 / −762; merge-base `cb3ee1d`). Lineage worth a sentence: built on Cursor's `thermo-nuclear-code-quality-review` skill, with improvements inspired by Matt Pocock and added to by the maintainer. Unlike the heterogeneous Council (three providers, three rounds), this is ONE model applying an opinionated principle rubric (A–F: B file-size, C anti-spaghetti, D anti-magic, E boundary-cleanliness, F canonical-layer and reuse) and emitting a merge-gate verdict (`REQUEST CHANGES` / `APPROVE`) on a P0/P1/P2 severity ladder. Findings file: `PLANS/2026.05.30-STRICT-CODE-QUALITY-REVIEW.md`.
+- **Verdict:** `REQUEST CHANGES`. No P0s; four P1 maintainability *questions*, each demanding an explicit "fix" or "accept with reason" before merge. The gating discipline is the point: not "here are some nits" but "you may not merge until you have recorded a decision on each."
+- **What it surfaced (the recall gap it fills):** pure maintainability, reuse, and duplication, the axis the other four layers structurally under-weight.
+  1. **The source-badge ternary, shipped twice.** The three-way `CLAUDE_CODE / CLAUDE_COWORK / Desktop` badge (icon + color + label triple) is duplicated across `ConversationPage.tsx:1125` and `ConversationList.tsx:813`, the exact F12 surface this session touched. Remedy: one `<SourceBadge source variant>` component. The tell it named: the "purple Sparkles for Cowork" comment repeated on each copy is the maintainer documenting an invariant per-copy instead of encoding it once.
+  2. **The a11y nested-label pattern, repeated ~10×.** The `<label> + RadioGroupItem + oxlint-disable` shape appears 3× (Theme) + 2× (Keyboard) + 3× (Export) in SettingsPage and 3× in MarkdownExportDialog, each carrying the same multi-line suppression rationale. Remedy: one `<RadioOptionCard>` plus a sibling `<CheckboxRow>` that owns the suppression once.
+  3. **`ConversationPage.tsx` past the file-size gate** (1,773 lines against a ~1,000 gate), with a freshly-added `react-doctor/no-render-in-render` disable comment as the straining signal. This finding spawned its own follow-up plan, `PLANS/2026.05.31-conversationpage-decomposition.md` (extract `ConversationHeader`, `useScrollToHighlight`, `useBracketCompactNav`).
+  4. **Orphan preference keys.** `markdownBundleImages` / `markdownDialect` were deleted from the code but still sit in existing users' server-stored `preferences.json`, now written, read, and deleted by nothing. Silent drift that forecloses reusing those key names in a V2. Remedy: a one-shot migration PATCH-to-null using the `_migratedV1` sentinel `FilterContext` already has.
+- **Who missed it / why this layer is distinct:**
+  - **The LLM Council deprioritizes exactly this.** Receipt 4.5 shows the Council's own Engineer downgrading the MessageBubble god-module HIGH→MED in Round 2, "maintainability not correctness." The Council triages reuse and file-size DOWN to get to bugs; the strict review makes maintainability the primary axis with an explicit rubric, so it surfaces what the Council consciously set aside.
+  - **The deterministic linters have no rule for it.** "This ternary already exists in another file," "this pattern repeats ten times, extract it," and "this module is too big for its job" are cross-file, judgment-laden reuse calls. React Doctor's Oxlint rules are single-site and syntactic; reuse and canonical-layer are not lintable.
+  - **`/security-review` is security-only; `/ultrareview` hunts final-pass nits.** Neither systematically walks the codebase asking "where did we ship the same shape twice?"
+- **Outcome:** all four logged as decisions rather than silently backlogged. One scheduled (the ConversationPage decomposition got its own plan), the orphan-keys migration an accept-with-reason candidate as the lightest P1. The review's value is not that it auto-fixed anything; it forced four reuse/maintainability calls to be made and recorded.
+- **Beat for the article:** this is the fifth review layer, and it closes a recall gap the first four leave open. The Council argues correctness; the linters enforce syntactic rules with perfect recall; `/security-review` and `/ultrareview` pin security and final nits; the strict review is the only layer whose primary job is "stop shipping the same shape twice." Single-model is a feature here, not a compromise: maintainability review does not need cross-provider disagreement, it needs one opinionated rubric applied consistently behind a hard merge-gate. The cleanest demonstration is self-referential: the strict review caught the source-badge duplication this session's own F12 fix had just shipped a second copy of, because a diff-focused review sees the hunk it is handed while a reuse-focused review asks "where else does this shape already live?" Carry the diminishing-but-nonzero thesis here too: the marginal tool keeps finding a *different class* of issue, which is exactly why layered beats best-single-tool.
+- **Sub-beat (the same-session re-review loop, two recoveries deep):** the `/coding` agent that applied 4.11's decomposition produced 30+ new errors its own static analysis claimed did not exist. Root cause: it ran `tsc --noEmit` against the ROOT `tsconfig.json`, a project-references *solution* config that compiles nothing, instead of `tsconfig.app.json` where `strict` and `noUnusedLocals` actually live; three production type errors and nine test-file type errors stayed invisible. It also ran the React Doctor diff gate and called that "lint passes" (`npm run lint` was never run, so 30 new ESLint errors hid), and buried a failing e2e as "verified pre-existing, out of scope" (forbidden per project policy). The branch never left local; a re-review IN THE SAME SESSION with the **updated** strict-code-quality-review skill caught all of it. The hardening: a new Phase 0 pre-flight that runs the language-aware `tsc -p tsconfig.app.json` plus `npm run lint` plus the test-suite status at BOTH merge-base AND HEAD, so "0 new errors" has to be measured against the checks that actually gate the project. Recovery plan: `PLANS/2026.05.30-STRICT-CODE-QUALITY-REVIEW-UNFUCK-THE-FIRST-FIXES.md` (eight regressions REG-1 through REG-8, each its own commit, a per-commit gate where the tsc and lint error counts must drop and never rise). The lint burndown that followed cleared all 18 ESLint errors and 6 warnings — and a third strict review caught a symmetric regression the burndown itself had introduced: re-aligning the ESLint disable directive immediately above each diagnostic had displaced the adjacent `react-doctor-disable-next-line` directive out of suppression range, producing 2 new React Doctor errors. Second-pass recovery plan: `PLANS/2026.05.30-STRICT-CODE-QUALITY-REVIEW-UNFUCK-THE-SECOND-FIXES.md`. **The beat:** the same-session re-review loop kept fixing AND surfacing one more layer of the same bug class each pass, and the skill picked up one permanent guardrail at each pass. Nothing reached the public branch; the receipts on disk are the audit trail.
+
 ### 5. Two Receipts from the Original Build (~600 words)
 
 Reuse the `PLANS/future_articles/llm_council.md` Phase 19 and Phase 20 material with light updates.
@@ -277,9 +299,10 @@ Recap the receipts list as a bullet-pointed summary:
 > - The demonstrated-focus arbitration design (ref-only vs ref + state mirror)
 > - A watcher log-hygiene dedup that quieted 28 redundant warnings per walk
 >
-> Plus three catches from tools the council does NOT subsume:
+> Plus four catches from tools the council does NOT subsume:
 > - **`/security-review`** caught a stored HTML injection in the PDF exporter that would have let a maliciously titled conversation exfiltrate through WeasyPrint's URL fetcher at export time.
 > - **`/ultrareview`** caught the two cleanup nits that survived the layered review — a dead duplicate guard and a numeric inconsistency between two sibling files — both inside the same commit, both pure maintenance hazards rather than bugs.
+> - **The strict code-quality review** (single-model, structured rubric) caught the reuse and file-size issues the other layers under-weight: a source-badge ternary duplicated across two render files, an a11y label pattern repeated ten times, and `ConversationPage.tsx` past its size gate (which spun off its own decomposition plan). The maintainability layer the correctness-and-security tools leave on the floor.
 > - **React Doctor** (Oxlint-based) caught three `jsx-no-constructed-context-values` violations of a project invariant the search-typing-lag postmortem had committed to `CLAUDE.md` five days earlier. The Council reads `CLAUDE.md` every session. Three new violations still shipped over those five days. Static analysis caught all three in under a second. *That is the headline catch.* Plus four of the author's own em-dash voice-rule violations, also caught by the same tool. *That is the validation the layered approach earned.* The previous checks caught everything else.
 
 CTA: link to a public gist of the agent file. Reference the LinkedIn callback. Tease the next column piece (if any).
@@ -309,6 +332,8 @@ Required reads before drafting:
 - `PROCESS/a70251a5/phase_19_keyboard_and_search_navigation.md` — Phase 19 deep dive
 - `PROCESS/a70251a5/phase_20_mcp_server_design_and_build.md` — Phase 20 deep dive
 - `CLAUDE-TESTING.md §5.12` — the testing rule that came out of the process
+- `PLANS/2026.05.30-STRICT-CODE-QUALITY-REVIEW.md` — the strict code-quality review findings (receipt 4.11): the A–F principle rubric, the `REQUEST CHANGES` verdict, and the four P1 maintainability questions
+- `PLANS/2026.05.31-conversationpage-decomposition.md` — the follow-up decomposition plan the strict review's file-size finding (P1 #1) spawned
 - The user's existing LinkedIn LLM-Council post — paste into this plan doc before drafting so the article can extend, not duplicate
 
 Recoverable from git:
@@ -340,7 +365,7 @@ Recoverable from git:
 
 ## Cross-References
 
-- `PLANS/articles/medium-article.md` — series-level living plan (Part 6 added 2026-05-22)
+- `PLANS/articles/medium-articles.md` — series-level living plan (Part 6 added 2026-05-22)
 - `PLANS/future_articles/llm_council.md` — historical seed doc; this plan supersedes it for the in-series version
 - `PLANS/articles/part2_revision_plan.md` — pattern for detailed per-part planning docs
 - `PLANS/articles/part2_codereview_audit.md` — sibling audit confirming Part 2 doesn't need updates from the same code-review session
