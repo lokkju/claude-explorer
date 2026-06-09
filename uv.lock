@@ -533,7 +533,6 @@ wheels = [
 
 [[package]]
 name = "claude-explorer"
-version = "1.0.6"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

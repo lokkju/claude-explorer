@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claude-explorer"
-version = "1.0.6"
+dynamic = ["version"]
 description = "Local archive + web viewer + MCP server for Claude Desktop and Claude Code conversations. Browse, search, export, and let Claude query its own history."
 readme = "README.md"
 license = "Apache-2.0"
@@ -75,6 +75,12 @@ dev = [
 ]
 
 # ----- Hatchling build configuration ------------------------------------------
+# Version is the single source of truth at mcp_server/__init__.py:__version__.
+# See PLANS/2026.06.04-mcpb-bundle.md §9 (Version contract): bumping
+# mcp_server.__version__ updates pip + MCP serverInfo + MCPB manifest together.
+[tool.hatch.version]
+path = "mcp_server/__init__.py"
+
 # Wheel target: include only what an end user needs at runtime. The frontend
 # bundle is injected at build time by hatch_build.py via build_data["force_include"]
 # (so it doesn't need to live in the source tree or be git-tracked).
