@@ -48,6 +48,7 @@ import argparse
 import json
 import pathlib
 import shutil
+import subprocess
 import sys
 
 
@@ -427,6 +428,59 @@ def build_bundle(
     return bundle_root
 
 
+class MCPBPackError(RuntimeError):
+    """Raised when ``mcpb pack`` is unavailable or fails."""
+
+
+def pack_bundle(
+    bundle_root: pathlib.Path,
+    dist_dir: pathlib.Path,
+    version: str,
+) -> pathlib.Path:
+    """Run ``mcpb pack`` against the assembled bundle dir and return the
+    output ``.mcpb`` artifact path.
+
+    Raises ``MCPBPackError`` (NOT ``SystemExit``) if the ``mcpb`` CLI is
+    not on PATH so callers can choose how to handle it — the test
+    suite SKIPs cleanly, the dev CLI prints an install hint and exits.
+
+    Per ``PLANS/2026.06.04-mcpb-bundle.md`` §5 step 9. Install the CLI
+    with::
+
+        npm install -g @anthropic-ai/mcpb
+    """
+
+    if shutil.which("mcpb") is None:
+        raise MCPBPackError(
+            "mcpb CLI not found on PATH. Install with: "
+            "npm install -g @anthropic-ai/mcpb"
+        )
+
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    artifact = dist_dir / f"claude-explorer-{version}.mcpb"
+    if artifact.exists():
+        artifact.unlink()
+
+    result = subprocess.run(
+        ["mcpb", "pack", str(bundle_root), str(artifact)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise MCPBPackError(
+            f"mcpb pack failed (exit {result.returncode}):\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+    if not artifact.exists():
+        raise MCPBPackError(
+            f"mcpb pack returned success but {artifact} was not created"
+        )
+
+    return artifact
+
+
 def _cli() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -435,10 +489,40 @@ def _cli() -> int:
         default=None,
         help="Override the build directory (default: build/mcpb/)",
     )
+    parser.add_argument(
+        "--dist-dir",
+        type=pathlib.Path,
+        default=REPO_ROOT / "dist",
+        help="Where to write the packed .mcpb (default: dist/)",
+    )
+    parser.add_argument(
+        "--no-pack",
+        action="store_true",
+        help="Assemble the bundle dir but skip the mcpb pack step",
+    )
     args = parser.parse_args()
 
     bundle_root = build_bundle(output_dir=args.output_dir)
     print(f"MCPB bundle assembled at {bundle_root}")
+
+    if args.no_pack:
+        return 0
+
+    version = _read_version()
+    try:
+        artifact = pack_bundle(bundle_root, args.dist_dir, version)
+    except MCPBPackError as e:
+        print(f"\n[skip pack] {e}", file=sys.stderr)
+        print(
+            "Bundle dir is ready at "
+            f"{bundle_root}; re-run with mcpb on PATH to produce the "
+            f".mcpb artifact.",
+            file=sys.stderr,
+        )
+        return 0
+
+    size_kb = artifact.stat().st_size / 1024
+    print(f"MCPB artifact written to {artifact} ({size_kb:.1f} KB)")
     return 0
 
 

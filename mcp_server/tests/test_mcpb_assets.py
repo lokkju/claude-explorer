@@ -50,17 +50,19 @@ def test_mcpb_icon_exists() -> None:
     )
 
 
-def test_mcpb_icon_is_256x256_png() -> None:
-    """Icon is a real PNG and exactly 256×256.
+def test_mcpb_icon_is_512x512_png() -> None:
+    """Icon is a real PNG and exactly 512×512.
 
-    Claude Desktop's Extensions panel renders the tile at 64–128 CSS
-    pixels but high-DPI screens upscale; 256 px is the smallest size
-    that stays sharp on a Retina display.
+    The ``mcpb validate`` CLI emits an explicit recommendation for
+    512×512 ("Recommended size is 512×512 pixels for best display in
+    Claude Desktop"). Smaller works but loses sharpness on Retina
+    Extensions tiles.
     """
 
     width, height = _png_dimensions(ICON_PATH)
-    assert (width, height) == (256, 256), (
-        f"MCPB icon is {width}×{height}; must be exactly 256×256"
+    assert (width, height) == (512, 512), (
+        f"MCPB icon is {width}×{height}; must be exactly 512×512 "
+        f"(per mcpb validate recommendation)"
     )
 
 
