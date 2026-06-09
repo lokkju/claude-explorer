@@ -432,7 +432,6 @@ python3 scripts/check-article-formats.py
 - `~/.claude` in `PKG-INFO` (README copy) and source code — describing the actual home-directory paths the app reads from.
 - `claude-exporter` (the legacy pre-V1 name) in `.gitignore` (backwards-compat) and `PROCESS/a70251a5/outline.jsonl` (frozen historical conversation snapshots).
 - `http://claude-explorer.local/` in `backend/export.py` — base URL for relative-resource resolution in PDF export; not a real infrastructure reference.
-- `articles/part_3_mcp_server.md` flagged by step 13 (`check-article-formats.py` lists it under `KNOWN_PENDING`) — its 5 screenshots aren't in `articles/Attachments/` yet, so its `![[...]]` embeds stay until the files are added and converted to dash-named standard-MD / `<img>`. Empty `KNOWN_PENDING` once fixed.
 
 **Things this checklist does NOT cover** (and that you should still think about before flipping visibility):
 

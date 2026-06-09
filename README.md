@@ -474,6 +474,7 @@ To edit the config by hand instead, the `mcpServers` block is identical at both 
 {
   "mcpServers": {
     "claude-sessions": {
+      "type": "stdio",
       "command": "uvx",
       "args": ["claude-explorer", "mcp"]
     }
@@ -497,6 +498,7 @@ Add the same block you'd use for Claude Code, then **fully quit and relaunch** C
 {
   "mcpServers": {
     "claude-sessions": {
+      "type": "stdio",
       "command": "uvx",
       "args": ["claude-explorer", "mcp"]
     }

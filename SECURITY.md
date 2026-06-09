@@ -11,6 +11,30 @@ For non-sensitive issues (no vulnerability content), open a regular GitHub issue
 
 There is no formal SLA; I aim to acknowledge within a few days and ship a fix as soon as practical.
 
+## Code-checking tooling
+
+Beyond the one-time audits below, several tools run continuously to keep security and code-quality regressions out of the tree. They cover different failure modes (real-time pattern interception, diff-level LLM review, AST static analysis, secret/credential greps, and deep maintainability review), and none replaces the others.
+
+### Real-time edit interception — `security-guidance` plugin (Anthropic)
+
+A user-scope Claude Code plugin (`security-guidance@claude-plugins-official`) that runs as a `PreToolUse` hook. It intercepts every `Write` / `Edit` / `MultiEdit` and warns, before the change is even written, about a curated list of known-bad patterns: `eval`, `pickle` of untrusted data, `dangerouslySetInnerHTML`, `child_process.exec`, GitHub Actions injection, and command-injection shapes. It runs at the harness level at effectively zero token cost. Policy: if it fires during normal editing, read the warning and fix the pattern rather than overriding it. (This very file tripped that hook while being written, since it names the patterns the plugin blocks.)
+
+### Diff-level security review — `/security-review`
+
+The built-in Claude Code `/security-review` slash command runs an LLM security review of the pending diff on the current branch, using the same engine as the [`anthropics/claude-code-security-review`](https://github.com/anthropics/claude-code-security-review) GitHub Action. It covers SQL injection, XSS, authn/authz, IDOR, SSRF, weak crypto, RCE and unsafe deserialization, hardcoded secrets, and supply-chain risks. It runs manually as part of the pre-push checklist. On the 2026-05-27 pre-publish sweep it caught a stored-HTML-injection path in the PDF exporter (a maliciously titled conversation could have exfiltrated through WeasyPrint's URL fetcher); the fix plus a regression test went in before publish.
+
+### React static analysis — React Doctor (`millionco/react-doctor`)
+
+An Oxlint-based AST scanner with roughly 250 React rules spanning architecture, state-and-effects, performance, accessibility, and correctness, catching classes of bug that `eslint-plugin-react-hooks` does not, such as inline `<Provider value={{...}}>` literals. The frontend exposes two npm scripts: `npm run lint:react` (full-codebase informational scan, never fails CI) and `npm run lint:react:diff` (the pre-push gate, which scans files changed versus `main` and fails only on a newly introduced error). Known gap: it cannot catch a `useContext` of a churning provider inside a list-rendered component; no public linter does, so that one stays a human-review rule.
+
+### Pre-push secret / hygiene greps
+
+A 12-step checklist runs before every push to the public repo (it lives in full in `CLAUDE.md`). Greps 1 through 10 hunt the leak classes a public flip makes permanent: secrets in unpushed commit diffs, personal `/Users/<name>/` paths, real session keys or cookies in test fixtures, AI-attribution lines across the whole unpushed batch, accidentally-tracked credential / cache / `.env` files, real email addresses, `~/.claude` paths in the PyPI sdist, non-loopback IP addresses, private-infrastructure URLs, and stray `TODO` / `FIXME` markers in user-facing code. Step 11 is the React Doctor diff-gate above; step 12 is the `/security-review` diff review above.
+
+### Deep maintainability review — strict code-quality review
+
+A `/strict-code-quality-review` skill runs an unusually strict, ambitious maintainability review of a branch's changes: abstraction quality, oversized files, spaghetti-condition growth, swallowed errors, weak test coverage, and lost seams, hunting "code judo" moves that delete whole categories of complexity rather than tidying locally. It is a review skill (it diagnoses and recommends; it does not edit code), and it is explicitly a maintainability pass, not a security audit; security is the job of the `security-guidance` plugin and `/security-review` above. It surfaced the regressions an earlier refactor's first round of fixes had shipped, and a second pass hardened the changes further.
+
 ## Supply-chain audits
 
 A dated log of upstream supply-chain incidents that touched (or potentially touched) this project's dependency tree, and what we verified for each.
