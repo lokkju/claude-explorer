@@ -30,9 +30,48 @@ Three project-specific invariants the 2026-05-22 → 2026-05-23 search-perf hunt
 ├── backend/          # FastAPI backend (Python)
 ├── frontend/         # React frontend (TypeScript)
 ├── fetcher/          # mitmproxy addon for fetching conversations (Python)
+├── mcp_server/       # stdio MCP server (5 tools, FastMCP)
+├── scripts/          # build-mcpb.py, closure analyzer, format checks
+├── assets/           # mcpb-icon.png, mcpb-README.md (Extensions panel)
 ├── PLANS/            # Implementation plans
-└── pyproject.toml    # Python dependencies
+└── pyproject.toml    # Python dependencies (version is dynamic, read from
+                     #   mcp_server/__init__.py:__version__ — single source
+                     #   of truth for pip + MCP serverInfo + MCPB manifest)
 ```
+
+### MCPB bundle (Claude Desktop extension)
+
+`scripts/build-mcpb.py` produces `dist/claude-explorer-${VERSION}.mcpb` —
+the drag-drop Claude Desktop extension that wraps `mcp_server.server`'s
+5 tools. Pipeline:
+
+1. `scripts/mcpb_import_closure.py` walks the eager-import graph of
+   `mcp_server.server` (skips function bodies — that's the supported
+   escape hatch for lazy-importing heavy deps like `weasyprint` inside
+   `create_pdf`).
+2. Build script copies only the closed-over `.py` files into the
+   bundle, manually appends a small `DYNAMIC_IMPORT_MODULES` list for
+   modules `backend.store` / `backend.search` lazy-import at call time
+   (`backend.cowork_reader`, `backend.summary_cache`,
+   `backend.search_index`).
+3. Writes a stripped `pyproject.toml` with ONLY the 4 deps the MCP
+   path uses (`fastmcp`, `pydantic`, `orjson`, `platformdirs`).
+4. Writes `manifest.json` with `manifest_version: "0.4"` +
+   `server.type: "uv"` — Claude Desktop ships Node but not Python,
+   so UV resolves + installs on the user's machine on first launch.
+5. Runs `mcpb pack` (`npm install -g @anthropic-ai/mcpb` if missing).
+
+**Closure-canary invariant.** `mcp_server/tests/test_mcpb_closure.py`
+fails the suite if a future PR pulls FastAPI / weasyprint / mitmproxy
+/ watchdog into the MCP code path. If the canary fires, DO NOT loosen
+the test — find the import and either move it inside a function body
+(lazy) or remove it from the MCP code path. The bundle is supposed to
+stay around ~500 KB; pulling in even one of those would balloon it
+past 30 MB.
+
+CI release wiring (`.github/workflows/release.yml` `build-mcpb` job)
+runs the same script on every `v*` tag push and attaches the artifact
+to the GitHub Release alongside the wheel.
 
 ## CLI Usage
 

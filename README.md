@@ -44,6 +44,29 @@ The watcher is a one-time install that registers a tiny background job with your
 
 If you'd rather hack on the project than install it, see [From source (for contributors)](#from-source-for-contributors) below.
 
+## Install in Claude Desktop (one-click MCP)
+
+If you only want to query your archive from Claude (no web UI), grab the
+`.mcpb` bundle from the latest [GitHub Release](https://github.com/rpeck/claude-explorer/releases/latest)
+and drag it into Claude Desktop → **Settings** → **Extensions**. Five
+tools — `list_sessions`, `list_projects`, `get_session_outline`,
+`get_messages`, `export_session` — light up inside Claude Desktop and
+Claude Code without you ever touching `claude_desktop_config.json`.
+
+Two non-obvious things to know up front:
+
+- **The extension is read-only.** It only reads what's already in
+  `~/.claude-explorer/conversations/`. It never writes, deletes, or
+  modifies your archive.
+- **You still need the CLI to capture conversations.** The extension
+  does not fetch from Claude. Run `uvx claude-explorer capture` once
+  to grab credentials and `uvx claude-explorer fetch` to download your
+  archive. After that, this extension does the read side.
+
+First launch is a little slow (Claude Desktop's [UV runtime](https://github.com/anthropics/dxt)
+resolves and installs the bundle's Python deps on first run; ~10–30 s
+depending on your network). Subsequent launches are instant.
+
 ## Features
 
 - **Browse conversations** from all three sources in one unified list: Claude Desktop (fetched), Claude Code, and Claude Cowork (both read live from local disk)
