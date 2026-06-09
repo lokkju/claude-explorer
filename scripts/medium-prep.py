@@ -40,7 +40,8 @@ RAW_BASE = "https://raw.githubusercontent.com/rpeck/claude-explorer/main/article
 # Published Medium URLs, keyed by relative .md target. Fill in as parts ship;
 # unlisted relative .md links get stripped to plain text.
 MEDIUM_URLS: dict[str, str] = {
-    # "part_2_web_app_userdoc.md": "https://medium.com/@raymondpeck/...",
+    "part_3_mcp_server.md": "https://medium.com/@raymondpeck/unlocking-your-claude-history-part-3-claude-querying-its-own-history-the-mcp-server-b3291ad76e13",
+    "part_3_mcp_server_userdoc.md": "https://medium.com/@raymondpeck/unlocking-your-claude-history-part-3-let-claude-analyze-your-claude-conversations-a-users-guide-0797fed94c34",
 }
 
 OUT_DIR = "medium-build"
