@@ -105,6 +105,8 @@ You don't have to learn any commands. You just ask, in plain English, and Claude
 
 > *"Find all my conversations for the claude-explorer project."*
 
+> *"Find my conversations about the new onboarding flow."*
+
 > *"Search my Claude history for the chat where we set up Docker."*
 
 For those, Claude finds and lists the matching conversations and stops there, rather than trying to read everything. But you can send it further in the same breath, and ask it to dig into what it finds:
@@ -131,6 +133,10 @@ Once you're connected, three prompts pay for themselves immediately.
 
 Claude skims the outline, reads the parts that matter, and hands you back the decisions without you re-reading the whole thing.
 
+It works the same outside code. A product manager can fold a week of brainstorming and prototyping chats into a handoff for the engineering team, or a first-draft PRD:
+
+> *"Pull together my prototyping sessions on the new feature into a handoff for engineering: the problem, what we decided, the open questions, and what to build first."*
+
 **Mine Claude's recurring mistakes into better instructions.** This one is my favorite. If you keep a `CLAUDE.md` (a file of instructions Claude Code reads at the start of each conversation), you can ask Claude to improve it from your own recent history:
 
 > *"Look at my last week of conversations in this project, find the two or three mistakes Claude keeps making, and write me a short list of rules to add to my CLAUDE.md to stop them."*
@@ -145,9 +151,13 @@ You get back a clean, paste-ready copy of just that part.
 <a id="how-i-used-this-to-write-the-series"></a>
 ## How I Used This Tool to Write the Series
 
-Here's a real example that's a bit of a mind-bender: I used this tool to help draft this Medium series about itself. That's why I used the Ouroboros image for the Part 3 articles, with the snake eating its own tail. 🤓 I pointed Claude at the build history of this very project, a single Claude Code conversation that had grown to thousands of messages, and asked it to dig out the story:
+Here's a real example that's a bit of a mind-bender: I used this tool to help draft this Medium series about itself. That's why I used the Ouroboros image for the Part 3 articles, with the snake eating its own tail. 🤓 I pointed Claude at this project's saved sessions, chief among them one Claude Code conversation that had grown to thousands of messages, and asked it to sweep them and dig out the story:
 
-> *"Summarize the development history of this project, pull out the decisions and the memorable moments, and turn it into a drafting brief for a Medium series."*
+> *"I want your help to write a comprehensive Medium article about this project (use cases, etc) including both the UI and the MCP server, and the process we went through to create it.*
+>
+> *Use the claude-sessions MCP server to read through all the sessions for this project (claude-desktop-message-exporter) one by one and extract the important info about the creation process. Note that you'll need to paginate through thee sessions and messages, since the entire process is far too large to handle in your context. Use subagents / tasks to keep this context as clear as possible as you work. As the sessions are processed, write the intermediate results to the PROCESS/ directory. Include session and message IDs with each bit of info, so we can refer to them later. Then, I'll review the content. Once that is done we'll synthesize the article.*
+>
+> *Write this plan to PLANS/MEDIUM_ARTICLE.md and keep track of each step as we go."*
 
 It worked the way you'd expect from the outline-first pattern. Claude outlined the giant conversation, found the natural phases of the work, pulled back only the parts that mattered from each one, and turned them into a set of notes we drafted from. No one reads thousands of messages by hand, and pouring them all into a chat at once is the expensive or even impossible mistake the outline exists to prevent.
 

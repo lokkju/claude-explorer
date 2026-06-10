@@ -204,13 +204,17 @@ Part 2 ended on a self-referential tease: I used this MCP server to mine this pr
 
 The goal was the kind of thing that's reasonable but turns into a lost weekend if you do it manually:
 
-> *"Summarize the development history of this project, pull out the decisions and the memorable moments, and turn it into a drafting brief for a Medium series."*
+> *"I want your help to write a comprehensive Medium article about this project (use cases, etc) including both the UI and the MCP server, and the process we went through to create it.*
+>
+> *Use the claude-sessions MCP server to read through all the sessions for this project (claude-desktop-message-exporter) one by one and extract the important info about the creation process. Note that you'll need to paginate through thee sessions and messages, since the entire process is far too large to handle in your context. Use subagents / tasks to keep this context as clear as possible as you work. As the sessions are processed, write the intermediate results to the PROCESS/ directory. Include session and message IDs with each bit of info, so we can refer to them later. Then, I'll review the content. Once that is done we'll synthesize the article.*
+>
+> *Write this plan to PLANS/MEDIUM_ARTICLE.md and keep track of each step as we go."*
 
 The Claude Explorer MCP server did this for me automagically.
 
 ### The haystack
 
-The raw material was a single Claude Code build session that, at the April snapshot I worked from, held **5,207 total messages**. Of those, **5,006** lived on the active branch, and of *those*, only **312** were real prompts I had typed; the rest were tool results that Claude Code records with a human sender tag. So the real shape of the problem was 312 human intentions buried in five thousand messages. No one is reading that by hand, and pulling it all into a context window is the mistake we built the outline tool to prevent.
+The sweep covered the project's sessions, but one Claude Code build session dwarfed all the rest: at the April snapshot I worked from, it held **5,207 total messages**. Of those, **5,006** lived on the active branch, and of *those*, only **312** were real prompts I had typed; the rest were tool results that Claude Code records with a human sender tag. So the real shape of the problem was 312 human intentions buried in five thousand messages. No one is reading that by hand, and pulling it all into a context window is the mistake we built the outline tool to prevent.
 
 ### Running the pipeline
 
@@ -226,7 +230,7 @@ Look how much of this article was already in that one prompt: it named both work
 
 ### Up front, then as it changed
 
-Most of the mining was front-loaded: I used the server up front to turn the giant build transcript into stable, citable artifacts on disk, and much of the writing then ran against those briefs and the live codebase. But this wasn't a one-shot. As I kept improving and tweaking the UI and UX while writing Part 2, I went back to the MCP server repeatedly to update the draft against what had changed. The pattern worth stealing is the combination: do the heavy excavation once into reusable artifacts, then re-query in a targeted way whenever the ground truth shifts.
+The mining came in two waves. Up front, one big sweep of the project's sessions, the giant build transcript chief among them, turned that history into stable, citable artifacts on disk that outlined the whole series, and much of the writing then ran against those briefs and the live codebase. But it wasn't a one-shot: as I kept improving and tweaking the UI and UX while writing the Part 2 articles that describe it, I went back to the server for smaller, targeted updates against what had changed. The pattern worth stealing is the combination: do the heavy excavation once into reusable artifacts, then re-query in a targeted way whenever the ground truth shifts.
 <a id="the-claude-self-tuning-loop"></a>
 ## The Claude Self-Tuning Loop
 
