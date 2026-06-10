@@ -18,11 +18,12 @@ import json
 import sqlite3
 from collections import Counter
 from datetime import datetime, timezone
-from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import FastMCP
+
+from mcp_server import __version__
 
 from backend.config import Settings
 from backend.export import (
@@ -45,11 +46,13 @@ mcp = FastMCP(
         "analyze, or export past conversation sessions. "
         "Never call these tools proactively or speculatively."
     ),
-    # Resolve at construction time so the MCP-protocol serverInfo.version
-    # field carries OUR package version, not FastMCP's own. Otherwise
-    # connecting clients see the framework's version (e.g. "3.2.4") and
-    # have no portable way to ask which claude-explorer they're talking to.
-    version=_pkg_version("claude-explorer"),
+    # Source-of-truth version from mcp_server/__init__.py. Read this way
+    # (not via importlib.metadata) so the MCPB bundle works: the bundle
+    # vendors mcp_server/ + backend/ as bare directories, so there is no
+    # installed claude-explorer package metadata for UV to resolve at
+    # runtime. The __version__ attribute is available in all three
+    # contexts: installed wheel, dev-from-source, MCPB bundle.
+    version=__version__,
 )
 
 # MCP search LIMIT (plan §C). Higher than the HTTP route's 1000 cap
