@@ -195,9 +195,10 @@ wrong tool for a layout/style overhaul of a generated template. Don't try again.
 `scripts/build_part3_deck.py` is the whole-slide-PNG build for Part 3, in the Part 2
 editorial style (navy `#001F3F`, teal `#A0CFDC` serif titles, thin hairline rules, no
 cards). Run it with `uv run python scripts/build_part3_deck.py`; it writes
-`dist/part3-deck-v2/slide-NN.png` (×12) and assembles `LinkedIn/Part 3 deck v2
-(editorial).pdf`. It is the template for future Parts — copy it, swap the per-slide
-copy/assets, keep the primitives.
+`dist/part3-deck/slide-NN.png` (×12) and assembles `LinkedIn/Part 3 announcement
+deck.pdf` (the canonical per-Part name, matching `Part 2 announcement deck.pdf`).
+It is the template for future Parts — copy it, swap the per-slide copy/assets,
+keep the primitives.
 
 It collapses the original deck's seven layouts into **four consistent templates**, each
 anchored at identical coordinates so the deck reads as one set:

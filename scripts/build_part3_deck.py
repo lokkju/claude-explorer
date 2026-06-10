@@ -9,7 +9,7 @@ small set of primitives and one of four consistent templates (COVER / SPLIT /
 PROMPT / GRID).
 
 Run:  uv run python scripts/build_part3_deck.py
-Out:  dist/part3-deck-v2/slide-NN.png  +  "LinkedIn/Part 3 deck v2 (editorial).pdf"
+Out:  dist/part3-deck/slide-NN.png  +  "LinkedIn/Part 3 announcement deck.pdf"
 """
 from __future__ import annotations
 
@@ -405,7 +405,7 @@ def asset(name: str) -> str:
 def main():
     slides = [slide01, slide02, slide03, slide04, slide05, slide06,
               slide07, slide08, slide09, slide10, slide11, slide12]
-    outdir = os.path.join(ROOT, "dist", "part3-deck-v2")
+    outdir = os.path.join(ROOT, "dist", "part3-deck")
     os.makedirs(outdir, exist_ok=True)
     os.makedirs(os.path.join(ROOT, "LinkedIn"), exist_ok=True)
     imgs = []
@@ -415,7 +415,7 @@ def main():
         im.save(p)
         imgs.append(im.convert("RGB"))
         print("wrote", p)
-    pdf = os.path.join(ROOT, "LinkedIn", "Part 3 deck v2 (editorial).pdf")
+    pdf = os.path.join(ROOT, "LinkedIn", "Part 3 announcement deck.pdf")
     imgs[0].save(pdf, "PDF", resolution=96.0, save_all=True, append_images=imgs[1:])
     print("wrote", pdf)
 
