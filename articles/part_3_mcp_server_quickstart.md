@@ -63,9 +63,23 @@ Some conversations run to thousands of messages, and reading a whole one is the 
 
 ## Three things worth asking
 
-- **Summarize a sprawling conversation down to its decisions:** *"What did we decide in my longest conversation on the foo project, and what's still open?"* It works the same outside code: a product manager can fold a week of brainstorming and prototyping chats into an engineering handoff, or a first-draft PRD: *"Pull together my prototyping sessions on the new feature into a handoff for engineering: the problem, what we decided, the open questions, and what to build first."*
-- **Turn Claude's recurring mistakes into better rules:** *"Look at my last week of conversations in this project, find the mistakes Claude keeps making, and write me a short list of rules to add to my CLAUDE.md."*
-- **Export a clean slice:** *"Export the part of that conversation where we wrote the deploy script in Markdown."* You get a paste-ready copy back in the chat.
+**Summarize a sprawling conversation down to its decisions.**
+
+> *"What did we decide in my longest conversation on the foo project, and what's still open?"*
+
+It works the same outside code: a product manager can fold a week of brainstorming and prototyping chats into an engineering handoff, or a first-draft PRD:
+
+> *"Pull together my prototyping sessions on the new feature into a handoff for engineering: the problem, what we decided, the open questions, and what to build first."*
+
+**Turn Claude's recurring mistakes into better rules.**
+
+> *"Look at my last week of conversations in this project, find the mistakes Claude keeps making, and write me a short list of rules to add to my CLAUDE.md."*
+
+**Export a clean slice.**
+
+> *"Export the part of that conversation where we wrote the deploy script in Markdown."*
+
+You get a paste-ready copy back in the chat.
 
 ## Good to know
 
