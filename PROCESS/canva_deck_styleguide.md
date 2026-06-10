@@ -96,12 +96,15 @@ Fake bold for headers with `stroke_width=1, stroke_fill=<same color>` (PIL).
 Committed under `articles/Attachments/`:
 
 - `ouroboros.png` — series cover mark (reuse every cover).
-- `part3-deck-tool-use.png` — real `list_sessions` transcript ("You"/"Claude" card).
-- `part3-deck-mcp-tools.png` — `/mcp` tool-description screenshot.
-- `part3-deck-terminal.png` — `claude mcp add … → ✓ Connected` terminal (with a `# comment`).
-- `part3-deck-slide8-prompt.png` — the verbatim origin prompt as a "You" card.
-- `part3-deck-slide9-json.png` — `claude_desktop_config.json` window.
-- `part3-card-s5-*`, `-s9-1`, `-s10-*`, `-s11-*`, `-s12-1` — the purple replacement cards.
+- `part3-deck-tool-use.png` — real `list_sessions` transcript ("You"/"Claude" card). **Accents recolored purple→teal (2026-06-10)** — the `✦` Claude sparkle.
+- `part3-deck-mcp-tools.png` — `/mcp` tool-description screenshot. Real screenshot; **left as-is** (genuine product UI, can't be re-paletted).
+- `part3-deck-terminal.png` — `claude mcp add … → ✓ Connected` terminal (with a `# comment`). No purple; **unchanged** by the recolor.
+- `part3-deck-slide8-prompt.png` — the verbatim origin prompt as a "You" card. **Accents recolored purple→teal (2026-06-10)** — the `✦` You sparkle.
+- `part3-deck-slide9-json.png` — `claude_desktop_config.json` window. **Accents recolored purple→teal (2026-06-10)** — the JSON keys.
+- `part3-card-s5-*`, `-s9-1`, `-s10-*`, `-s11-*`, `-s12-1` — the purple replacement cards (old purple-style deck; not used by the editorial `build_part3_deck.py`).
+
+The teal recolor is a content-preserving HSV hue remap (no text retyped); see §8
+"Synthetic-screenshot recolor" for the exact band/target to reapply for a future Part.
 
 The PIL render scripts that produced these are the template for the next Part
 (transcript card, terminal, JSON window, prompt card, purple cards). Keep the
