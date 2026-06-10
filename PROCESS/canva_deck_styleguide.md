@@ -189,3 +189,28 @@ accept that the MCP API cannot faithfully re-skin it afterward.
 **Bottom line:** the Canva editing API is fine for small in-place tweaks
 (swap an image into an aspect-matched frame, edit text, nudge a position). It is the
 wrong tool for a layout/style overhaul of a generated template. Don't try again.
+
+### Reference implementation (works — built 2026-06-10)
+
+`scripts/build_part3_deck.py` is the whole-slide-PNG build for Part 3, in the Part 2
+editorial style (navy `#001F3F`, teal `#A0CFDC` serif titles, thin hairline rules, no
+cards). Run it with `uv run python scripts/build_part3_deck.py`; it writes
+`dist/part3-deck-v2/slide-NN.png` (×12) and assembles `LinkedIn/Part 3 deck v2
+(editorial).pdf`. It is the template for future Parts — copy it, swap the per-slide
+copy/assets, keep the primitives.
+
+It collapses the original deck's seven layouts into **four consistent templates**, each
+anchored at identical coordinates so the deck reads as one set:
+
+- **T-COVER** — eyebrow + serif title + italic-serif subtitle + byline + centered hero.
+- **T-SPLIT** — title + hairline; left text (prose or label+desc list); right one or two
+  screenshots, **CONTAIN-fit** (`paste_image` uses `scale=min(bw/iw,bh/ih)`) so nothing is
+  ever cropped — the §8 fix for the clipping that killed the Canva version.
+- **T-PROMPT** — title + hairline; a monospace prompt panel (faint fill + teal left bar) +
+  sans explanation, vertically centered.
+- **T-GRID** — title + hairline + optional subtitle; a 2-column label+desc grid (2/3/4 cells).
+
+Key knobs live at the top of the file: geometry (`W,H,LM,RM,TM`), palette, font paths
+(`NewYork.ttf` titles, `NewYorkItalic.ttf` subtitles, `SFNS.ttf` body, `SFNSMono.ttf`
+prompts), and the `font()`/`wrap()`/`paste_image()` primitives. macOS-only (system font
+paths). QA the output PDF at ≥150 dpi (low-res sheets hide edge clipping).
