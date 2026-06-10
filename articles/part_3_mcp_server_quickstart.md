@@ -51,7 +51,7 @@ You don't learn any commands; you just ask. Good openers:
 
 > *"Find all my conversations for the claude-explorer project."*
 
-> *"Find my conversations about the new onboarding flow."*
+> *"Find my conversations about the new onboarding flow and summarize the decision points."*
 
 > *"Find the conversation where we fixed the login bug, and walk me through how we solved it."*
 

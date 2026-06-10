@@ -105,7 +105,7 @@ You don't have to learn any commands. You just ask, in plain English, and Claude
 
 > *"Find all my conversations for the claude-explorer project."*
 
-> *"Find my conversations about the new onboarding flow."*
+> *"Find my conversations about the new onboarding flow and summarize the decision points."*
 
 > *"Search my Claude history for the chat where we set up Docker."*
 
