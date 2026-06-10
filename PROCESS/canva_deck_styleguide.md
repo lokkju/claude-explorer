@@ -122,3 +122,70 @@ Mechanics and Canva-MCP gotchas are in the memory file
 3. Keep `alt_text` short (a long alt_text 500s the API).
 4. Export **PDF at pro quality** into `LinkedIn/` (gitignored), and verify by
    rendering pages out of the exported PDF, not just the editor.
+
+## 8. DO NOT restyle a Canva-generated template via the editing API (earned 2026-06-10)
+
+We tried to take the Part 3 deck's content and re-skin it into the Part 2
+**editorial** style (navy, serif titles, teal rules, no cards) by
+`generate-design-structured` + dozens of `perform-editing-operations`
+(reposition / resize / text-swap / image-swap). It produced a deck riddled with
+cut-off text, stranded divider lines, missing screenshots, and inconsistent
+slides, and we abandoned it. The pieces we rendered *ourselves* as PNGs (cover
+ouroboros, subtitle, prompt blocks, terminal/JSON windows) looked great; every
+failure came from **fighting the template through the limited API.** The four
+hard limits, each of which bit us:
+
+1. **Image fills crop with `object-fit: cover`, so any rendered text PNG gets its
+   edges clipped unless the insert frame's aspect ratio matches the PNG's
+   *exactly*.** A 1500×312 panel dropped into a 1500×**316** frame is scaled to
+   *cover* (fill the taller frame), overflowing ~9px on each side and slicing the
+   first/last glyph off every line — this is what cut off the prompts on slides
+   3, 6 and the transcript card on slide 8. Rules if you ever do place a rendered
+   panel: (a) set insert `height = width × img_h / img_w` to the PNG's exact
+   aspect (never eyeball a round number), AND (b) bake a **≥60px transparent safe
+   margin** into the PNG so text is never near an edge and residual crop can't
+   touch a glyph. The prompt renders put the teal bar at x=0 and text at x=44 —
+   far too close to the edge.
+
+2. **Decorative SHAPE elements (divider rules, hairlines, header bars,
+   background blocks) are INVISIBLE to the MCP API.** `start-editing-transaction`
+   and `get-design-content` return only `richtexts` (text) and `fills`
+   (image/video) — a solid-color line/shape appears in *neither*, so you cannot
+   read, move, resize, or delete it. When you reposition the text, the template's
+   rules stay pinned at their original Y and end up stranded (slide 4's lines
+   floating far below their headers; slide 9's text struck through by a rule we
+   could only *dodge*, never move). There is **no reliable workaround** — this
+   alone makes faithful re-layout impossible.
+
+3. **`generate-design-structured` rewrites copy AND drops/relocates images.** It
+   fabricated titles and a bio, added a junk 13th "Get in Touch" slide, and
+   **silently dropped real screenshots** (e.g. slide 4's `/mcp` tool-descriptions
+   shot never came back). Restoring titles/body is not enough — you must do a
+   full **element-by-element parity audit against the original deck, images
+   included** — and even then limits 1, 2 and 4 stop you from matching the look.
+
+4. **Matching x/y coordinates is NOT visual consistency.** The API cannot change
+   **font family**, cannot set a **shape fill color**, and cannot touch the
+   invisible shapes from #2. So aligning slide 10's grid coordinates to slide
+   11's still looked inconsistent — different font sizes, different rule
+   placement, different element styling underneath.
+
+**QA note:** low-res contact sheets (`-r 42`…`55`) *hid* the edge-clipping — the
+clipped glyphs only showed at full resolution. If you ever inspect a deck PDF,
+render each page at **≥150 dpi and check text edges**, not thumbnails.
+
+### What to do instead
+
+**Render each slide as a complete 1920×1080 PNG with PIL and assemble an
+image-only deck** (12 full-bleed PNGs → a PDF, or a Canva deck of full-bleed
+image slides). This gives total control of type, color, rules, spacing, and
+exact safe-margins, and sidesteps every limit above — no invisible shapes, no
+cover-crop surprises (you own the whole canvas), no font-family restriction. We
+already render the hard parts (prompt panels, terminal, JSON window, subtitle)
+this way and they look right; just extend it to the *entire* slide. Alternative:
+build the deck natively in Canva by hand in the target style from the start, and
+accept that the MCP API cannot faithfully re-skin it afterward.
+
+**Bottom line:** the Canva editing API is fine for small in-place tweaks
+(swap an image into an aspect-matched frame, edit text, nudge a position). It is the
+wrong tool for a layout/style overhaul of a generated template. Don't try again.
