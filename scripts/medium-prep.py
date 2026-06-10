@@ -42,6 +42,7 @@ RAW_BASE = "https://raw.githubusercontent.com/rpeck/claude-explorer/main/article
 MEDIUM_URLS: dict[str, str] = {
     "part_3_mcp_server.md": "https://medium.com/@raymondpeck/unlocking-your-claude-history-part-3-claude-querying-its-own-history-the-mcp-server-b3291ad76e13",
     "part_3_mcp_server_userdoc.md": "https://medium.com/@raymondpeck/unlocking-your-claude-history-part-3-let-claude-analyze-your-claude-conversations-a-users-guide-0797fed94c34",
+    "part_3_mcp_server_quickstart.md": "https://medium.com/@raymondpeck/unlocking-your-claude-history-part-3-quickstart-query-your-claude-history-in-five-minutes-b12094c9c690",
 }
 
 OUT_DIR = "medium-build"
