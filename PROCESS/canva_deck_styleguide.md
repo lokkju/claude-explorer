@@ -215,3 +215,15 @@ Key knobs live at the top of the file: geometry (`W,H,LM,RM,TM`), palette, font 
 (`NewYork.ttf` titles, `NewYorkItalic.ttf` subtitles, `SFNS.ttf` body, `SFNSMono.ttf`
 prompts), and the `font()`/`wrap()`/`paste_image()` primitives. macOS-only (system font
 paths). QA the output PDF at ≥150 dpi (low-res sheets hide edge clipping).
+
+**Synthetic-screenshot recolor (2026-06-10).** The four PIL-rendered windows/cards
+(`part3-deck-tool-use`, `-slide9-json`, `-slide8-prompt`, `-terminal`) were authored in
+the old purple/amber palette. To match the editorial teal without retyping any content
+(commands, JSON, message counts, the verbatim prompt — all of which must stay exact), the
+committed PNGs were hue-remapped **purple → teal** in place: a per-pixel HSV pass that
+shifts only pixels with PIL hue ∈ [172, 214] (≈245–302°, the purple accents; navy bg is
+229° so excluded) and saturation ≥ 45 (skips white/gray text) to hue 137 (≈193°, the deck
+teal). Greens, amber strings, traffic lights, and all text are untouched. This recolors
+only the JSON keys and the `✦` sparkles (<1% of pixels each). The real `/mcp` screenshot
+(`part3-deck-mcp-tools.png`) is genuine product UI and was left as-is. To redo it for a
+future Part, reuse the band/target above on the source PNGs before building.
