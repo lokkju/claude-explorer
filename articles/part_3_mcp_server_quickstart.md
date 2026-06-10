@@ -9,7 +9,7 @@
 
 ***In this quickstart companion to Part 3, we connect a small MCP server so a brand-new Claude chat can search, read, and reason over your saved Claude history, in about five minutes.***
 
-New here? Start with [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) for what this project is, and [Part 2](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-2-using-the-claude-explorer-web-app-user-guide-109191dc24d4) to get your Claude history onto your disk, since this server reads only what Part 2 captured there. For the full walkthrough, read the [user guide](part_3_mcp_server_userdoc.md); for the real numbers and design decisions, read the [deep-dive](part_3_mcp_server.md).
+New here? Start with [Part 1](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-1-f19000c05655) for what this project is, and [Part 2](https://medium.com/@raymondpeck/unlocking-your-claude-history-part-2-using-the-claude-explorer-web-app-user-guide-109191dc24d4) to get your Claude history onto your disk, since this server reads only what Part 2 captured there. For the full walkthrough (each workflow in depth, plus how I used the server to mine this very series), read the [user guide](part_3_mcp_server_userdoc.md); for the real numbers and design decisions, read the [deep-dive](part_3_mcp_server.md).
 
 ![An ouroboros: the MCP server reading the very session that built it](Attachments/ouroboros.png)
 
@@ -51,6 +51,8 @@ You don't learn any commands; you just ask. Good openers:
 
 > *"Find all my conversations for the claude-explorer project."*
 
+> *"Find my conversations about the new onboarding flow."*
+
 > *"Find the conversation where we fixed the login bug, and walk me through how we solved it."*
 
 Claude finds and lists the matches first, then, when you ask it to dig in, reads only the parts that matter without dragging the whole conversation into view.
@@ -61,7 +63,7 @@ Some conversations run to thousands of messages, and reading a whole one is the 
 
 ## Three things worth asking
 
-- **Summarize a sprawling conversation down to its decisions:** *"What did we decide in my longest conversation on the foo project, and what's still open?"*
+- **Summarize a sprawling conversation down to its decisions:** *"What did we decide in my longest conversation on the foo project, and what's still open?"* It works the same outside code: a product manager can fold a week of brainstorming and prototyping chats into an engineering handoff, or a first-draft PRD: *"Pull together my prototyping sessions on the new feature into a handoff for engineering: the problem, what we decided, the open questions, and what to build first."*
 - **Turn Claude's recurring mistakes into better rules:** *"Look at my last week of conversations in this project, find the mistakes Claude keeps making, and write me a short list of rules to add to my CLAUDE.md."*
 - **Export a clean slice:** *"Export the part of that conversation where we wrote the deploy script in Markdown."* You get a paste-ready copy back in the chat.
 
