@@ -13,6 +13,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# mitmproxy is a conditional dependency (PEP 508 marker in pyproject.toml
+# skips it on Windows ARM64). The whole addon module imports `from mitmproxy
+# import http` at top, so importing it on a platform without mitmproxy raises
+# ImportError. Skip the entire file in that case — the addon itself isn't
+# reachable from any code path that runs without mitmproxy installed.
+pytest.importorskip("mitmproxy")
+
 from fetcher.credentials import load_credentials
 from fetcher.mitmproxy_addon import (
     ClaudeCredentialCapture,

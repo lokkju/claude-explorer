@@ -47,7 +47,14 @@ dependencies = [
     "curl_cffi>=0.7",
     "orjson>=3.10",
     "playwright>=1.40",
-    "mitmproxy>=10.0",
+    # mitmproxy is conditional: skipped on Windows ARM64 because mitmproxy-rs
+    # (the Rust HTTP/3 stack) has no prebuilt arm64-pc-windows-msvc wheels and
+    # would require ~6 GB Visual Studio Build Tools + ~45 min compile from
+    # source. Skipping it on that platform falls through to the browser-based
+    # capture (the default `claude-explorer capture` without --proxy), which
+    # works without mitmproxy. See PLANS/2026.06.12-V2-cookie-storage-read.md
+    # for the longer-term V2 plan to remove mitmproxy entirely.
+    "mitmproxy>=10.0; sys_platform != 'win32' or platform_machine != 'ARM64'",
     "fastmcp>=3.0",
     "portalocker>=2.8",
     "watchdog>=4.0",
