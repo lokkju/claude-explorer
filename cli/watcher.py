@@ -334,12 +334,21 @@ def _install_windows(python_bin: str, interval: float) -> None:
         pythonw = python_bin
 
     # Re-create from scratch each install (idempotent via /F).
+    #
+    # NOTE: Do NOT pass ``/RL HIGHEST``. That flag asks Task Scheduler to
+    # run the task with the highest privileges available to the user,
+    # which requires the registration itself to come from an elevated
+    # process — non-admin shells get ``ERROR: Access is denied`` when
+    # creating the task. The watcher only touches user-owned files
+    # (``~\.claude-explorer\``, the CC image cache under ``~\.claude\``);
+    # it does not need elevation. Default run-level (limited / standard
+    # user) registers cleanly from any user shell and is sufficient for
+    # the work the watcher does.
     cmd = [
         "schtasks", "/Create",
         "/TN", _WIN_TASK_NAME,
         "/TR", f'"{pythonw}" "{launcher}"',
         "/SC", "ONLOGON",
-        "/RL", "HIGHEST",
         "/F",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)

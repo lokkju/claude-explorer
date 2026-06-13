@@ -38,6 +38,22 @@ brew install pango cairo libffi
 #            system-library dance entirely.
 ```
 
+### Windows ARM64 (Copilot+ PCs / Surface Pro X / Snapdragon-X laptops)
+
+On Windows ARM64, install claude-explorer against an **x86_64 Python** rather than the default ARM64-native Python. The ARM64 Python on Windows lacks prebuilt wheels for several upstream dependencies (`cryptography`, `httptools`, `Brotli`); x86_64 Python runs under Microsoft Prism translation at near-native speed and has full wheel coverage. This matches Microsoft's own recommendation for Python development on Windows-on-ARM.
+
+`uv` handles the cross-architecture install in a single command:
+
+```powershell
+# Install uv if you don't have it:
+powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Then install claude-explorer against an x86_64 Python (uv fetches it on demand):
+uv tool install claude-explorer --python cpython-3.13.14-windows-x86_64-none
+```
+
+Everything else in this README (`uvx ...` commands, watcher install, MCP setup) works the same on Win ARM64 as on other platforms.
+
 That's it. Open `http://localhost:8765` in your browser and your Claude Code and Claude Cowork sessions are visible immediately. Click **Refresh** in the sidebar to capture credentials and fetch your Claude Desktop history (the UI handles capture via in-process Playwright on first run; no terminal commands needed).
 
 The watcher is a one-time install that registers a tiny background job with your OS supervisor (launchd / systemd / Task Scheduler) so Claude Code can't quietly rotate your screenshots and pasted images off disk before they get mirrored. Without it, you only have image protection while `claude-explorer serve` is running.
