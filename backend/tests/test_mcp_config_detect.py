@@ -78,3 +78,11 @@ def test_desktop_missing_mcpservers_key(tmp_path: Path) -> None:
     reg = detect_mcp_in_claude_desktop(config_path=cfg)
     assert reg.found is False
     assert reg.config_path == cfg
+
+
+def test_non_list_args_does_not_raise(tmp_path: Path) -> None:
+    bad = _write(tmp_path / ".claude.json", {
+        "x": {"command": "uvx", "args": 42},  # malformed: args not a list
+    })
+    reg = detect_mcp_in_claude_code(user_config=bad, project_config=tmp_path / "absent.json")
+    assert reg.found is False  # must not raise
