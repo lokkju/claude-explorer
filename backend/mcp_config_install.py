@@ -63,6 +63,8 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     the temp file if the replace fails.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Fixed temp suffix assumes a single writer (human-invoked CLI); two
+    # concurrent installs to the same config would race on the temp file.
     tmp = path.with_name(path.name + ".tmp")
     try:
         tmp.write_text(json.dumps(data, indent=2))

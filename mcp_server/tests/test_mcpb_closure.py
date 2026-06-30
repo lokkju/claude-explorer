@@ -104,12 +104,13 @@ def test_forbidden_internal_modules_absent(closure: tuple[set[str], set[str]]) -
     """No FastAPI-only, watcher-only, or CLI-only backend modules in the closure.
 
     These modules are part of the HTTP server, the background watcher, or the
-    CLI (doctor / MCP-config detection) — NOT the MCP read path. Their presence
+    CLI (doctor / MCP-config detection/installation) — NOT the MCP read path. Their presence
     would either pull in FastAPI (backend.main, backend.routers.*, backend.deps)
     or watchdog (backend.cc_watcher) — both already covered by the external-dep
     canary, but this is a tighter assertion that catches the regression one layer
-    earlier. backend.doctor and backend.mcp_config_detect are CLI-only modules
-    that must never appear in the eager-import closure of the MCP server bundle.
+    earlier. backend.doctor, backend.mcp_config_detect, and backend.mcp_config_install
+    are CLI-only modules that must never appear in the eager-import closure of the
+    MCP server bundle.
     """
 
     internal, _external = closure
