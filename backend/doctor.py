@@ -9,12 +9,15 @@ lives in dedicated commands (install-watcher, reindex-search, mcp).
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Callable
 
 from .config import get_settings
+from .search_index import get_search_index
+from .watcher_status import is_watcher_installed
 
 
 class Status(str, Enum):
@@ -102,3 +105,39 @@ def check_config() -> CheckResult:
             fix_command="fix or remove the named config file",
         )
     return CheckResult("Config", Status.OK, "valid")
+
+
+def watcher_install_command() -> str:
+    """Return platform-correct install command hint."""
+    base = "claude-explorer install-watcher"
+    if sys.platform.startswith("linux"):
+        return base + "  (then: sudo loginctl enable-linger $USER)"
+    return base
+
+
+def check_watcher() -> CheckResult:
+    """Check if CC watcher is installed."""
+    if is_watcher_installed():
+        return CheckResult("CC watcher", Status.OK, "installed")
+    return CheckResult(
+        "CC watcher", Status.WARN,
+        "not installed (image-cache data loss risk during downtime)",
+        fix_command=watcher_install_command(),
+    )
+
+
+def check_search() -> CheckResult:
+    """Check if search (FTS5) index is ready."""
+    idx = get_search_index()
+    if idx is None:
+        return CheckResult(
+            "Search (FTS5)", Status.WARN,
+            "FTS5 unavailable; search uses linear scan (still works)",
+        )
+    if not idx.is_ready():
+        return CheckResult(
+            "Search (FTS5)", Status.WARN,
+            "index not ready (building or stale); linear-scan fallback active",
+            fix_command="claude-explorer reindex-search",
+        )
+    return CheckResult("Search (FTS5)", Status.OK, "index ready")
