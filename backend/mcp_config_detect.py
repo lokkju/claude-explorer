@@ -87,3 +87,13 @@ def detect_mcp_in_claude_desktop(config_path: Path | None = None) -> McpRegistra
         return hit
     # Report the path we looked at so the caller can name it in the fix hint.
     return McpRegistration(False, path, None, None)
+
+
+def detect_mcp_in_file(path: Path, scope: str) -> McpRegistration:
+    """Scan a single config file for a registered `claude-explorer mcp`
+    server. Returns the found registration, or a not-found
+    McpRegistration carrying the looked-at path. Never raises."""
+    hit = _scan(path, scope)
+    if hit is not None:
+        return hit
+    return McpRegistration(False, path, None, None)
