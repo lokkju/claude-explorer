@@ -881,6 +881,28 @@ def install_mcp(client: str, scope: str, uninstall: bool) -> None:
     _sys.exit(_summarize_install(results))
 
 
+@install.command("all")
+@click.option("--uninstall", is_flag=True,
+              help="Remove everything instead of installing.")
+def install_all(uninstall: bool) -> None:
+    """Install (or uninstall) everything: the CC watcher + MCP
+    registration for Claude Code and Claude Desktop (defaults only)."""
+    import sys as _sys
+    from backend.mcp_config_install import (
+        install_mcp_code, install_mcp_desktop,
+        uninstall_mcp_code, uninstall_mcp_desktop,
+    )
+
+    results = [_do_watcher(None, 600.0, uninstall)]
+    if uninstall:
+        results.append(uninstall_mcp_code("user"))
+        results.append(uninstall_mcp_desktop())
+    else:
+        results.append(install_mcp_code("user"))
+        results.append(install_mcp_desktop())
+    _sys.exit(_summarize_install(results))
+
+
 @install.command("watcher")
 @click.option(
     "--python",
