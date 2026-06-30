@@ -9,6 +9,7 @@ lives in dedicated commands (install-watcher, reindex-search, mcp).
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from enum import Enum
@@ -141,3 +142,47 @@ def check_search() -> CheckResult:
             fix_command="claude-explorer reindex-search",
         )
     return CheckResult("Search (FTS5)", Status.OK, "index ready")
+
+
+def check_uvx() -> CheckResult:
+    """Check if uvx or uv is on PATH."""
+    uvx = shutil.which("uvx")
+    uv = shutil.which("uv")
+    if uvx or uv:
+        found = uvx or uv
+        return CheckResult("Runtime (uv/uvx)", Status.OK, f"found ({found})")
+    return CheckResult(
+        "Runtime (uv/uvx)", Status.WARN,
+        "uv/uvx not on PATH (needed only for the uvx-based MCP config)",
+        fix_command="install uv (https://docs.astral.sh/uv/) or add it to PATH",
+    )
+
+
+def _weasyprint_importable() -> tuple[bool, str]:
+    """Check if weasyprint can be imported (PDF export support)."""
+    try:
+        import weasyprint  # noqa: F401
+    except Exception as exc:  # noqa: BLE001 - OSError when pango missing, etc.
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, ""
+
+
+def pdf_install_hint() -> str:
+    """Return OS-specific hint for installing PDF export dependencies."""
+    if sys.platform == "darwin":
+        return "brew install pango cairo libffi"
+    if sys.platform.startswith("linux"):
+        return "apt-get install libpango-1.0-0 libpangocairo-1.0-0 libcairo2"
+    return "MSYS2: pacman -S mingw-w64-x86_64-pango (or the standalone WeasyPrint .exe)"
+
+
+def check_pdf_libs() -> CheckResult:
+    """Check if PDF export dependencies are available."""
+    ok, err = _weasyprint_importable()
+    if ok:
+        return CheckResult("PDF export", Status.OK, "weasyprint importable")
+    return CheckResult(
+        "PDF export", Status.WARN,
+        f"unavailable ({err}); PDF export disabled, rest of app fine",
+        fix_command=pdf_install_hint(),
+    )
