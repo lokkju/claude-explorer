@@ -469,6 +469,30 @@ search/FTS5 index, uv/uvx on PATH, PDF export libraries, and whether
 
 ---
 
+#### `claude-explorer install`
+
+Set up integrations. Subcommands:
+
+```bash
+claude-explorer install all                 # watcher + MCP (Code & Desktop)
+claude-explorer install watcher             # supervised CC image-cache watcher
+claude-explorer install mcp --client all    # register `claude-explorer mcp`
+```
+
+`install mcp` registers the MCP server (`claude-sessions`) with Claude Code
+and/or Claude Desktop. `--client {all|code|desktop}` (default `all`),
+`--scope {user|project}` (Claude Code only, default `user`). For Claude Code it
+uses the `claude mcp add` CLI when available, otherwise writes `~/.claude.json`
+directly; for Claude Desktop it merges into `claude_desktop_config.json` (restart
+Desktop afterward). Re-runs are idempotent. Add `--uninstall` to any subcommand
+to remove. `install-watcher` still works as a deprecated alias for
+`install watcher`.
+
+> Note: `.mcpb` bundle installs (Desktop Extensions UI) are managed by Claude
+> Desktop's own store and are not written or detected by this command.
+
+---
+
 ## MCP Server
 
 The project ships with a built-in **Model Context Protocol** server that lets Claude Desktop or Claude Code query your saved conversations directly. Once configured, you can ask Claude things like *"find the session where I debugged the weasyprint install"* or *"export the ZFS conversation I had last week as markdown"* and Claude will use the tools below to answer.
