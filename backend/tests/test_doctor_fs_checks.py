@@ -52,14 +52,13 @@ def test_config_valid_is_ok(monkeypatch, tmp_path: Path) -> None:
 def test_config_corrupt_is_fail(monkeypatch, tmp_path: Path) -> None:
     from backend import config as cfg
     monkeypatch.setattr(
-        cfg, "get_settings",
+        doctor, "get_settings",
         lambda: cfg.Settings(
             claude_dir=tmp_path, data_dir=tmp_path,
             claude_desktop_app_dir=tmp_path,  # required field on Settings
             config_corrupt_reason="x.json: JSONDecodeError: boom",
         ),
     )
-    monkeypatch.setattr(doctor, "get_settings", cfg.get_settings)
     r = doctor.check_config()
     assert r.status is Status.FAIL
     assert "boom" in r.detail
