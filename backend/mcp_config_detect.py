@@ -42,7 +42,7 @@ def _entry_matches(command: str, args: list) -> bool:
     Handles `uvx claude-explorer mcp`, `uv run --directory X claude-explorer
     mcp`, and an absolute path to a `claude-explorer` binary with `mcp`.
     """
-    tokens = [Path(str(command)).name] + [str(a) for a in (args or [])]
+    tokens = [Path(str(command)).name] + [str(a) for a in (args if isinstance(args, list) else [])]
     if "claude-explorer" not in tokens:
         return False
     idx = tokens.index("claude-explorer")
