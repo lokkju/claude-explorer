@@ -8,6 +8,7 @@ lives in dedicated commands (install-watcher, reindex-search, mcp).
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -230,3 +231,55 @@ def check_mcp_desktop() -> CheckResult:
             f"{where}, then restart Claude Desktop"
         ),
     )
+
+
+ALL_CHECKS: list[tuple[str, Check]] = [
+    ("Credentials", check_credentials),
+    ("Data directory", check_data_dir),
+    ("Config", check_config),
+    ("CC watcher", check_watcher),
+    ("Search (FTS5)", check_search),
+    ("Runtime (uv/uvx)", check_uvx),
+    ("PDF export", check_pdf_libs),
+    ("MCP -> Claude Code", check_mcp_code),
+    ("MCP -> Claude Desktop", check_mcp_desktop),
+]
+
+_SYMBOL = {Status.OK: "[ok]", Status.WARN: "[warn]", Status.FAIL: "[FAIL]"}
+
+
+def render_text(results: list[CheckResult]) -> str:
+    width = max((len(r.name) for r in results), default=0)
+    lines: list[str] = []
+    for r in results:
+        lines.append(f"  {r.name.ljust(width)}  {_SYMBOL[r.status]} {r.detail}")
+        if r.status is not Status.OK and r.fix_command:
+            lines.append(f"  {' ' * width}  -> {r.fix_command}")
+    failed = sum(1 for r in results if r.status is Status.FAIL)
+    warned = sum(1 for r in results if r.status is Status.WARN)
+    if failed:
+        lines.append(f"\n{failed} problem(s) found, {warned} warning(s).")
+    elif warned:
+        lines.append(f"\nNo failures. {warned} warning(s) — see fixes above.")
+    else:
+        lines.append("\nAll checks passed.")
+    return "\n".join(lines)
+
+
+def to_json(results: list[CheckResult]) -> dict:
+    return {
+        "checks": [
+            {
+                "name": r.name,
+                "status": r.status.value,
+                "detail": r.detail,
+                "fix_command": r.fix_command,
+            }
+            for r in results
+        ],
+        "summary": {
+            "ok": sum(1 for r in results if r.status is Status.OK),
+            "warnings": sum(1 for r in results if r.status is Status.WARN),
+            "failed": sum(1 for r in results if r.status is Status.FAIL),
+        },
+    }
