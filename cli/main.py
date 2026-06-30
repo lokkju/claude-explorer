@@ -799,7 +799,46 @@ from cli.watcher import (  # noqa: F401  (re-exported)
 )
 
 
-@main.command("install-watcher")
+def _do_watcher(python_bin: str | None, interval: float, uninstall: bool) -> "InstallResult":
+    """Run the per-OS watcher install/uninstall dispatch, returning an
+    InstallResult instead of raising (so `install all` can aggregate)."""
+    from backend.mcp_config_install import InstallResult
+    import sys as _sys
+
+    try:
+        if uninstall:
+            if _sys.platform == "darwin":
+                _uninstall_macos()
+            elif _sys.platform.startswith("linux"):
+                _uninstall_linux()
+            elif _sys.platform == "win32":
+                _uninstall_windows()
+            else:
+                raise click.ClickException(f"unsupported platform {_sys.platform!r}")
+            return InstallResult("watcher", True, True, "watcher uninstalled")
+
+        bin_ = python_bin or _sys.executable
+        if _sys.platform == "darwin":
+            _install_macos(bin_, interval)
+        elif _sys.platform.startswith("linux"):
+            _install_linux(bin_, interval)
+        elif _sys.platform == "win32":
+            _install_windows(bin_, interval)
+        else:
+            raise click.ClickException(
+                f"unsupported platform {_sys.platform!r}. Supported: darwin, linux, win32."
+            )
+        return InstallResult("watcher", True, True, "watcher installed")
+    except Exception as exc:  # noqa: BLE001 - aggregate, never crash the group
+        return InstallResult("watcher", False, False, f"watcher failed: {exc}")
+
+
+@main.group("install")
+def install() -> None:
+    """Install integrations: the CC watcher and MCP client registration."""
+
+
+@install.command("watcher")
 @click.option(
     "--python",
     "python_bin",
@@ -822,7 +861,7 @@ from cli.watcher import (  # noqa: F401  (re-exported)
     is_flag=True,
     help="Remove the platform-specific watcher unit instead of installing.",
 )
-def install_watcher(python_bin: str | None, interval: float, uninstall: bool) -> None:
+def install_watcher_cmd(python_bin: str | None, interval: float, uninstall: bool) -> None:
     """Install (or uninstall) a background job that runs the CC
     image-cache watcher continuously, independent of
     ``claude-explorer serve``.
@@ -853,37 +892,30 @@ def install_watcher(python_bin: str | None, interval: float, uninstall: bool) ->
                  the launcher script manually in a console.
     """
     import sys as _sys
+    r = _do_watcher(python_bin, interval, uninstall)
+    click.echo(r.detail)
+    _sys.exit(0 if r.ok else 1)
 
-    if uninstall:
-        if _sys.platform == "darwin":
-            _uninstall_macos()
-        elif _sys.platform.startswith("linux"):
-            _uninstall_linux()
-        elif _sys.platform == "win32":
-            _uninstall_windows()
-        else:
-            raise click.ClickException(
-                f"install-watcher --uninstall: unsupported platform {_sys.platform!r}"
-            )
-        return
 
-    if python_bin is None:
-        python_bin = _sys.executable
-
-    if _sys.platform == "darwin":
-        _install_macos(python_bin, interval)
-    elif _sys.platform.startswith("linux"):
-        _install_linux(python_bin, interval)
-    elif _sys.platform == "win32":
-        _install_windows(python_bin, interval)
-    else:
-        raise click.ClickException(
-            f"install-watcher: unsupported platform {_sys.platform!r}. "
-            "Supported: darwin (launchd), linux (systemd user), win32 (Task Scheduler)."
-        )
-
-    click.echo("")
-    click.echo(f"Uninstall: {_sys.argv[0]} install-watcher --uninstall")
+@main.command("install-watcher", hidden=True)
+@click.option(
+    "--python",
+    "python_bin",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+)
+@click.option("--interval", type=float, default=600.0)
+@click.option("--uninstall", is_flag=True)
+def install_watcher(python_bin: str | None, interval: float, uninstall: bool) -> None:
+    """Deprecated alias for `claude-explorer install watcher`."""
+    import sys as _sys
+    click.echo(
+        "Note: `install-watcher` is deprecated; use `claude-explorer install watcher`.",
+        err=True,
+    )
+    r = _do_watcher(python_bin, interval, uninstall)
+    click.echo(r.detail)
+    _sys.exit(0 if r.ok else 1)
 
 
 if __name__ == "__main__":
