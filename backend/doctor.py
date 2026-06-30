@@ -95,8 +95,6 @@ def check_data_dir() -> CheckResult:
 
 def check_config() -> CheckResult:
     """Check if config is valid (not corrupt)."""
-    if hasattr(get_settings, "cache_clear"):
-        get_settings.cache_clear()
     reason = get_settings().config_corrupt_reason
     if reason:
         return CheckResult(
