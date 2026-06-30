@@ -124,7 +124,7 @@ def test_forbidden_internal_modules_absent(closure: tuple[set[str], set[str]]) -
     leaked = {m for m in internal if m.startswith(forbidden_prefixes)}
     assert not leaked, (
         f"MCPB closure pulled forbidden internal modules: {sorted(leaked)}. "
-        f"These are FastAPI-only or watcher-only; the MCP read path must "
+        f"These are FastAPI-only, watcher-only, or CLI-only; the MCP read path must "
         f"not depend on them."
     )
 
