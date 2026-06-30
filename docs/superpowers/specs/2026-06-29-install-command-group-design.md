@@ -88,7 +88,12 @@ group. The deprecated `install-watcher` alias calls the same underlying logic.
   print "restart Claude Desktop." No `claude` CLI involved for desktop.
 - **Idempotent:** before writing, call `mcp_config_detect` for the target; if
   already registered, report "already configured" and make NO change.
-- **Server name:** `claude-sessions`. **Command form:** `uvx claude-explorer mcp`.
+- **Server name:** `claude-sessions` (the `mcpServers` key — matches every
+  existing README example + the verification prompt). It is an arbitrary local
+  alias; detection matches on the command/args, not this key. **Future (maybe):**
+  rename to `claude-explorer` for brand consistency — deferred; would require
+  updating the README's `claude-sessions` references and the `doctor` fix-hint in
+  lockstep. **Command form:** `uvx claude-explorer mcp`.
 - **`--uninstall`:** remove the matching `claude-sessions` entry. Code: `claude mcp
   remove claude-sessions` when `claude` present, else direct edit. Desktop: direct
   edit + restart reminder. Removing an absent entry is a no-op success.
