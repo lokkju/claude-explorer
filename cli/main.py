@@ -838,6 +838,49 @@ def install() -> None:
     """Install integrations: the CC watcher and MCP client registration."""
 
 
+def _summarize_install(results: list) -> int:
+    """Print an [ok]/[FAIL] line per InstallResult; return exit code (1 if any failed).
+
+    ASCII markers (not unicode check/cross) to avoid Windows cp1252 console
+    encoding errors — same convention as the `doctor` command.
+    """
+    failed = 0
+    for r in results:
+        mark = "[ok]" if r.ok else "[FAIL]"
+        click.echo(f"  {mark} {r.target}: {r.detail}")
+        if not r.ok:
+            failed += 1
+    return 1 if failed else 0
+
+
+@install.command("mcp")
+@click.option("--client", type=click.Choice(["all", "code", "desktop"]),
+              default="all", help="Which client(s) to register with (default: all).")
+@click.option("--scope", type=click.Choice(["user", "project"]),
+              default="user", help="Claude Code scope (code client only; default: user).")
+@click.option("--uninstall", is_flag=True,
+              help="Remove the registration instead of installing.")
+def install_mcp(client: str, scope: str, uninstall: bool) -> None:
+    """Register (or remove) the `claude-explorer mcp` server with Claude
+    Code and/or Claude Desktop."""
+    import sys as _sys
+    from backend.mcp_config_install import (
+        install_mcp_code, install_mcp_desktop,
+        uninstall_mcp_code, uninstall_mcp_desktop,
+    )
+
+    results = []
+    if client in ("all", "code"):
+        results.append(
+            uninstall_mcp_code(scope) if uninstall else install_mcp_code(scope)
+        )
+    if client in ("all", "desktop"):
+        results.append(
+            uninstall_mcp_desktop() if uninstall else install_mcp_desktop()
+        )
+    _sys.exit(_summarize_install(results))
+
+
 @install.command("watcher")
 @click.option(
     "--python",
