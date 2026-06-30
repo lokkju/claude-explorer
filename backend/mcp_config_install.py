@@ -105,3 +105,96 @@ def _remove_entry(path: Path, name: str) -> bool:
     data["mcpServers"] = servers
     _atomic_write_json(path, data)
     return True
+
+
+def _code_config_path(scope: str) -> Path:
+    """Return the config file path for Claude Code (user or project scope)."""
+    if scope == "project":
+        return Path.cwd() / ".mcp.json"
+    return Path.home() / ".claude.json"
+
+
+def _claude_available() -> bool:
+    """Check if the claude CLI is available in the PATH."""
+    return shutil.which("claude") is not None
+
+
+def _run_claude(args: list[str]) -> tuple[int, str]:
+    """Run `claude <args>`; return (returncode, combined stdout+stderr)."""
+    proc = subprocess.run(
+        ["claude", *args], capture_output=True, text=True, check=False
+    )
+    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+def install_mcp_code(scope: str = "user", *, config_path: Path | None = None) -> InstallResult:
+    """Install the MCP server in Claude Code config (user or project scope).
+
+    Prefers the claude CLI if available; falls back to direct file write.
+    Returns ok=False (not raised) on OSError or corrupt JSON.
+    """
+    path = config_path or _code_config_path(scope)
+    try:
+        reg = detect_mcp_in_file(path, scope)
+        if reg.found:
+            return InstallResult("code", True, False,
+                                 f"already configured ({reg.server_name})")
+        if _claude_available():
+            rc, out = _run_claude(["mcp", "add", "--scope", scope, SERVER_NAME,
+                                   "--", "uvx", "claude-explorer", "mcp"])
+            if rc == 0:
+                return InstallResult("code", True, True,
+                                     f"registered via claude CLI ({scope} scope)")
+            return InstallResult("code", False, False,
+                                 f"claude mcp add failed: {out.strip()}")
+        changed = _merge_entry(path, SERVER_NAME, mcp_block())
+        return InstallResult("code", True, changed, f"wrote {path}")
+    except (OSError, ValueError) as exc:
+        return InstallResult("code", False, False, f"failed: {exc}")
+
+
+def install_mcp_desktop(*, config_path: Path | None = None) -> InstallResult:
+    """Install the MCP server in Claude Desktop config.
+
+    Returns ok=False (not raised) on OSError or corrupt JSON.
+    """
+    path = config_path or claude_desktop_config_path()
+    try:
+        reg = detect_mcp_in_file(path, "desktop")
+        if reg.found:
+            return InstallResult("desktop", True, False,
+                                 f"already configured ({reg.server_name})")
+        changed = _merge_entry(path, SERVER_NAME, mcp_block())
+        return InstallResult("desktop", True, changed,
+                             f"wrote {path}; restart Claude Desktop to load it")
+    except (OSError, ValueError) as exc:
+        return InstallResult("desktop", False, False, f"failed: {exc}")
+
+
+def uninstall_mcp_code(scope: str = "user", *, config_path: Path | None = None) -> InstallResult:
+    """Uninstall the MCP server from Claude Code config (user or project scope).
+
+    Always uses direct file edit (not the claude CLI) for robustness.
+    Returns ok=False (not raised) on OSError or corrupt JSON.
+    """
+    path = config_path or _code_config_path(scope)
+    try:
+        changed = _remove_entry(path, SERVER_NAME)
+        return InstallResult("code", True, changed,
+                             "removed" if changed else "not present")
+    except (OSError, ValueError) as exc:
+        return InstallResult("code", False, False, f"failed: {exc}")
+
+
+def uninstall_mcp_desktop(*, config_path: Path | None = None) -> InstallResult:
+    """Uninstall the MCP server from Claude Desktop config.
+
+    Returns ok=False (not raised) on OSError or corrupt JSON.
+    """
+    path = config_path or claude_desktop_config_path()
+    try:
+        changed = _remove_entry(path, SERVER_NAME)
+        return InstallResult("desktop", True, changed,
+                             "removed; restart Claude Desktop" if changed else "not present")
+    except (OSError, ValueError) as exc:
+        return InstallResult("desktop", False, False, f"failed: {exc}")
