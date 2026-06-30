@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import get_settings
+from .mcp_config_detect import detect_mcp_in_claude_code, detect_mcp_in_claude_desktop
 from .search_index import get_search_index
 from .watcher_status import is_watcher_installed
 
@@ -185,4 +186,47 @@ def check_pdf_libs() -> CheckResult:
         "PDF export", Status.WARN,
         f"unavailable ({err}); PDF export disabled, rest of app fine",
         fix_command=pdf_install_hint(),
+    )
+
+
+MCPB_CAVEAT = (
+    "if you installed the .mcpb bundle via the Extensions UI, this is "
+    "expected — bundle installs aren't detectable from disk"
+)
+
+
+def check_mcp_code() -> CheckResult:
+    """Check if claude-explorer mcp is registered in Claude Code."""
+    reg = detect_mcp_in_claude_code()
+    if reg.found:
+        return CheckResult(
+            "MCP -> Claude Code", Status.OK,
+            f"registered ({reg.scope} scope: {reg.server_name})",
+        )
+    return CheckResult(
+        "MCP -> Claude Code", Status.WARN, "not registered",
+        fix_command="claude mcp add --scope user claude-sessions -- uvx claude-explorer mcp",
+    )
+
+
+def check_mcp_desktop() -> CheckResult:
+    """Check if claude-explorer mcp is registered in Claude Desktop.
+
+    Returns WARN (not FAIL) on not-found, since .mcpb bundle installs
+    are not detectable from disk config files.
+    """
+    reg = detect_mcp_in_claude_desktop()
+    if reg.found:
+        return CheckResult(
+            "MCP -> Claude Desktop", Status.OK,
+            f"registered ({reg.server_name})",
+        )
+    where = reg.config_path or "claude_desktop_config.json"
+    return CheckResult(
+        "MCP -> Claude Desktop", Status.WARN,
+        f"no entry in {where}; {MCPB_CAVEAT}",
+        fix_command=(
+            "add an mcpServers stdio block for `uvx claude-explorer mcp` to "
+            f"{where}, then restart Claude Desktop"
+        ),
     )
