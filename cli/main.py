@@ -531,20 +531,24 @@ def reindex_search(full: bool) -> None:
 
 @main.command()
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON output")
-def doctor(as_json: bool) -> None:
+@click.option("--no-color", is_flag=True, help="Disable colored output.")
+def doctor(as_json: bool, no_color: bool) -> None:
     """Diagnose install + environment health (read-only).
 
     Reports pass/warn/fail per check with a fix hint. Exits non-zero if
     any check fails. Fixing stays in dedicated commands (install-watcher,
     reindex-search, mcp).
     """
+    from backend.cli_style import should_use_color
     from backend.doctor import ALL_CHECKS, has_failure, render_text, run_checks, to_json
 
     results = run_checks(ALL_CHECKS)
     if as_json:
+        # JSON is machine-readable — never colorized.
         click.echo(json.dumps(to_json(results), indent=2))
     else:
-        click.echo(render_text(results))
+        color = should_use_color(no_color)
+        click.echo(render_text(results, color=color), color=color)
     sys.exit(1 if has_failure(results) else 0)
 
 
@@ -838,16 +842,22 @@ def install() -> None:
     """Install integrations: the CC watcher and MCP client registration."""
 
 
-def _summarize_install(results: list) -> int:
+def _summarize_install(results: list, *, color: bool = False) -> int:
     """Print an [ok]/[FAIL] line per InstallResult; return exit code (1 if any failed).
 
     ASCII markers (not unicode check/cross) to avoid Windows cp1252 console
-    encoding errors — same convention as the `doctor` command.
+    encoding errors — same convention as the `doctor` command. ``color`` adds
+    ANSI color to the marker (green ok / red fail); the text marker always
+    stays, so color is additive and colorblind-/pipe-safe.
     """
+    from backend.cli_style import style_status
+
     failed = 0
     for r in results:
-        mark = "[ok]" if r.ok else "[FAIL]"
-        click.echo(f"  {mark} {r.target}: {r.detail}")
+        mark = style_status(
+            "[ok]" if r.ok else "[FAIL]", "ok" if r.ok else "fail", color
+        )
+        click.echo(f"  {mark} {r.target}: {r.detail}", color=color)
         if not r.ok:
             failed += 1
     return 1 if failed else 0
@@ -860,10 +870,12 @@ def _summarize_install(results: list) -> int:
               default="user", help="Claude Code scope (code client only; default: user).")
 @click.option("--uninstall", is_flag=True,
               help="Remove the registration instead of installing.")
-def install_mcp(client: str, scope: str, uninstall: bool) -> None:
+@click.option("--no-color", is_flag=True, help="Disable colored output.")
+def install_mcp(client: str, scope: str, uninstall: bool, no_color: bool) -> None:
     """Register (or remove) the `claude-explorer mcp` server with Claude
     Code and/or Claude Desktop."""
     import sys as _sys
+    from backend.cli_style import should_use_color
     from backend.mcp_config_install import (
         install_mcp_code, install_mcp_desktop,
         uninstall_mcp_code, uninstall_mcp_desktop,
@@ -878,16 +890,18 @@ def install_mcp(client: str, scope: str, uninstall: bool) -> None:
         results.append(
             uninstall_mcp_desktop() if uninstall else install_mcp_desktop()
         )
-    _sys.exit(_summarize_install(results))
+    _sys.exit(_summarize_install(results, color=should_use_color(no_color)))
 
 
 @install.command("all")
 @click.option("--uninstall", is_flag=True,
               help="Remove everything instead of installing.")
-def install_all(uninstall: bool) -> None:
+@click.option("--no-color", is_flag=True, help="Disable colored output.")
+def install_all(uninstall: bool, no_color: bool) -> None:
     """Install (or uninstall) everything: the CC watcher + MCP
     registration for Claude Code and Claude Desktop (defaults only)."""
     import sys as _sys
+    from backend.cli_style import should_use_color
     from backend.mcp_config_install import (
         install_mcp_code, install_mcp_desktop,
         uninstall_mcp_code, uninstall_mcp_desktop,
@@ -900,7 +914,7 @@ def install_all(uninstall: bool) -> None:
     else:
         results.append(install_mcp_code("user"))
         results.append(install_mcp_desktop())
-    _sys.exit(_summarize_install(results))
+    _sys.exit(_summarize_install(results, color=should_use_color(no_color)))
 
 
 @install.command("watcher")

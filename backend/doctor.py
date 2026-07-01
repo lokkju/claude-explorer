@@ -16,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
+from .cli_style import style_dim, style_status
 from .config import get_settings
 from .mcp_config_detect import detect_mcp_in_claude_code, detect_mcp_in_claude_desktop
 from .search_index import get_search_index
@@ -257,23 +258,34 @@ ALL_CHECKS: list[tuple[str, Check]] = [
 ]
 
 _SYMBOL = {Status.OK: "[ok]", Status.WARN: "[warn]", Status.FAIL: "[FAIL]"}
+_KIND = {Status.OK: "ok", Status.WARN: "warn", Status.FAIL: "fail"}
 
 
-def render_text(results: list[CheckResult]) -> str:
+def render_text(results: list[CheckResult], *, color: bool = False) -> str:
+    """Render the human report. ``color`` adds ANSI color to the status
+    markers/summary; output is byte-identical to the pre-color form when
+    ``color`` is False (the text markers always stay — color is additive)."""
     width = max((len(r.name) for r in results), default=0)
     lines: list[str] = []
     for r in results:
-        lines.append(f"  {r.name.ljust(width)}  {_SYMBOL[r.status]} {r.detail}")
+        marker = style_status(_SYMBOL[r.status], _KIND[r.status], color)
+        lines.append(f"  {r.name.ljust(width)}  {marker} {r.detail}")
         if r.status is not Status.OK and r.fix_command:
-            lines.append(f"  {' ' * width}  -> {r.fix_command}")
+            hint = style_dim(f"-> {r.fix_command}", color)
+            lines.append(f"  {' ' * width}  {hint}")
     failed = sum(1 for r in results if r.status is Status.FAIL)
     warned = sum(1 for r in results if r.status is Status.WARN)
     if failed:
-        lines.append(f"\n{failed} problem(s) found, {warned} warning(s).")
+        summary = style_status(
+            f"{failed} problem(s) found, {warned} warning(s).", "fail", color
+        )
     elif warned:
-        lines.append(f"\nNo failures. {warned} warning(s) — see fixes above.")
+        summary = style_status(
+            f"No failures. {warned} warning(s) — see fixes above.", "warn", color
+        )
     else:
-        lines.append("\nAll checks passed.")
+        summary = style_status("All checks passed.", "ok", color)
+    lines.append("\n" + summary)
     return "\n".join(lines)
 
 

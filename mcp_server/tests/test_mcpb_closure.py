@@ -122,6 +122,7 @@ def test_forbidden_internal_modules_absent(closure: tuple[set[str], set[str]]) -
         "backend.doctor",          # CLI-only: doctor command
         "backend.mcp_config_detect",  # CLI-only: MCP config reader
         "backend.mcp_config_install",  # CLI-only: install/uninstall writer
+        "backend.cli_style",       # CLI-only: terminal color helpers (imports click)
     )
     leaked = {m for m in internal if m.startswith(forbidden_prefixes)}
     assert not leaked, (
