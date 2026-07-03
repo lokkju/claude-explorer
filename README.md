@@ -488,6 +488,14 @@ Desktop afterward). Re-runs are idempotent. Add `--uninstall` to any subcommand
 to remove. `install-watcher` still works as a deprecated alias for
 `install watcher`.
 
+The command it registers **prefers an installed `claude-explorer` entry point
+by absolute path** (e.g. `~/.local/bin/claude-explorer mcp`) when one is on your
+`PATH`, falling back to `uvx claude-explorer mcp` only when it isn't installed.
+The absolute path is important for GUI apps like Claude Desktop, whose launch
+environment often omits `uvx` from `PATH` (you'd otherwise see `spawn uvx
+ENOENT`), and it runs *your* install rather than the published PyPI package. If
+you hand-edit the config instead, use the absolute path to your
+`claude-explorer` for the same reason.
 > Note: `.mcpb` bundle installs (Desktop Extensions UI) are managed by Claude
 > Desktop's own store and are not written or detected by this command.
 

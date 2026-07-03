@@ -17,14 +17,14 @@ def test_mcp_code_found_is_ok(monkeypatch) -> None:
     assert "user" in r.detail
 
 
-def test_mcp_code_missing_is_warn_with_add_command(monkeypatch) -> None:
+def test_mcp_code_missing_is_warn_with_install_command(monkeypatch) -> None:
     monkeypatch.setattr(
         doctor, "detect_mcp_in_claude_code",
         lambda: McpRegistration(False, None, None, None),
     )
     r = doctor.check_mcp_code()
     assert r.status is Status.WARN
-    assert "claude mcp add" in (r.fix_command or "")
+    assert "install mcp" in (r.fix_command or "")
 
 
 def test_mcp_desktop_found_is_ok(monkeypatch) -> None:

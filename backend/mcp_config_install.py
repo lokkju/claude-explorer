@@ -25,9 +25,32 @@ from .mcp_config_detect import claude_desktop_config_path, detect_mcp_in_file
 SERVER_NAME = "claude-sessions"
 
 
+def _installed_claude_explorer() -> str | None:
+    """Absolute path to an installed ``claude-explorer`` entry point, or None.
+
+    Module-level so tests can monkeypatch it."""
+    return shutil.which("claude-explorer")
+
+
+def mcp_command() -> tuple[str, list[str]]:
+    """The (command, args) that launches the MCP server.
+
+    Prefer the installed ``claude-explorer`` entry point by ABSOLUTE path:
+    it's robust for GUI apps (Claude Desktop's PATH often omits ``uvx``, and
+    an absolute command needs no PATH at all), and it runs THIS install
+    rather than the published PyPI package. Fall back to ``uvx
+    claude-explorer mcp`` only when it isn't installed (the zero-install
+    path)."""
+    exe = _installed_claude_explorer()
+    if exe:
+        return exe, ["mcp"]
+    return "uvx", ["claude-explorer", "mcp"]
+
+
 def mcp_block() -> dict:
     """The mcpServers entry value we write. Single source of truth."""
-    return {"type": "stdio", "command": "uvx", "args": ["claude-explorer", "mcp"]}
+    cmd, args = mcp_command()
+    return {"type": "stdio", "command": cmd, "args": args}
 
 
 @dataclass
@@ -142,8 +165,9 @@ def install_mcp_code(scope: str = "user", *, config_path: Path | None = None) ->
             return InstallResult("code", True, False,
                                  f"already configured ({reg.server_name})")
         if _claude_available():
+            cmd, args = mcp_command()
             rc, out = _run_claude(["mcp", "add", "--scope", scope, SERVER_NAME,
-                                   "--", "uvx", "claude-explorer", "mcp"])
+                                   "--", cmd, *args])
             if rc == 0:
                 return InstallResult("code", True, True,
                                      f"registered via claude CLI ({scope} scope)")
