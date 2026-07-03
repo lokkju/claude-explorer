@@ -34,3 +34,13 @@ def test_write_is_0600_and_atomic(tmp_path: Path) -> None:
     assert json.loads(p.read_text())["auth_expired"] is True
     assert (p.stat().st_mode & 0o777) == 0o600
     assert list((tmp_path / "sub").glob("*.tmp")) == []
+
+
+def test_read_status_uses_field_defaults_for_missing_keys(tmp_path: Path) -> None:
+    """Partial JSON (e.g. hand-edited) missing a key falls back to field default."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"auth_expired": True}))
+    s = read_status(p)
+    assert s.last_result == "unknown"  # declared default, not None
+    assert s.auth_expired is True
+    assert s.fetched_count is None
