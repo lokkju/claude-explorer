@@ -474,9 +474,12 @@ search/FTS5 index, uv/uvx on PATH, PDF export libraries, and whether
 Set up integrations. Subcommands:
 
 ```bash
-claude-explorer install all                 # watcher + MCP (Code & Desktop)
+claude-explorer install all                 # watcher + MCP (Code & Desktop) + scheduled fetch
 claude-explorer install watcher             # supervised CC image-cache watcher
 claude-explorer install mcp --client all    # register `claude-explorer mcp`
+claude-explorer install fetch               # hourly incremental fetch (scheduled job)
+claude-explorer install fetch --interval 1800  # custom interval in seconds
+claude-explorer install fetch --uninstall   # remove the scheduled fetch job
 ```
 
 `install mcp` registers the MCP server (`claude-sessions`) with Claude Code
@@ -496,6 +499,45 @@ environment often omits `uvx` from `PATH` (you'd otherwise see `spawn uvx
 ENOENT`), and it runs *your* install rather than the published PyPI package. If
 you hand-edit the config instead, use the absolute path to your
 `claude-explorer` for the same reason.
+
+`install fetch` installs a cross-platform **scheduled incremental fetch** job —
+hourly by default — so your Claude Desktop archive stays current without you
+having to open the web UI. Each run does an incremental fetch (skips
+already-saved conversations), then a drift pass on the search index. A small
+status file at `~/.claude-explorer/scheduled-fetch-status.json` records the last
+run time, outcome (`ok` / `auth_expired` / `error`), and conversation count.
+`claude-explorer doctor` reads this file and emits a WARN when:
+
+- the job is not installed (not-installed);
+- the last run detected expired credentials (auth-expired);
+- no successful run has been seen in over twice the configured interval (stale).
+
+On the first run after credentials expire, `install fetch` sends a **best-effort
+desktop notification** (`osascript` on macOS, `notify-send` on Linux,
+PowerShell toast on Windows). If the notifier is unavailable, the status file
+and `doctor` are the fallback. The job does **not** re-login automatically —
+background jobs can't open an interactive browser. Re-authenticate with one of:
+
+- `claude-explorer capture` in a terminal, or
+- the **Refresh** button in the web UI.
+
+Platform dispatch:
+
+| Platform | Mechanism | Interval default |
+|----------|-----------|-----------------|
+| macOS    | launchd user agent (`StartInterval`) | 3600 s (1 h) |
+| Linux    | systemd user `.service` + `.timer` (`OnUnitActiveSec`) | 3600 s (1 h) |
+| Windows  | Task Scheduler (`/SC HOURLY`) | 3600 s (1 h) |
+
+On Linux, run `sudo loginctl enable-linger $USER` once to keep the timer active
+across logout. On macOS and Windows the job persists across logouts automatically.
+
+> **Limitation:** `notify-send` on Linux requires a live desktop session with a
+> notification daemon running. On headless servers the notification silently
+> fails; `doctor` and the status file are the only signal.
+
+`install all` now includes the scheduled fetch job (at the 3600 s default).
+
 > Note: `.mcpb` bundle installs (Desktop Extensions UI) are managed by Claude
 > Desktop's own store and are not written or detected by this command.
 
