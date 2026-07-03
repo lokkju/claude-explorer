@@ -36,7 +36,7 @@ def test_missing_creds_is_needs_auth(monkeypatch, tmp_path: Path) -> None:
     code = sf.run_scheduled_fetch(interval_sec=3600, now="2026-07-02T10:00:00Z")
     assert code == 1
     assert read_status(tmp_path / "status.json").last_result == "needs_auth"
-    assert fired  # notified
+    assert len(fired) == 1  # notified exactly once
 
 
 def test_auth_expired_notifies_once_on_transition(monkeypatch, tmp_path: Path) -> None:
