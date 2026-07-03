@@ -143,6 +143,9 @@ def _systemd_timer_path() -> Path:
 
 def _install_macos(python_bin: str, interval: int) -> None:
     """macOS launchd path — periodic via StartInterval."""
+    launcher = write_launcher(interval)
+    click.echo(f"Wrote {launcher}")
+
     plist_path = _launchd_plist_path()
     plist_body = build_launchd_plist(python_bin, interval)
     plist_path.parent.mkdir(parents=True, exist_ok=True)
