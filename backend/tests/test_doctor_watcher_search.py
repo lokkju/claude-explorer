@@ -20,12 +20,21 @@ def test_watcher_missing_is_warn_with_fix(monkeypatch) -> None:
     assert "install-watcher" in (r.fix_command or "")
 
 
-def test_search_ready_is_ok(monkeypatch) -> None:
+def test_search_built_on_disk_is_ok(monkeypatch) -> None:
+    # Healthy on-disk index (schema intact + populated). Note is_ready()
+    # returns False here — as it always does in a cold CLI — so the check
+    # must NOT rely on it.
     class _Idx:
         def is_ready(self) -> bool:
+            return False
+        def is_built_on_disk(self) -> bool:
             return True
+        def indexed_file_count(self) -> int:
+            return 42
     monkeypatch.setattr(doctor, "get_search_index", lambda: _Idx())
-    assert doctor.check_search().status is Status.OK
+    r = doctor.check_search()
+    assert r.status is Status.OK
+    assert "42" in r.detail
 
 
 def test_search_unavailable_is_warn(monkeypatch) -> None:
@@ -35,10 +44,12 @@ def test_search_unavailable_is_warn(monkeypatch) -> None:
     assert "linear" in r.detail.lower()
 
 
-def test_search_not_ready_is_warn_with_reindex_fix(monkeypatch) -> None:
+def test_search_not_built_is_warn_with_fix(monkeypatch) -> None:
     class _Idx:
-        def is_ready(self) -> bool:
+        def is_built_on_disk(self) -> bool:
             return False
+        def indexed_file_count(self) -> int:
+            return 0
     monkeypatch.setattr(doctor, "get_search_index", lambda: _Idx())
     r = doctor.check_search()
     assert r.status is Status.WARN
