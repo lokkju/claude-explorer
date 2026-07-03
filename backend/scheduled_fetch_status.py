@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -54,3 +56,57 @@ def write_status(status: FetchStatus, path: Path | None = None) -> None:
         if tmp.exists():
             tmp.unlink()
         raise
+
+
+_LAUNCHD_LABEL = "com.claude-explorer.scheduled-fetch"
+_SYSTEMD_TIMER = "claude-explorer-scheduled-fetch.timer"
+_WIN_TASK = "ClaudeExplorerScheduledFetch"
+_ENV = "CLAUDE_EXPLORER_SCHEDULED_FETCH_INSTALLED"
+_TRUTHY = {"1", "true", "yes"}
+_FALSY = {"0", "false", "no"}
+
+
+def is_scheduled_fetch_installed() -> bool:
+    """Return True if scheduled fetch is installed (via the platform's supervisor).
+
+    Env override CLAUDE_EXPLORER_SCHEDULED_FETCH_INSTALLED (1/true/yes → True,
+    0/false/no → False) short-circuits; else platform probe:
+    - macOS: launchctl list contains com.claude-explorer.scheduled-fetch
+    - Linux: systemctl --user is-enabled claude-explorer-scheduled-fetch.timer rc 0
+    - Windows: schtasks /Query /TN ClaudeExplorerScheduledFetch rc 0
+
+    Any probe error → False (never raises).
+    """
+    override = os.environ.get(_ENV, "").strip().lower()
+    if override in _TRUTHY:
+        return True
+    if override in _FALSY:
+        return False
+    try:
+        if sys.platform == "darwin":
+            result = subprocess.run(
+                ["launchctl", "list"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return _LAUNCHD_LABEL in result.stdout
+        if sys.platform.startswith("linux"):
+            result = subprocess.run(
+                ["systemctl", "--user", "is-enabled", _SYSTEMD_TIMER],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.returncode == 0
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["schtasks", "/Query", "/TN", _WIN_TASK],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return False
