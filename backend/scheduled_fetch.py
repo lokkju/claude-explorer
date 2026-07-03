@@ -35,7 +35,11 @@ def _lock_path() -> Path:
 
 def _acquire_lock():
     """Return a lock handle, or None if another run holds it. Uses O_CREAT|
-    O_EXCL on a lockfile; the handle is the open fd."""
+    O_EXCL on a lockfile; the handle is the open fd.
+
+    Known limitation: a hard-killed run (SIGKILL/OOM) leaves the lockfile
+    behind, blocking future runs until manually removed. A future enhancement
+    could stale-bust via PID check."""
     import os
     p = _lock_path()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +125,9 @@ def run_scheduled_fetch(*, interval_sec: int = 3600, now: str | None = None) -> 
             interval_sec=interval_sec,
         ), status_path())
         return 0
+    except Exception as exc:  # noqa: BLE001 - supervised job must never crash
+        log.warning("scheduled-fetch: unexpected error: %s", exc)
+        return 1
     finally:
         _release_lock(handle)
 
