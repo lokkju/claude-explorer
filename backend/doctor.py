@@ -19,6 +19,11 @@ from typing import Callable
 from .cli_style import style_dim, style_status
 from .config import get_settings
 from .mcp_config_detect import detect_mcp_in_claude_code, detect_mcp_in_claude_desktop
+from .scheduled_fetch_status import (
+    FetchStatus,
+    is_scheduled_fetch_installed,
+    read_status,
+)
 from .search_index import get_search_index
 from .watcher_status import is_watcher_installed
 
@@ -233,11 +238,57 @@ def check_mcp_desktop() -> CheckResult:
     )
 
 
+def _fetch_status_is_stale(s: FetchStatus) -> bool:
+    """True if last success is older than 2x the interval (or missing)."""
+    if not s.last_success_at:
+        return True
+    from datetime import datetime, timezone
+
+    try:
+        last = datetime.strptime(s.last_success_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return True
+    age = (datetime.now(timezone.utc) - last).total_seconds()
+    return age > 2 * (s.interval_sec or 3600)
+
+
+def check_scheduled_fetch() -> CheckResult:
+    """Check if scheduled fetch is installed and working."""
+    if not is_scheduled_fetch_installed():
+        return CheckResult(
+            "Scheduled fetch",
+            Status.WARN,
+            "not installed (archive updates only on manual fetch)",
+            fix_command="claude-explorer install fetch",
+        )
+    s = read_status()
+    if s.auth_expired or s.last_result in ("auth_expired", "needs_auth"):
+        return CheckResult(
+            "Scheduled fetch",
+            Status.WARN,
+            "Claude session expired — scheduled fetch can't run",
+            fix_command="claude-explorer capture",
+        )
+    if _fetch_status_is_stale(s):
+        return CheckResult(
+            "Scheduled fetch",
+            Status.WARN,
+            f"no recent successful fetch (last: {s.last_success_at or 'never'})",
+            fix_command="check the job logs / claude-explorer install fetch",
+        )
+    return CheckResult(
+        "Scheduled fetch", Status.OK, f"last success {s.last_success_at}"
+    )
+
+
 ALL_CHECKS: list[tuple[str, Check]] = [
     ("Credentials", check_credentials),
     ("Data directory", check_data_dir),
     ("Config", check_config),
     ("CC watcher", check_watcher),
+    ("Scheduled fetch", check_scheduled_fetch),
     ("Search (FTS5)", check_search),
     ("Runtime (uv/uvx)", check_uvx),
     ("PDF export", check_pdf_libs),
