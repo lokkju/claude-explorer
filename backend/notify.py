@@ -12,7 +12,7 @@ import sys
 def _run(cmd: list[str]) -> bool:
     try:
         return subprocess.run(cmd, capture_output=True, text=True).returncode == 0
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         return False
 
 

@@ -40,7 +40,8 @@ def read_status(path: Path | None = None) -> FetchStatus:
         return FetchStatus()
     if not isinstance(data, dict):
         return FetchStatus()
-    known = {f: data.get(f) for f in FetchStatus().__dict__}
+    _defaults = FetchStatus()
+    known = {f: data.get(f, getattr(_defaults, f)) for f in _defaults.__dict__}
     return FetchStatus(**known)
 
 
