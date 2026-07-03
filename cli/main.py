@@ -789,6 +789,39 @@ def _summarize_install(results: list, *, color: bool = False) -> int:
     return 1 if failed else 0
 
 
+def _do_scheduled_fetch(interval: int, uninstall: bool) -> "InstallResult":
+    """Install or uninstall the scheduled periodic fetch job.
+
+    Returns an InstallResult; catches exceptions and returns a failed
+    result instead of raising.
+    """
+    from backend.mcp_config_install import InstallResult
+    import cli.scheduled_fetch_install as sfi
+    import sys as _sys
+
+    try:
+        if uninstall:
+            sfi.uninstall()
+            return InstallResult("fetch", True, True, "scheduled fetch uninstalled")
+        sfi.install(_sys.executable, interval)
+        return InstallResult("fetch", True, True, f"scheduled fetch installed ({interval}s)")
+    except Exception as exc:  # noqa: BLE001
+        return InstallResult("fetch", False, False, f"scheduled fetch failed: {exc}")
+
+
+@install.command("fetch")
+@click.option("--interval", type=int, default=3600,
+              help="Fetch interval in seconds (default: 3600 = hourly).")
+@click.option("--uninstall", is_flag=True, help="Remove the scheduled fetch job.")
+@click.option("--no-color", is_flag=True, help="Disable colored output.")
+def install_fetch(interval: int, uninstall: bool, no_color: bool) -> None:
+    """Install (or uninstall) a scheduled incremental fetch (hourly by default)."""
+    import sys as _sys
+    from backend.cli_style import should_use_color
+    r = _do_scheduled_fetch(interval, uninstall)
+    _sys.exit(_summarize_install([r], color=should_use_color(no_color)))
+
+
 @install.command("mcp")
 @click.option("--client", type=click.Choice(["all", "code", "desktop"]),
               default="all", help="Which client(s) to register with (default: all).")
@@ -834,6 +867,7 @@ def install_all(uninstall: bool, no_color: bool) -> None:
     )
 
     results = [_do_watcher(None, 600.0, uninstall)]
+    results.append(_do_scheduled_fetch(3600, uninstall))
     if uninstall:
         results.append(uninstall_mcp_code("user"))
         results.append(uninstall_mcp_desktop())
