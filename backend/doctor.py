@@ -129,20 +129,33 @@ def check_watcher() -> CheckResult:
 
 
 def check_search() -> CheckResult:
-    """Check if search (FTS5) index is ready."""
+    """Check the on-disk FTS5 index health.
+
+    Uses ``is_built_on_disk()`` (schema intact + populated), NOT
+    ``is_ready()`` — the latter is a process-local build flag that is always
+    False in a cold one-shot CLI, so it would spuriously warn even when the
+    on-disk index is healthy. The running server keeps the index current via
+    the watcher's drift pass; this check only flags a genuinely absent/empty
+    index."""
     idx = get_search_index()
     if idx is None:
         return CheckResult(
             "Search (FTS5)", Status.WARN,
             "FTS5 unavailable; search uses linear scan (still works)",
         )
-    if not idx.is_ready():
+    if not idx.is_built_on_disk():
         return CheckResult(
             "Search (FTS5)", Status.WARN,
-            "index not ready (building or stale); linear-scan fallback active",
-            fix_command="claude-explorer reindex-search",
+            "index not built yet (empty or schema mismatch); linear-scan fallback active",
+            fix_command=(
+                "start `claude-explorer serve` once (auto-builds), "
+                "or run `claude-explorer reindex-search`"
+            ),
         )
-    return CheckResult("Search (FTS5)", Status.OK, "index ready")
+    return CheckResult(
+        "Search (FTS5)", Status.OK,
+        f"index present ({idx.indexed_file_count()} file(s) indexed)",
+    )
 
 
 def check_uvx() -> CheckResult:
