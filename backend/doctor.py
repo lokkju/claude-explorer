@@ -224,7 +224,7 @@ def check_mcp_code() -> CheckResult:
         )
     return CheckResult(
         "MCP -> Claude Code", Status.WARN, "not registered",
-        fix_command="claude mcp add --scope user claude-sessions -- uvx claude-explorer mcp",
+        fix_command="claude-explorer install mcp --client code",
     )
 
 
@@ -245,8 +245,7 @@ def check_mcp_desktop() -> CheckResult:
         "MCP -> Claude Desktop", Status.WARN,
         f"no entry in {where}; {MCPB_CAVEAT}",
         fix_command=(
-            "add an mcpServers stdio block for `uvx claude-explorer mcp` to "
-            f"{where}, then restart Claude Desktop"
+            "claude-explorer install mcp --client desktop, then restart Claude Desktop"
         ),
     )
 
