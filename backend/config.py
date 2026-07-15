@@ -19,7 +19,7 @@ from pathlib import Path
 from functools import lru_cache
 
 import platformdirs
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 log = logging.getLogger(__name__)
@@ -136,6 +136,109 @@ def migrate_legacy_data_dir() -> None:
     log.info("Migrated data dir %s -> %s", legacy, new)
 
 
+# Subdirectory of the Claude Desktop app dir that holds Cowork sessions.
+# Single source of truth for the name used by the resolver below and by
+# the Cowork reader / enumerator / watcher.
+COWORK_SESSIONS_DIRNAME = "local-agent-mode-sessions"
+
+
+def _desktop_app_dir_candidates(
+    env_override: str | None,
+    config_override: Path | None,
+) -> list[Path]:
+    """Ordered, de-duplicated candidate locations for Claude Desktop's
+    Electron ``userData`` directory (which contains Cowork sessions).
+
+    An explicit override (env or ``config.json``) wins outright and is
+    returned as the sole candidate. Otherwise we probe the locations
+    Claude Desktop is known to use across platforms and installers:
+
+    1. ``user_config_path("Claude", roaming=True)`` — Electron's
+       ``userData`` on every platform (``~/.config/Claude`` on Linux,
+       ``~/Library/Application Support/Claude`` on macOS, Roaming
+       ``%APPDATA%\\Claude`` on Windows).
+    2. ``user_data_path("Claude")`` — the historical (wrong-on-Linux/
+       Windows) default; kept so anyone whose sessions already live there
+       is still found.
+    3./4. Explicit XDG paths, in case ``$XDG_*`` env vars are unset or a
+       repackaged (Flatpak/Snap-style) install lands here.
+
+    macOS collapses several of these to the same path; the dedup keeps the
+    list tight so the resolver's filesystem probe stays cheap.
+    """
+    if env_override:
+        return [Path(env_override)]
+    if config_override is not None:
+        return [config_override]
+
+    raw = [
+        platformdirs.user_config_path("Claude", roaming=True),
+        platformdirs.user_data_path("Claude"),
+        Path.home() / ".config" / "Claude",
+        Path.home() / ".local" / "share" / "Claude",
+    ]
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for p in raw:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _claude_dir_candidates(
+    env_override: str | None,
+    config_override: Path | None,
+) -> list[Path]:
+    """Ordered, de-duplicated candidate locations for the Claude Code home
+    directory (which contains the ``projects/`` session tree).
+
+    An explicit override (``CLAUDE_DIR`` env or ``config.json``) wins
+    outright. Otherwise:
+
+    1. ``~/.claude`` — the canonical, near-universal location.
+    2. ``$CLAUDE_CONFIG_DIR`` — Claude Code's own relocation env var; a
+       user who moved their CC home lands here.
+
+    Kept primary-first so ``claude_dir`` (the scalar) stays ``~/.claude``
+    for the common case while discovery unions in the relocated tree.
+    """
+    if env_override:
+        return [Path(env_override)]
+    if config_override is not None:
+        return [config_override]
+
+    raw = [Path.home() / ".claude"]
+    cc_config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if cc_config_dir:
+        raw.append(Path(cc_config_dir))
+
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for p in raw:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def cowork_session_roots(app_dirs: list[Path]) -> list[Path]:
+    """Existing ``local-agent-mode-sessions`` dirs across ``app_dirs``.
+
+    The union counterpart to the scalar ``cowork_root``: every candidate
+    app dir that actually has a sessions subdir on disk, primary first.
+    Non-existent candidates are dropped so callers can iterate blindly.
+    """
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for d in app_dirs:
+        r = d / COWORK_SESSIONS_DIRNAME
+        if r not in seen and r.is_dir():
+            seen.add(r)
+            roots.append(r)
+    return roots
+
+
 class Settings(BaseModel):
     """Application settings."""
 
@@ -155,11 +258,28 @@ class Settings(BaseModel):
     # Override precedence (matches ``claude_dir``):
     #   1. ``CLAUDE_DESKTOP_APP_DIR`` env var (Playwright fixture mode)
     #   2. ``config.json`` ``claude_desktop_app_dir`` key
-    #   3. ``platformdirs.user_data_path("Claude")`` (cross-platform default;
-    #      e.g. ``~/Library/Application Support/Claude`` on macOS,
-    #      ``~/.local/share/Claude`` on Linux,
-    #      ``%APPDATA%/Claude`` on Windows).
+    #   3. ``_desktop_app_dir_candidates(...)[0]`` — the canonical Electron
+    #      ``userData`` location. Claude Desktop is an Electron app whose
+    #      ``userData`` dir varies by platform (``~/Library/Application
+    #      Support/Claude`` on macOS, ``~/.config/Claude`` on Linux, Roaming
+    #      ``%APPDATA%\\Claude`` on Windows). The old default
+    #      ``platformdirs.user_data_path`` got macOS right but was WRONG on
+    #      Linux (``~/.local/share/Claude``) and Windows (Local
+    #      ``%LOCALAPPDATA%``), which silently hid every Cowork session from
+    #      the index. Discovery unions across ALL candidates (see
+    #      ``claude_desktop_app_dirs`` below), so the scalar only needs to be
+    #      the canonical primary / write-target.
     claude_desktop_app_dir: Path
+    # Union support (2026-07-15): all candidate locations for the two
+    # externally-discovered session types. Discovery, detail-read, and the
+    # watcher iterate these so sessions SPLIT across locations (after an app
+    # update or a repackaged Flatpak/Snap install) are ALL found — picking a
+    # single "best" root silently dropped the others. The scalars above stay
+    # the PRIMARY (write-target / where the watcher expects new sessions);
+    # these lists are every candidate, primary first. An explicit env/config
+    # override collapses each list to just the override.
+    claude_dirs: list[Path] = Field(default_factory=list)
+    claude_desktop_app_dirs: list[Path] = Field(default_factory=list)
     # Layer 1 of PLANS/2026.05.18-config-corruption-safe-mode.md.
     #
     # Set to a one-line, human-readable description of WHY the config
@@ -297,28 +417,28 @@ class Settings(BaseModel):
             if config_data_dir
             else chosen_default
         )
-        claude_dir = (
-            Path(env_claude_dir)
-            if env_claude_dir
-            else config_claude_dir
-            if config_claude_dir
-            else Path.home() / ".claude"
+        # Claude Code home: env → config → ~/.claude, plus any relocated
+        # tree ($CLAUDE_CONFIG_DIR) unioned into the candidate list. The
+        # scalar primary stays candidates[0] (~/.claude for the common case)
+        # so nothing that writes/watches the CC home changes behavior.
+        claude_dir_candidates = _claude_dir_candidates(
+            env_claude_dir, config_claude_dir
         )
-        # Cowork app dir: env → config → platformdirs default.
-        # ``platformdirs.user_data_path("Claude")`` resolves to the
-        # platform-correct Claude Desktop user-data directory
-        # (``~/Library/Application Support/Claude`` on macOS, etc.).
-        claude_desktop_app_dir = (
-            Path(env_claude_desktop_app_dir)
-            if env_claude_desktop_app_dir
-            else config_claude_desktop_app_dir
-            if config_claude_desktop_app_dir
-            else platformdirs.user_data_path("Claude")
+        claude_dir = claude_dir_candidates[0]
+        # Cowork app dir: env → config → the canonical Electron ``userData``
+        # location (candidates[0]). Discovery/read/watch union across the
+        # full candidate list, so the scalar only needs to be the primary /
+        # write-target — symmetric with ``claude_dir`` above.
+        desktop_app_dir_candidates = _desktop_app_dir_candidates(
+            env_claude_desktop_app_dir, config_claude_desktop_app_dir
         )
+        claude_desktop_app_dir = desktop_app_dir_candidates[0]
         return cls(
             data_dir=data_dir,
             claude_dir=claude_dir,
             claude_desktop_app_dir=claude_desktop_app_dir,
+            claude_dirs=claude_dir_candidates,
+            claude_desktop_app_dirs=desktop_app_dir_candidates,
             config_corrupt_reason=(
                 " | ".join(corruption_reasons) if corruption_reasons else None
             ),

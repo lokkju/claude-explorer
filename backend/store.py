@@ -357,6 +357,40 @@ class ConversationStore:
             cowork_root
             or get_settings().claude_desktop_app_dir / "local-agent-mode-sessions"
         )
+        # When a root is injected (tests, explicit callers) it is the SOLE
+        # location — union discovery must not leak the developer's real
+        # trees into an isolated fixture. When NOT injected, discovery /
+        # detail-read / the watcher union across every candidate location
+        # (see config union helpers) so sessions split across dirs are all
+        # found. The scalars above remain the primary/write-target.
+        self._claude_dir_injected = claude_dir is not None
+        self._cowork_root_injected = cowork_root is not None
+
+    @property
+    def claude_dirs(self) -> list[Path]:
+        """All Claude Code home dirs to scan (primary first).
+
+        Injected → the single injected dir. Otherwise the unioned
+        candidate list from Settings (``~/.claude`` + ``$CLAUDE_CONFIG_DIR``).
+        """
+        if self._claude_dir_injected:
+            return [self.claude_dir]
+        return list(get_settings().claude_dirs) or [self.claude_dir]
+
+    @property
+    def cowork_roots(self) -> list[Path]:
+        """All existing Cowork ``local-agent-mode-sessions`` dirs (primary
+        first).
+
+        Injected → the single injected root (as-is, so a test can point at
+        a not-yet-created dir). Otherwise the union of every candidate app
+        dir's sessions subdir that exists on disk.
+        """
+        if self._cowork_root_injected:
+            return [self.cowork_root]
+        from .config import cowork_session_roots
+
+        return cowork_session_roots(get_settings().claude_desktop_app_dirs)
 
     def _get_conversation_files(self) -> list[Path]:
         """Get all conversation JSON files.
@@ -530,9 +564,19 @@ class ConversationStore:
                          If False, only read metadata (fast, for listing).
             include_phantom: If True, include phantom sessions (local command artifacts).
         """
-        return list_claude_code_conversations(
-            self.claude_dir, full_content=full_content, include_phantom=include_phantom
-        )
+        seen: set[str] = set()
+        out: list[dict[str, Any]] = []
+        for cdir in self.claude_dirs:
+            for conv in list_claude_code_conversations(
+                cdir, full_content=full_content, include_phantom=include_phantom
+            ):
+                uuid = conv.get("uuid")
+                if uuid and uuid in seen:
+                    continue  # same session in two homes → primary wins
+                if uuid:
+                    seen.add(uuid)
+                out.append(conv)
+        return out
 
     def _get_all_conversations_data(
         self,
@@ -570,10 +614,20 @@ class ConversationStore:
                 full_content=full_content, include_phantom=include_phantom
             ))
 
-        # Load Cowork conversations (from local-agent-mode-sessions audit.jsonl)
+        # Load Cowork conversations (from local-agent-mode-sessions
+        # audit.jsonl), unioned across every candidate root. Dedup by uuid
+        # so a session copied into two locations shows once (primary wins).
         if source in ("all", "CLAUDE_COWORK"):
             from .cowork_reader import list_cowork_conversations
-            conversations.extend(list_cowork_conversations(self.cowork_root))
+            cowork_seen: set[str] = set()
+            for root in self.cowork_roots:
+                for conv in list_cowork_conversations(root):
+                    uuid = conv.get("uuid")
+                    if uuid and uuid in cowork_seen:
+                        continue
+                    if uuid:
+                        cowork_seen.add(uuid)
+                    conversations.append(conv)
 
         return conversations
 
@@ -712,7 +766,11 @@ class ConversationStore:
         #   user clicks a sidebar row with uuid X and we MUST find the
         #   file whose internal sessionId equals X — not the file
         #   whose FILENAME equals X. Without Pass B, those clicks 404.
-        cc_files = list(discover_jsonl_files(self.claude_dir))
+        # Union across every Claude Code home (primary first) so a session
+        # in a relocated ($CLAUDE_CONFIG_DIR) tree still resolves.
+        cc_files = [
+            f for cdir in self.claude_dirs for f in discover_jsonl_files(cdir)
+        ]
 
         for jsonl_path in cc_files:
             if jsonl_path.stem == uuid:
@@ -781,10 +839,12 @@ class ConversationStore:
         # ``read_cowork_conversation`` on the candidate (not the whole
         # tree) so this resolution is O(deployments * orgs), not
         # O(sessions).
-        if self.cowork_root.exists():
-            from .cowork_reader import read_cowork_conversation
+        from .cowork_reader import read_cowork_conversation
+        for cowork_root in self.cowork_roots:
+            if not cowork_root.exists():
+                continue
             try:
-                deployment_dirs = list(self.cowork_root.iterdir())
+                deployment_dirs = list(cowork_root.iterdir())
             except OSError:
                 deployment_dirs = []
             for deployment_dir in deployment_dirs:

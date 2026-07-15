@@ -2271,21 +2271,37 @@ def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
     # Desktop JSONs (by-org + legacy flat, with dedup).
     for p in store._get_conversation_files():
         paths.append((p, "CLAUDE_AI"))
-    # CC JSONLs.
-    claude_dir = getattr(store, "claude_dir", None) or get_settings().claude_dir
-    for p in discover_jsonl_files(claude_dir):
-        paths.append((p, "CLAUDE_CODE"))
+    # CC JSONLs — unioned across every Claude Code home (primary first),
+    # deduped by session uuid (the filename stem) so a session present in
+    # both ``~/.claude`` and a relocated ``$CLAUDE_CONFIG_DIR`` tree is
+    # enumerated once.
+    claude_dirs = getattr(store, "claude_dirs", None) or [
+        getattr(store, "claude_dir", None) or get_settings().claude_dir
+    ]
+    cc_seen: set[str] = set()
+    for claude_dir in claude_dirs:
+        for p in discover_jsonl_files(claude_dir):
+            if p.stem in cc_seen:
+                continue
+            cc_seen.add(p.stem)
+            paths.append((p, "CLAUDE_CODE"))
     # Cowork audit.jsonl files (always tagged CLAUDE_COWORK so the
     # source-tag dispatch in _load_conversation_at routes correctly —
     # extension-based dispatch would silently route Cowork through
     # the CC reader, which doesn't understand the _audit_timestamp
-    # field rename).
-    cowork_root = getattr(store, "cowork_root", None)
-    if cowork_root is None:
-        cowork_root = (
-            get_settings().claude_desktop_app_dir / "local-agent-mode-sessions"
+    # field rename). Unioned across every candidate sessions dir and
+    # deduped by session uuid (the ``local_<uuid>`` dir name).
+    cowork_roots = getattr(store, "cowork_roots", None)
+    if cowork_roots is None:
+        from .config import cowork_session_roots
+
+        cowork_roots = cowork_session_roots(
+            get_settings().claude_desktop_app_dirs
         )
-    if cowork_root.exists():
+    cowork_seen: set[str] = set()
+    for cowork_root in cowork_roots:
+        if not cowork_root.exists():
+            continue
         try:
             deployment_dirs = list(cowork_root.iterdir())
         except OSError:
@@ -2306,8 +2322,11 @@ def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
                     continue
                 for sess_dir in sess_dirs:
                     if sess_dir.is_dir() and sess_dir.name.startswith("local_"):
+                        if sess_dir.name in cowork_seen:
+                            continue
                         audit = sess_dir / "audit.jsonl"
                         if audit.exists():
+                            cowork_seen.add(sess_dir.name)
                             paths.append((audit, "CLAUDE_COWORK"))
     return paths
 

@@ -450,16 +450,28 @@ _drift_pending: set[Path] = set()
 _drift_shutdown = False
 
 
-def _live_projects_root() -> Path:
-    """Where Claude Code stores per-project session JSONLs."""
-    return get_settings().claude_dir / "projects"
+def _live_projects_roots() -> list[Path]:
+    """Every Claude Code ``projects`` dir to watch (primary first).
+
+    Unions across all candidate CC homes (``~/.claude`` +
+    ``$CLAUDE_CONFIG_DIR``) so a relocated tree is watched too. Primary
+    first so the caller can mkdir it on a brand-new install.
+    """
+    return [cdir / "projects" for cdir in get_settings().claude_dirs]
 
 
-def _live_cowork_root() -> Path:
-    """Where Claude Desktop stores Cowork local-agent-mode sessions."""
-    return (
-        get_settings().claude_desktop_app_dir / "local-agent-mode-sessions"
-    )
+def _live_cowork_roots() -> list[Path]:
+    """Every Cowork ``local-agent-mode-sessions`` dir to watch (primary
+    first).
+
+    Unions across all candidate Claude Desktop app dirs so sessions split
+    across locations are all watched. Primary first so the caller can
+    mkdir it on a user who's never opened Cowork.
+    """
+    return [
+        app / "local-agent-mode-sessions"
+        for app in get_settings().claude_desktop_app_dirs
+    ]
 
 
 def _fire_drift_pass() -> None:
@@ -572,19 +584,30 @@ def _try_start_projects_observer():
         )
         return None
 
-    root = _live_projects_root()
+    roots = _live_projects_roots()
+    primary = roots[0]
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        primary.mkdir(parents=True, exist_ok=True)
     except Exception:  # noqa: BLE001
         logger.exception(
             "search-index watcher: failed to create %s; projects-dir "
-            "events disabled", root,
+            "events disabled", primary,
         )
         return None
 
     handler = _build_projects_event_handler()
     observer = Observer()
-    observer.schedule(handler, str(root), recursive=True)
+    # Schedule the primary (just created) plus any additional existing
+    # roots — a not-yet-created secondary is picked up by the next
+    # backstop poll rather than watched pre-emptively.
+    scheduled: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root in seen or not root.exists():
+            continue
+        seen.add(root)
+        observer.schedule(handler, str(root), recursive=True)
+        scheduled.append(root)
     try:
         observer.start()
     except Exception:  # noqa: BLE001
@@ -597,7 +620,7 @@ def _try_start_projects_observer():
     backend_name = type(observer).__name__
     logger.info(
         "search-index watcher: projects-dir Observer started (%s) on %s",
-        backend_name, root,
+        backend_name, scheduled,
     )
     return observer
 
@@ -662,19 +685,29 @@ def _try_start_cowork_observer():
         )
         return None
 
-    root = _live_cowork_root()
+    roots = _live_cowork_roots()
+    primary = roots[0]
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        primary.mkdir(parents=True, exist_ok=True)
     except Exception:  # noqa: BLE001
         logger.exception(
             "search-index watcher: failed to create %s; cowork-dir "
-            "events disabled", root,
+            "events disabled", primary,
         )
         return None
 
     handler = _build_cowork_event_handler()
     observer = Observer()
-    observer.schedule(handler, str(root), recursive=True)
+    # Schedule the primary (just created) plus any additional existing
+    # roots; a not-yet-created secondary is caught by the next backstop poll.
+    scheduled: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root in seen or not root.exists():
+            continue
+        seen.add(root)
+        observer.schedule(handler, str(root), recursive=True)
+        scheduled.append(root)
     try:
         observer.start()
     except Exception:  # noqa: BLE001
@@ -687,7 +720,7 @@ def _try_start_cowork_observer():
     backend_name = type(observer).__name__
     logger.info(
         "search-index watcher: cowork-dir Observer started (%s) on %s",
-        backend_name, root,
+        backend_name, scheduled,
     )
     return observer
 
