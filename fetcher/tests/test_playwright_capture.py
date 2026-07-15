@@ -9,13 +9,14 @@ no orgs" with no breadcrumb).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from fetcher.playwright_capture import get_orgs
+from fetcher.playwright_capture import _poll_for_session, get_orgs
 
 
 class _BoomURL:
@@ -94,3 +95,53 @@ async def test_get_orgs_successful_path_emits_no_fallback_debug(caplog) -> None:
     assert debug_msgs == [], (
         f"URL-fallback debug record fired on successful API path: {debug_msgs!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# _poll_for_session: SSO-agnostic login detection + timeout enforcement
+# ---------------------------------------------------------------------------
+
+
+def _ctx_returning(*cookie_lists: list[dict]) -> MagicMock:
+    """Fake BrowserContext whose ``cookies()`` yields each list in turn,
+    then repeats the last one forever."""
+    calls = list(cookie_lists)
+
+    async def _cookies() -> list[dict]:
+        return calls.pop(0) if len(calls) > 1 else calls[0]
+
+    ctx = MagicMock()
+    ctx.cookies = _cookies
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_poll_for_session_returns_once_session_key_appears() -> None:
+    """SSO flow: sessionKey cookie is absent for the first few polls (browser
+    is bouncing through the IdP) then appears. We must detect it and return
+    the extracted cookies — not the raw playwright cookie list."""
+    ctx = _ctx_returning(
+        [],  # pre-login
+        [],  # mid-SSO redirect to IdP
+        [{"name": "sessionKey", "value": "sk-ant-sid01-fake-test-key"}],  # back on claude.ai
+    )
+
+    cookies = await _poll_for_session(ctx, poll_interval=0.01)  # type: ignore[arg-type]
+
+    assert cookies["session_key"] == "sk-ant-sid01-fake-test-key"
+
+
+@pytest.mark.asyncio
+async def test_poll_for_session_is_bounded_by_wait_for() -> None:
+    """The login wait must honor the caller's timeout. _poll_for_session runs
+    unbounded on its own (cookie never appears here); wrapping it in
+    asyncio.wait_for — exactly as capture_credentials does — must raise
+    TimeoutError rather than hang. This pins the '--timeout is respected'
+    contract at the layer the CLI relies on."""
+    ctx = _ctx_returning([])  # sessionKey never appears
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            _poll_for_session(ctx, poll_interval=0.01),  # type: ignore[arg-type]
+            timeout=0.05,
+        )

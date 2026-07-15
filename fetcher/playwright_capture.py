@@ -56,41 +56,33 @@ CLAUDE_HOME_URL = "https://claude.ai"
 CLAUDE_API_BASE = "https://claude.ai/api"
 
 
-async def wait_for_login(page: Page) -> bool:
-    """Wait for user to complete login.
+# Seconds between cookie polls while waiting for login. One second is
+# imperceptible to a human completing an SSO flow and keeps idle CPU near zero.
+_SESSION_POLL_INTERVAL_SEC = 1.0
 
-    Returns True if logged in, False if window was closed.
+
+async def _poll_for_session(
+    context: BrowserContext,
+    poll_interval: float = _SESSION_POLL_INTERVAL_SEC,
+) -> dict[str, str]:
+    """Poll the browser context until the ``sessionKey`` cookie appears.
+
+    SSO-agnostic login detection. We deliberately do NOT inspect ``page.url``
+    or the page DOM: an SSO login bounces the browser to an external identity
+    provider (Okta, Entra, Google) and back, so the landing URL and page markup
+    vary across providers and across claude.ai redesigns. The one reliable
+    signal that login finished is the presence of the ``sessionKey`` cookie on
+    the claude.ai origin — the same cookie the fetcher authenticates with.
+
+    Runs unbounded on its own; the caller wraps it in ``asyncio.wait_for`` so
+    the whole wait is bounded by the user's ``--timeout``. Returns the mapping
+    produced by :func:`extract_cookies` once ``session_key`` is populated.
     """
-    click.echo("Waiting for you to log in...")
-    click.echo("(Complete the login process in the browser window)")
-
-    try:
-        # Wait for navigation away from login page, or for a logged-in indicator
-        # The home page after login will have a different URL pattern
-        while True:
-            await asyncio.sleep(1)
-
-            # Check if we're on a logged-in page
-            url = page.url
-            if "/login" not in url and "/chat" in url or url == "https://claude.ai/":
-                # Give it a moment to fully load
-                await asyncio.sleep(2)
-                return True
-
-            # Check for the chat input or new chat button as indicators of login
-            try:
-                # Look for elements that only appear when logged in
-                logged_in = await page.locator(
-                    '[data-testid="composer-input"], [data-testid="new-chat-button"], .ProseMirror'
-                ).first.is_visible(timeout=500)
-                if logged_in:
-                    return True
-            except Exception:
-                pass
-
-    except Exception as e:
-        click.echo(f"Error waiting for login: {e}", err=True)
-        return False
+    while True:
+        cookies = await extract_cookies(context)
+        if cookies.get("session_key"):
+            return cookies
+        await asyncio.sleep(poll_interval)
 
 
 async def extract_cookies(context: BrowserContext) -> dict[str, str]:
@@ -121,7 +113,9 @@ async def get_orgs(page: Page) -> list[OrgRef]:
     decides what to do).
     """
     try:
-        response = await page.request.get(f"{CLAUDE_API_BASE}/organizations")
+        response = await page.request.get(
+            f"{CLAUDE_API_BASE}/organizations", timeout=30_000
+        )
         if response.ok:
             data = await response.json()
             if isinstance(data, list) and data:
@@ -265,32 +259,39 @@ async def capture_credentials(
 
         try:
             click.echo(f"Opening {CLAUDE_HOME_URL}...")
-            await page.goto(CLAUDE_HOME_URL, wait_until="networkidle")
+            # Bound the navigation by --timeout too (capped at 60s — page load
+            # is not the slow part, human login is). The old code used
+            # wait_until="networkidle", which on claude.ai (an SPA holding open
+            # connections) almost never settles, so the goto hit Playwright's
+            # default 30s navigation timeout and threw *before* --timeout was
+            # ever consulted. domcontentloaded fires on the initial document
+            # and follows the login redirect chain fine.
+            nav_timeout_ms = min(timeout, 60) * 1000
+            await page.goto(
+                CLAUDE_HOME_URL,
+                wait_until="domcontentloaded",
+                timeout=nav_timeout_ms,
+            )
 
-            # Check if already logged in
-            url = page.url
-            if "/login" in url:
-                click.echo("\nPlease log in to your Claude account in the browser window.")
-                click.echo("This window will close automatically once login is complete.\n")
+            # SSO-agnostic login detection: poll for the sessionKey cookie
+            # rather than inspecting the URL or DOM (both of which change across
+            # IdP round-trips and claude.ai redesigns). If the user is already
+            # logged in the cookie is present on the first poll, so this also
+            # subsumes the old "Already logged in!" fast path. The whole wait is
+            # bounded by the caller's --timeout.
+            click.echo("\nPlease log in to your Claude account in the browser window.")
+            click.echo("SSO redirects to your identity provider are fine.")
+            click.echo("This window will close automatically once login is complete.\n")
+            try:
+                cookies = await asyncio.wait_for(
+                    _poll_for_session(context),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                click.echo(f"Login timed out after {timeout} seconds.", err=True)
+                return None
 
-                try:
-                    logged_in = await asyncio.wait_for(
-                        wait_for_login(page),
-                        timeout=timeout,
-                    )
-                    if not logged_in:
-                        click.echo("Login was not completed.", err=True)
-                        return None
-                except asyncio.TimeoutError:
-                    click.echo(f"Login timed out after {timeout} seconds.", err=True)
-                    return None
-            else:
-                click.echo("Already logged in!")
-
-            # Extract cookies
             click.echo("Extracting session credentials...")
-            cookies = await extract_cookies(context)
-
             session_key = cookies.get("session_key")
             if not session_key:
                 click.echo("Error: Could not find sessionKey cookie.", err=True)
