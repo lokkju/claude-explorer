@@ -261,8 +261,39 @@ def scan_once() -> int:
             # and for users with a non-standard claude_dir env var
             # (the FTS5 drift pass goes through ConversationStore for
             # the same reason).
-            claude_dir = get_settings().claude_dir
-            live_paths = list(discover_jsonl_files(claude_dir))
+            # Union across every Claude Code home, matching how the cache
+            # is POPULATED (ConversationStore loops self.claude_dirs). The
+            # old scalar `get_settings().claude_dir` made the cleanup see
+            # a relocated $CLAUDE_CONFIG_DIR tree's rows as dead, so it
+            # deleted them every backstop pass and the next sidebar
+            # request re-parsed and re-cached them -- a churn cycle that
+            # never converged. Deduped by path; NOT by session stem,
+            # because the cache is keyed by path and the population path
+            # doesn't dedup either.
+            settings = get_settings()
+            claude_dirs = list(settings.claude_dirs) or [settings.claude_dir]
+            live_paths: list = []
+            seen_paths: set = set()
+            # Whether any CC home was actually there to walk. Same floor
+            # as the FTS5 missing-pass: a home that isn't present means
+            # "couldn't look" (unmounted volume, HOME not ready), not
+            # "the user deleted everything", and delete_missing against
+            # an empty live set wipes the cache.
+            #
+            # Gate on the HOME, not on home/projects: a home that exists
+            # without a projects/ dir is a real empty state (user has
+            # never run Claude Code), and cleanup there is correct.
+            any_root_readable = False
+            for cdir in claude_dirs:
+                if not cdir.exists():
+                    continue
+                any_root_readable = True
+                for p in discover_jsonl_files(cdir):
+                    if p in seen_paths:
+                        continue
+                    seen_paths.add(p)
+                    live_paths.append(p)
+
             stat_index: dict = {}
             for p in live_paths:
                 try:
@@ -271,9 +302,18 @@ def scan_once() -> int:
                     continue
 
             # Drop rows whose underlying files have disappeared.
-            cleaned = cache.delete_missing(
-                {str(p) for p in stat_index.keys()}
-            )
+            if any_root_readable:
+                cleaned = cache.delete_missing(
+                    {str(p) for p in stat_index.keys()}
+                )
+            else:
+                logger.warning(
+                    "summary cache: no Claude Code home readable "
+                    "this pass (%s); skipping cleanup rather than "
+                    "treating every cached session as deleted",
+                    [str(d) for d in claude_dirs],
+                )
+                cleaned = 0
 
             # Re-read only the drifted files (mtime or size mismatch).
             # get_many returns ONLY fresh rows, so the difference is
