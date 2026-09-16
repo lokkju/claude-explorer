@@ -2276,7 +2276,9 @@ def _file_path_for_conv(conv: dict[str, Any], data_dir: Path, claude_dir: Path) 
     return None
 
 
-def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
+def _enumerate_conversation_paths_with_roots(
+    store: Any,
+) -> tuple[list[tuple[Path, str]], list[Path]]:
     """Stat-only enumeration of every on-disk conversation file.
 
     Returns ``[(path, source), ...]`` where ``source`` is one of
@@ -2299,7 +2301,18 @@ def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
     from .claude_code_reader import discover_jsonl_files
 
     paths: list[tuple[Path, str]] = []
+    # Roots we actually managed to walk this pass. The missing-pass in
+    # _drift_first_scan deletes ONLY under these: every failure mode in
+    # this function degrades to "no files" (a root that doesn't exist, an
+    # iterdir() that raised), and treating that as "the user deleted
+    # everything on that surface" wipes the index for an ejected volume
+    # or an NFS mount that hasn't come back.
+    readable_roots: list[Path] = []
+
     # Desktop JSONs (by-org + legacy flat, with dedup).
+    data_root = getattr(store, "data_dir", None)
+    if data_root is not None and data_root.exists():
+        readable_roots.append(data_root)
     for p in store._get_conversation_files():
         paths.append((p, "CLAUDE_AI"))
     # CC JSONLs — unioned across every Claude Code home (primary first),
@@ -2311,6 +2324,9 @@ def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
     ]
     cc_seen: set[str] = set()
     for claude_dir in claude_dirs:
+        projects_root = claude_dir / "projects"
+        if projects_root.exists():
+            readable_roots.append(projects_root)
         for p in discover_jsonl_files(claude_dir):
             if p.stem in cc_seen:
                 continue
@@ -2336,7 +2352,11 @@ def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
         try:
             deployment_dirs = list(cowork_root.iterdir())
         except OSError:
+            # Root exists but we couldn't read it -- deliberately NOT
+            # recorded as readable, so the missing-pass leaves its rows.
             deployment_dirs = []
+        else:
+            readable_roots.append(cowork_root)
         for deployment_dir in deployment_dirs:
             if not deployment_dir.is_dir():
                 continue
@@ -2359,7 +2379,27 @@ def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
                         if audit.exists():
                             cowork_seen.add(sess_dir.name)
                             paths.append((audit, "CLAUDE_COWORK"))
+    return paths, readable_roots
+
+
+def _enumerate_conversation_paths(store: Any) -> list[tuple[Path, str]]:
+    """Back-compat wrapper: paths only, no readability report.
+
+    Used by ``backend.doctor`` for the coverage check, where an
+    unreadable root simply shows up as a shortfall.
+    """
+    paths, _ = _enumerate_conversation_paths_with_roots(store)
     return paths
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    """True when ``path`` lies inside ``root`` (lexically -- both sides
+    come from the same enumeration, so neither needs resolving)."""
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _load_conversation_at(
@@ -2448,7 +2488,9 @@ def _drift_first_scan(
     JSON/JSONL into memory): this drops warm-restart latency from
     ~10 s to ~100–300 ms.
     """
-    live_paths_with_source = _enumerate_conversation_paths(store)
+    live_paths_with_source, readable_roots = _enumerate_conversation_paths_with_roots(
+        store
+    )
     live_set = {p for p, _ in live_paths_with_source}
 
     # Bulk-fetch the entire indexed_files table in one round-trip via
@@ -2473,12 +2515,38 @@ def _drift_first_scan(
         if indexed_mtime is None or float(indexed_mtime) != float(current_mtime):
             drifted.append((path, source))
 
-    # Missing pass: any indexed_files row whose path is no longer on disk.
+    # Missing pass: any indexed_files row whose path is no longer on disk
+    # AND whose surface we actually managed to read this pass.
+    #
+    # The second half is load-bearing. Every enumeration failure upstream
+    # degrades to "no files" -- a Cowork root that doesn't exist, an
+    # iterdir() that raised, a projects dir on an unmounted volume -- and
+    # without this guard one such pass reads as "the user deleted every
+    # file on that surface" and wipes its messages, projection rows and
+    # ledger entries. The supervised watcher runs this every 600s, so an
+    # ejected external drive or an NFS mount that hasn't come back was a
+    # full-surface index wipe. See docs/notes/drift-missing-pass-floor.md.
+    #
+    # Trade-off: a root the user REALLY deleted keeps its stale rows until
+    # a `reindex-search --full`. Stale rows beat silent data loss.
     missing: list[Path] = []
+    skipped = 0
     for indexed_path_str in indexed_mtimes.keys():
         indexed_path = Path(indexed_path_str)
-        if indexed_path not in live_set:
-            missing.append(indexed_path)
+        if indexed_path in live_set:
+            continue
+        if not any(_path_is_under(indexed_path, r) for r in readable_roots):
+            skipped += 1
+            continue
+        missing.append(indexed_path)
+
+    if skipped:
+        logger.warning(
+            "search_index: %d indexed file(s) sit under a root that could "
+            "not be read this pass; leaving their rows alone rather than "
+            "treating the surface as deleted (readable roots: %s)",
+            skipped, [str(r) for r in readable_roots],
+        )
 
     return drifted, missing
 
