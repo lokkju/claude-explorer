@@ -27,6 +27,7 @@ from ._shared import (
     _resolve_attachment_path,
     filter_tool_placeholders,
     format_timestamp,
+    image_marker_path_is_safe,
     message_has_visible_content,
     render_compact_indicator,
     render_compact_summary_markdown,
@@ -34,15 +35,10 @@ from ._shared import (
 )
 
 
-def _image_marker_path_is_safe(path: Path, image_cache_root: Path) -> bool:
-    """Refuse paths that resolve outside the user's Claude Code image
-    cache directory. Mirrors backend.routers.files.get_cc_image."""
-    try:
-        resolved = path.expanduser().resolve(strict=True)
-        resolved.relative_to(image_cache_root.resolve())
-    except (FileNotFoundError, OSError, ValueError):
-        return False
-    return True
+# Containment gate for ``[Image: source: ...]`` marker paths. Moved to
+# _shared on 2026-09-16 so the PDF exporter uses the same check — it had
+# none, and read whatever absolute path the marker named.
+_image_marker_path_is_safe = image_marker_path_is_safe
 
 
 def _markdown_image_ref(rel_path: str, alt: str, dialect: MarkdownDialect) -> str:

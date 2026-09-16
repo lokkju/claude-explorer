@@ -27,9 +27,11 @@ from ._shared import (
     _is_excludable_marker,
     _is_compact_summary_message,
     _resolve_attachment_path,
+    cc_image_cache_root,
     escape_html,
     filter_tool_placeholders,
     format_timestamp,
+    image_marker_path_is_safe,
     message_has_visible_content,
     render_compact_indicator,
     render_compact_summary_html,
@@ -443,7 +445,15 @@ def _resolve_cc_image_path(abs_path: str) -> Path | None:
         candidate = Path(abs_path).expanduser()
     except (OSError, ValueError):
         return None
-    if candidate.is_file():
+
+    # The marker path comes out of message TEXT, so it names whatever the
+    # conversation content says. Gate it exactly like the browser route
+    # and the bundle exporter do; without this, exporting a conversation
+    # containing `[Image: source: ~/.claude-explorer/credentials.json]`
+    # wrote the session key into the PDF. See
+    # docs/notes/pdf-export-reads-any-file.md.
+    cache_root = cc_image_cache_root()
+    if image_marker_path_is_safe(candidate, cache_root):
         return candidate
 
     # Fallback to the permanent cache. Mirrors backend.routers.files.get_cc_image.
@@ -457,7 +467,13 @@ def _resolve_cc_image_path(abs_path: str) -> Path | None:
     cache_root = cache_dir()
     if not cache_root.exists():
         return None
-    matches = list(cache_root.glob(f"*/{sess}--{n}.*.{ext}"))
+    matches = [
+        m for m in cache_root.glob(f"*/{sess}--{n}.*.{ext}")
+        # `sess` and `n` are derived from the same untrusted marker path,
+        # so re-check that what the glob matched really is under the
+        # permanent cache before reading it.
+        if image_marker_path_is_safe(m, cache_root)
+    ]
     if not matches:
         return None
     return max(matches, key=lambda x: x.stat().st_mtime)
