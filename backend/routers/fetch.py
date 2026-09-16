@@ -1205,6 +1205,36 @@ async def refresh_pipeline_stream(
         _refresh_in_progress = False
 
 
+class _PrimedStream:
+    """Body iterator over an already-started async generator.
+
+    Holds the frame the handler pulled to prime ``agen`` and replays it
+    before delegating. ``aclose`` forwards, so an explicit close runs the
+    generator's ``finally`` (which releases ``_refresh_in_progress``);
+    when nobody closes it, asyncio's async-generator finaliser does the
+    same on collection, because the generator is started.
+    """
+
+    def __init__(self, agen, first_frame: str | None) -> None:
+        self._agen = agen
+        self._first: str | None = first_frame
+        self._exhausted = first_frame is None
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> str:
+        if self._first is not None:
+            frame, self._first = self._first, None
+            return frame
+        if self._exhausted:
+            raise StopAsyncIteration
+        return await self._agen.__anext__()
+
+    async def aclose(self) -> None:
+        await self._agen.aclose()
+
+
 @router.get(
     "/fetch/refresh",
     summary="One-button Refresh: capture credentials if needed, then fetch (SSE)",
@@ -1234,8 +1264,35 @@ async def refresh_pipeline(
         )
     _refresh_in_progress = True
 
+    # Prime the generator here, before handing it to Starlette.
+    #
+    # The flag is claimed synchronously above so the 409 check stays
+    # race-free, and it is released by refresh_pipeline_stream's
+    # `finally`. But an async generator's `finally` only runs if its body
+    # was ever ENTERED, and at this point the generator has merely been
+    # constructed. Starlette never calls aclose() on a body iterator, so
+    # a client that goes away before stream_response reaches the first
+    # __anext__ left the generator finalised un-started -- flag stuck
+    # True, and every later refresh 409s with no work running anywhere,
+    # until the worker restarts.
+    #
+    # Pulling the first frame here guarantees the body has been entered,
+    # so asyncio's async-generator finaliser will run the `finally` even
+    # if nobody ever iterates. The first frame is cheap on both branches
+    # (capture yields `capture_start` before doing any work; the fetch
+    # branch reads the credentials file), so this does not delay the
+    # response headers meaningfully.
+    agen = refresh_pipeline_stream(incremental=incremental, limit=limit)
+    try:
+        first_frame: str | None = await agen.__anext__()
+    except StopAsyncIteration:
+        first_frame = None
+    except BaseException:
+        _refresh_in_progress = False
+        raise
+
     return StreamingResponse(
-        refresh_pipeline_stream(incremental=incremental, limit=limit),
+        _PrimedStream(agen, first_frame),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
