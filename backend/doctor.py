@@ -24,7 +24,7 @@ from .scheduled_fetch_status import (
     is_scheduled_fetch_installed,
     read_status,
 )
-from .search_index import get_search_index
+from .search_index import _enumerate_conversation_paths, get_search_index
 from .watcher_status import is_watcher_installed
 
 
@@ -134,6 +134,45 @@ def check_watcher() -> CheckResult:
     )
 
 
+def _coverage_store():
+    """Build a store for the coverage enumeration.
+
+    Split out as a module-level indirection so tests can supply a stub
+    without constructing a real ``ConversationStore``."""
+    from .store import ConversationStore
+
+    return ConversationStore()
+
+
+def _index_coverage(idx) -> dict[str, tuple[int, int]] | None:
+    """Per-source ``{source: (indexed, on_disk)}``, or None if it can't
+    be computed.
+
+    Enumeration is stat-only — it reads no conversation content — and
+    goes through ``_enumerate_conversation_paths``, the same function the
+    indexer uses, so doctor and the indexer can never disagree about what
+    counts as a conversation file on disk.
+
+    Returns None rather than raising on any failure (unreadable dir,
+    corrupt config, an index object without ``list_indexed_paths``): a
+    diagnostic that crashes is worse than one that degrades to the bare
+    file count.
+    """
+    try:
+        paths = _enumerate_conversation_paths(_coverage_store())
+        indexed = set(idx.list_indexed_paths())
+    except Exception:  # noqa: BLE001 - doctor must never crash
+        return None
+
+    tally: dict[str, list[int]] = {}
+    for path, source in paths:
+        slot = tally.setdefault(source, [0, 0])
+        slot[1] += 1
+        if path in indexed:
+            slot[0] += 1
+    return {src: (n_indexed, n_disk) for src, (n_indexed, n_disk) in tally.items()}
+
+
 def check_search() -> CheckResult:
     """Check the on-disk FTS5 index health.
 
@@ -158,9 +197,41 @@ def check_search() -> CheckResult:
                 "or run `claude-explorer reindex-search`"
             ),
         )
+    # Coverage comparison. A raw file count can't distinguish a complete
+    # index from one missing an entire source — which is exactly how this
+    # check reported "fine" for two months while every Cowork session was
+    # absent. See docs/notes/doctor-blind-to-index-coverage.md.
+    count = idx.indexed_file_count()
+    coverage = _index_coverage(idx)
+    if coverage is None:
+        return CheckResult(
+            "Search (FTS5)", Status.OK,
+            f"index present ({count} file(s) indexed)",
+        )
+
+    summary = ", ".join(
+        f"{src} {n_indexed}/{n_disk}"
+        for src, (n_indexed, n_disk) in sorted(coverage.items())
+    )
+    # Warn only on a source that is entirely dark. A partial shortfall is
+    # expected and would flap: a session with no user turn (or an empty /
+    # truncated file) loads as None and is never written to
+    # indexed_files, so it stays permanently uncovered by design. The
+    # per-source numbers go in the detail either way, so a human reading
+    # `doctor` still sees a partial gap.
+    dark = [
+        src for src, (n_indexed, n_disk) in sorted(coverage.items())
+        if n_disk > 0 and n_indexed == 0
+    ]
+    if dark:
+        return CheckResult(
+            "Search (FTS5)", Status.WARN,
+            f"{', '.join(dark)} entirely unindexed ({summary})",
+            fix_command="claude-explorer reindex-search",
+        )
     return CheckResult(
         "Search (FTS5)", Status.OK,
-        f"index present ({idx.indexed_file_count()} file(s) indexed)",
+        f"index present ({count} file(s) indexed; {summary})",
     )
 
 
