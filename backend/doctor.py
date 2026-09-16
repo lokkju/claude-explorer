@@ -24,6 +24,7 @@ from .scheduled_fetch_status import (
     is_scheduled_fetch_installed,
     read_status,
 )
+from .static_assets import _resolve_static_dir
 from .search_index import _enumerate_conversation_paths, get_search_index
 from .watcher_status import is_watcher_installed
 
@@ -235,6 +236,46 @@ def check_search() -> CheckResult:
     )
 
 
+def check_web_ui() -> CheckResult:
+    """Check that the React bundle the server serves is actually present.
+
+    Without it the backend still starts, but in API-only mode: ``/``
+    answers JSON and the app never loads. The only signal today is one
+    ``log.warning`` at startup, which is how an install can ship without
+    a UI and still have `doctor` report all-clear. See
+    ``docs/notes/git-install-ui-visibility.md``.
+    """
+    static = _resolve_static_dir()
+    if static is None:
+        return CheckResult(
+            "Web UI", Status.WARN,
+            "not bundled; server runs in API-only mode (/ returns JSON)",
+            fix_command=(
+                "reinstall from a built wheel (`uv tool install --reinstall "
+                "git+<repo>`, needs Node 20+ on PATH), or run "
+                "`npm run build` in frontend/ for a dev checkout"
+            ),
+        )
+
+    assets = static / "assets"
+    n_assets = len(list(assets.iterdir())) if assets.is_dir() else 0
+    if n_assets == 0:
+        # index.html with no hashed bundle: the shell loads and every
+        # <script> 404s. Reads to a user as "the UI is broken", not "the
+        # UI is missing", so it gets its own message.
+        return CheckResult(
+            "Web UI", Status.WARN,
+            f"bundle at {static} has index.html but no assets/ — "
+            "the page will load and every script will 404",
+            fix_command="rebuild the frontend (`npm run build` in frontend/)",
+        )
+
+    return CheckResult(
+        "Web UI", Status.OK,
+        f"bundled ({n_assets} asset(s) at {static})",
+    )
+
+
 def check_uvx() -> CheckResult:
     """Check if uvx or uv is on PATH."""
     uvx = shutil.which("uvx")
@@ -373,6 +414,7 @@ ALL_CHECKS: list[tuple[str, Check]] = [
     ("CC watcher", check_watcher),
     ("Scheduled fetch", check_scheduled_fetch),
     ("Search (FTS5)", check_search),
+    ("Web UI", check_web_ui),
     ("Runtime (uv/uvx)", check_uvx),
     ("PDF export", check_pdf_libs),
     ("MCP -> Claude Code", check_mcp_code),

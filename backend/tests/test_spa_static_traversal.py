@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.main import _resolve_spa_file
+from backend.static_assets import _resolve_spa_file
 
 
 @pytest.fixture

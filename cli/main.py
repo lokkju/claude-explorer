@@ -340,6 +340,18 @@ def mcp() -> None:
     mcp_main()
 
 
+def _serve_static_dir():
+    """Indirection over the UI-bundle resolver so `serve` can be tested.
+
+    Imported lazily: `backend.static_assets` is a stdlib-only leaf, but
+    keeping the import inside the helper matches how the rest of this
+    module defers backend imports off the CLI startup path.
+    """
+    from backend.static_assets import _resolve_static_dir
+
+    return _resolve_static_dir()
+
+
 @main.command()
 @click.option("--host", default="127.0.0.1", help="Host to bind to")
 @click.option("--port", default=8765, help="Port to bind to")
@@ -370,6 +382,23 @@ def serve(host: str, port: int, reload: bool) -> None:
             )
     except Exception:  # noqa: BLE001
         # Detection is best-effort; never fail `serve` over the hint.
+        pass
+
+    # Same treatment for a missing UI bundle. backend.main logs this at
+    # import time, but that lands in the structured log, not in front of
+    # the person who just typed the command -- who then opens the URL
+    # below and gets JSON. Reported 2026-09-16 as "a git based install
+    # doesn't include the ui".
+    try:
+        if _serve_static_dir() is None:
+            click.echo(
+                "\nWARNING: web UI not bundled; starting in API-only mode.\n"
+                "  Opening the URL below will return JSON, not the app.\n"
+                "  Run 'claude-explorer doctor' for the Web UI check, or\n"
+                "  'npm run build' in frontend/ for a dev checkout.\n",
+                err=True,
+            )
+    except Exception:  # noqa: BLE001
         pass
 
     click.echo(f"Starting server on http://{host}:{port}")
