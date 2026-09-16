@@ -148,6 +148,44 @@ def _resolve_static_dir() -> Path | None:
     return None
 
 
+def _resolve_spa_file(static_dir: Path, full_path: str) -> Path | None:
+    """Map a request path to a real file INSIDE ``static_dir``.
+
+    Returns the resolved path, or None when the request names no file in
+    the bundle — either because nothing is there (a client-router deep
+    link, which the caller answers with ``index.html``) or because the
+    path tries to leave the bundle.
+
+    Containment is enforced on the RESOLVED path, not the literal one.
+    ``Path`` joins lexically, so ``static_dir / "../../etc/passwd"`` is a
+    perfectly valid path to somebody else's file, and an absolute right
+    operand (``static_dir / "/etc/passwd"``) discards the left side
+    entirely. Resolving also collapses symlinks, so a link planted inside
+    the bundle is not a way out.
+
+    Do NOT reintroduce a bare ``(static_dir / full_path).is_file()``
+    here. uvicorn percent-decodes the request target and does not
+    collapse ``..``, so the route receives traversal strings verbatim;
+    that one-liner served arbitrary files over a raw socket, including
+    the session key in ``~/.claude-explorer/credentials.json``. Pinned by
+    ``backend/tests/test_spa_static_traversal.py``.
+    """
+    if not full_path:
+        return None
+    try:
+        resolved = (static_dir / full_path).resolve(strict=True)
+        root = static_dir.resolve()
+    except (OSError, RuntimeError, ValueError):
+        # Nonexistent path, a resolution loop, an embedded NUL, or a name
+        # too long for the platform. None of those name a servable file.
+        return None
+    if resolved != root and root not in resolved.parents:
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
+
+
 # Telemetry surfaced by /api/health when the lifespan migration repeatedly
 # fails to acquire the .fetch.lock — see NEW4-P1-C.
 _migration_state: dict = {
@@ -1071,10 +1109,12 @@ if _STATIC_DIR is not None:
         """
         if any(full_path == p or full_path.startswith(p) for p in _RESERVED_PREFIXES):
             raise HTTPException(status_code=404)
-        # If a real file exists (e.g. vite.svg at the repo dist root),
-        # serve it. Otherwise serve index.html for the SPA's client router.
-        candidate = _STATIC_DIR / full_path
-        if candidate.is_file():
+        # If a real file exists INSIDE the bundle (e.g. vite.svg at the
+        # dist root), serve it. Otherwise serve index.html for the SPA's
+        # client router. _resolve_spa_file owns the containment check —
+        # see its docstring before touching this.
+        candidate = _resolve_spa_file(_STATIC_DIR, full_path)
+        if candidate is not None:
             return FileResponse(candidate)
         return FileResponse(_STATIC_DIR / "index.html")
 else:
