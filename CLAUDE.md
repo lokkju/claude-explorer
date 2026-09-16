@@ -226,24 +226,33 @@ uv run claude-explorer install-watcher --uninstall
 
 #### `claude-explorer reindex-search` (manual override only)
 
-Force a rebuild of the SQLite FTS5 search index at
-`~/.claude-explorer/search-index.sqlite`. **You should not need this in
-normal operation:** the index is built automatically at backend startup
-(non-blocking lifespan task) and kept in sync by the same watcher
-loop that handles CC images (event-driven via `watchdog`, with a
-600s backstop poll). Use only when:
-
-- the index file got corrupted (delete it, then run this);
-- you want a known-fresh full rebuild;
-- a future schema bump requires manual rebuild without restarting `serve`.
+Bring the SQLite FTS5 search index at
+`~/.claude-explorer/search-index.sqlite` in sync with what's on disk.
+**You should not need this in normal operation:** the index is built
+automatically at backend startup (non-blocking lifespan task) and kept in
+sync by the same watcher loop that handles CC images (event-driven via
+`watchdog`, with a 600s backstop poll).
 
 ```bash
-# Default: full DROP + rebuild from scratch.
+# Default: drift pass. Indexes anything new or changed, drops rows for
+# files that vanished, leaves everything else alone. Idempotent; one
+# os.stat per unchanged file. This is the "make sure everything is
+# indexed" command.
 uv run claude-explorer reindex-search
 
-# Drift-only pass (re-index only files whose mtime changed since last index).
-uv run claude-explorer reindex-search --drift
+# Destructive escape hatch: WIPES every row, then rebuilds from scratch.
+uv run claude-explorer reindex-search --full
 ```
+
+`--full` was the default until 2026-09-16. It is destructive and slow:
+search is degraded for the duration, and any conversation the enumerator
+can no longer discover is dropped rather than repaired — so a `--full`
+run against a broken enumeration makes coverage *worse*. Use it only
+when:
+
+- the index file got corrupted (delete it, then run this);
+- you want a known-fresh full rebuild to verify against your data;
+- a future schema bump requires manual rebuild without restarting `serve`.
 
 **How search works in the running server:**
 
