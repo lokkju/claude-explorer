@@ -216,7 +216,15 @@ def scan_once() -> int:
         from backend.store import ConversationStore
 
         idx = get_search_index()
-        if idx is not None and idx.is_ready():
+        # Gate on is_building(), NOT is_ready(). The pass must not race an
+        # initial build that is actively walking in this process, but it
+        # MUST run in a process that never builds at all. is_ready() is
+        # set only by build_full_index, which the supervised watcher
+        # (~/.claude-explorer/cc-watcher.py) never calls — gating on it
+        # left this backstop dead in the one process that runs it on a
+        # schedule, so nothing inotify missed was ever backfilled. See
+        # docs/notes/watcher-search-drift-never-runs.md.
+        if idx is not None and not idx.is_building():
             updated = update_drifted_files(ConversationStore(), index=idx)
             if updated:
                 logger.info(

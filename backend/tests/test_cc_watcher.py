@@ -245,27 +245,29 @@ def test_scan_once_runs_search_index_drift_pass(
     )
 
 
-def test_scan_once_skips_drift_when_index_not_ready(
+def test_scan_once_skips_drift_while_build_in_progress(
     watcher_env, real_search_index,
 ):
-    """If the index is still building (``is_ready()`` is False), the
-    drift pass must NOT run — no rows should land in ``indexed_files``
-    for the newly-written JSONL.
+    """While an initial build is actively running in THIS process
+    (``is_building()`` is True), the backstop drift pass must NOT run —
+    no rows should land in ``indexed_files`` for the newly-written JSONL.
 
-    Bug it would surface: drift pass running on a half-built index
-    would waste cycles re-indexing files the initial build is about
-    to write, AND (worse) could race with the initial build's writes.
-    The fixture starts the index in not-ready state (no mark_ready()
-    call), so this directly pins the gate.
+    Bug it would surface: drift pass running against a half-built index
+    would waste cycles re-indexing files the initial build is about to
+    write, AND (worse) could race with the initial build's writes.
+
+    Note the predicate: ``is_building()``, not ``is_ready()``. The gate
+    must express "a build is running right now", not "this process has
+    ever completed a build" — see
+    ``test_scan_once_runs_drift_in_process_that_never_built``.
     """
     from backend import cc_watcher
 
-    # Sanity: fresh SearchIndex is not ready until build_full_index
-    # calls mark_ready(). We rely on that default here.
-    assert real_search_index.is_ready() is False
+    real_search_index.begin_build()
+    assert real_search_index.is_building() is True
 
     session_uuid = "abcdef02-0000-0000-0000-000000000002"
-    body = "needle_skipped_pre_ready_zebra"
+    body = "needle_skipped_mid_build_zebra"
     _write_real_cc_session(
         watcher_env["claude_dir"], "proj-A", session_uuid, body,
     )
@@ -274,14 +276,61 @@ def test_scan_once_skips_drift_when_index_not_ready(
 
     # The gate held: no file got indexed.
     assert real_search_index.list_indexed_paths() == [], (
-        "scan_once() must skip the drift pass while is_ready()=False, "
+        "scan_once() must skip the drift pass while is_building()=True, "
         "but indexed_files has rows: "
         f"{real_search_index.list_indexed_paths()}"
     )
     # And the body is not queryable.
     assert real_search_index.query(body) == [], (
-        "No FTS5 hits should be possible before the initial build "
-        "fires mark_ready()."
+        "No FTS5 hits should be possible for a file the in-flight build "
+        "has not written yet."
+    )
+
+
+def test_scan_once_runs_drift_in_process_that_never_built(
+    watcher_env, real_search_index,
+):
+    """A process that never calls ``build_full_index`` must still run the
+    backstop drift pass.
+
+    Regression test for the defect in
+    ``docs/notes/watcher-search-drift-never-runs.md``: the supervised
+    watcher (``~/.claude-explorer/cc-watcher.py``) never calls
+    ``build_full_index``, so ``mark_ready()`` never fires there and the
+    old ``is_ready()`` gate was permanently closed. The backstop pass —
+    whose entire job is catching what inotify missed — therefore never
+    ran in the one process that runs it on a schedule. Two months of
+    journal for ``claude-explorer-cc-watcher.service`` carried 2996
+    summary-cache drift lines and zero search-index drift lines.
+
+    The fixture deliberately does NOT call ``mark_ready()``, exactly
+    matching the watcher process's lifetime state.
+    """
+    from backend import cc_watcher
+
+    assert real_search_index.is_ready() is False, (
+        "fixture precondition: this process never ran build_full_index"
+    )
+    assert real_search_index.is_building() is False
+
+    session_uuid = "abcdef03-0000-0000-0000-000000000003"
+    body = "needle_watcher_backstop_pangolin"
+    jsonl_path = _write_real_cc_session(
+        watcher_env["claude_dir"], "proj-A", session_uuid, body,
+    )
+
+    cc_watcher.scan_once()
+
+    indexed = real_search_index.list_indexed_paths()
+    assert jsonl_path in indexed, (
+        "scan_once() must run the drift pass in a process that never "
+        "built the index (the supervised watcher). Indexed paths: "
+        f"{indexed}"
+    )
+    hit_uuids = {row["conv_uuid"] for row in real_search_index.query(body)}
+    assert session_uuid in hit_uuids, (
+        "the freshly-indexed body must be queryable after the backstop "
+        f"pass. Got conv_uuids={hit_uuids}"
     )
 
 

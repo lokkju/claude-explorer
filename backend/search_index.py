@@ -542,6 +542,10 @@ class SearchIndex:
         # _is_ready toggles to True after the first full build pass
         # finishes. Queries fall back to linear scan while this is False.
         self._is_ready = False
+        # _build_in_progress is True only while build_full_index is
+        # actively walking, in THIS process. It is what the watcher's
+        # backstop drift pass gates on — see is_building().
+        self._build_in_progress = False
         # Set to False during a destructive schema migration so in-flight
         # queries fall back gracefully while the rebuild runs.
         self._schema_ok = True
@@ -986,6 +990,33 @@ class SearchIndex:
         """Mark the index as queryable. Called by build_full_index after
         the first complete walk."""
         self._is_ready = True
+
+    def begin_build(self) -> None:
+        """Mark a full build as in-flight in this process.
+
+        Paired with :meth:`end_build` in a ``finally`` by
+        :func:`build_full_index`."""
+        self._build_in_progress = True
+
+    def end_build(self) -> None:
+        """Clear the in-flight build flag. Safe to call when no build
+        was running."""
+        self._build_in_progress = False
+
+    def is_building(self) -> bool:
+        """True while :func:`build_full_index` is walking in THIS process.
+
+        This is the correct gate for the watcher's backstop drift pass:
+        the pass must not race an in-flight initial build, but it MUST
+        run in a process that simply never builds.
+
+        Do NOT use :meth:`is_ready` for that gate. ``is_ready`` answers
+        "has this process ever COMPLETED a build", which is permanently
+        False in the supervised watcher (``~/.claude-explorer/
+        cc-watcher.py`` never calls ``build_full_index``) — gating on it
+        disabled the backstop drift pass entirely for two months. See
+        ``docs/notes/watcher-search-drift-never-runs.md``."""
+        return self._build_in_progress
 
     def indexed_file_count(self) -> int:
         """Number of files currently recorded in the index. 0 on any error.
@@ -2477,76 +2508,85 @@ def build_full_index(
     if index is None:
         return (0, 0)
 
-    drifted, missing = _drift_first_scan(store, index)
-
-    # Cleanup pass first (cheap, no content reads).
-    for path in missing:
-        try:
-            index.delete_by_path(path)
-        except sqlite3.Error:
-            logger.exception("search_index: cleanup-delete failed for %s", path)
-
-    files_indexed = 0
-    messages_indexed = 0
-    total = len(drifted)
-    for i, (path, source) in enumerate(drifted):
-        # Hunt #8 TOCTOU fix: check-read-check (see update_drifted_files
-        # for the full rationale). Stat before AND after the read; if
-        # the file was mutated during the read, skip the upsert so the
-        # index never stamps stale content with a fresh mtime.
-        try:
-            mtime_before = path.stat().st_mtime
-        except OSError:
-            mtime_before = None
-        conv = _load_conversation_at(path, store, source=source)
-        if conv is None:
-            if on_progress is not None:
-                on_progress(i + 1, total)
-            continue
-        try:
-            mtime_after = path.stat().st_mtime
-        except OSError:
-            mtime_after = None
-        # If we couldn't stat the file at all, fall back to 0.0 (legacy
-        # behavior) — the file just disappeared and the next drift pass
-        # will resolve via the cleanup branch.
-        if mtime_before is None or mtime_after is None:
-            mtime = 0.0
-        elif mtime_before != mtime_after:
-            logger.info(
-                "search_index: file mtime drifted during initial-build "
-                "read (%s → %s); skipping upsert, drift pass will retry: %s",
-                mtime_before, mtime_after, path,
-            )
-            if on_progress is not None:
-                on_progress(i + 1, total)
-            continue
-        else:
-            mtime = mtime_before
-        try:
-            messages_indexed += index.upsert_conversation(conv, path, mtime)
-            files_indexed += 1
-        except sqlite3.Error:
-            logger.exception("search_index: upsert failed for %s", path)
-        if on_progress is not None:
-            on_progress(i + 1, total)
-
-    # Refresh query-planner statistics now that the inverted lists have
-    # their final shape. Cheap (~ms on a small index; SQLite skips the
-    # work for tables it deems already-analyzed) and pays back on every
-    # search until the next big drift pass. Runs BEFORE mark_ready() so
-    # the first query post-build sees fresh stats. (perf-polish A3.)
+    # Mark the build in-flight so the watcher's backstop drift pass
+    # (backend/cc_watcher.scan_once) skips while we walk, instead of
+    # racing our writes. Cleared in the finally so a failed build
+    # can't wedge the flag on and disable drift forever.
+    index.begin_build()
     try:
-        index.run_pragma_optimize()
-    except sqlite3.Error:
-        logger.exception("search_index: PRAGMA optimize failed (non-fatal)")
+        drifted, missing = _drift_first_scan(store, index)
 
-    index.mark_ready()
-    logger.info(
-        "search_index: build complete: %d files / %d messages (drifted=%d, missing=%d)",
-        files_indexed, messages_indexed, len(drifted), len(missing),
-    )
-    return files_indexed, messages_indexed
+        # Cleanup pass first (cheap, no content reads).
+        for path in missing:
+            try:
+                index.delete_by_path(path)
+            except sqlite3.Error:
+                logger.exception("search_index: cleanup-delete failed for %s", path)
+
+        files_indexed = 0
+        messages_indexed = 0
+        total = len(drifted)
+        for i, (path, source) in enumerate(drifted):
+            # Hunt #8 TOCTOU fix: check-read-check (see update_drifted_files
+            # for the full rationale). Stat before AND after the read; if
+            # the file was mutated during the read, skip the upsert so the
+            # index never stamps stale content with a fresh mtime.
+            try:
+                mtime_before = path.stat().st_mtime
+            except OSError:
+                mtime_before = None
+            conv = _load_conversation_at(path, store, source=source)
+            if conv is None:
+                if on_progress is not None:
+                    on_progress(i + 1, total)
+                continue
+            try:
+                mtime_after = path.stat().st_mtime
+            except OSError:
+                mtime_after = None
+            # If we couldn't stat the file at all, fall back to 0.0 (legacy
+            # behavior) — the file just disappeared and the next drift pass
+            # will resolve via the cleanup branch.
+            if mtime_before is None or mtime_after is None:
+                mtime = 0.0
+            elif mtime_before != mtime_after:
+                logger.info(
+                    "search_index: file mtime drifted during initial-build "
+                    "read (%s → %s); skipping upsert, drift pass will retry: %s",
+                    mtime_before, mtime_after, path,
+                )
+                if on_progress is not None:
+                    on_progress(i + 1, total)
+                continue
+            else:
+                mtime = mtime_before
+            try:
+                messages_indexed += index.upsert_conversation(conv, path, mtime)
+                files_indexed += 1
+            except sqlite3.Error:
+                logger.exception("search_index: upsert failed for %s", path)
+            if on_progress is not None:
+                on_progress(i + 1, total)
+
+        # Refresh query-planner statistics now that the inverted lists have
+        # their final shape. Cheap (~ms on a small index; SQLite skips the
+        # work for tables it deems already-analyzed) and pays back on every
+        # search until the next big drift pass. Runs BEFORE mark_ready() so
+        # the first query post-build sees fresh stats. (perf-polish A3.)
+        try:
+            index.run_pragma_optimize()
+        except sqlite3.Error:
+            logger.exception("search_index: PRAGMA optimize failed (non-fatal)")
+
+        index.mark_ready()
+        logger.info(
+            "search_index: build complete: %d files / %d messages (drifted=%d, missing=%d)",
+            files_indexed, messages_indexed, len(drifted), len(missing),
+        )
+        return files_indexed, messages_indexed
+    finally:
+        index.end_build()
+
 
 
 def update_drifted_files(
