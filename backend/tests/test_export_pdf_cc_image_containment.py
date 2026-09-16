@@ -46,7 +46,7 @@ def cc_env(tmp_path, monkeypatch):
     legit = claude_dir / "image-cache" / "sess-1" / "1.png"
     legit.write_bytes(b"\x89PNG-legit-bytes")
     secret = tmp_path / "credentials.json"
-    secret.write_bytes(b'{"sessionKey": "sk-ant-sid01-EXFILTRATED"}')
+    secret.write_bytes(b'{"sessionKey": "fake-test-key-EXFILTRATED"}')
 
     yield {
         "claude_dir": claude_dir,

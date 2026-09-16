@@ -43,7 +43,7 @@ def bundle(tmp_path: Path) -> Path:
     (static / "index.html").write_text("<html>spa</html>")
     (static / "vite.svg").write_text("<svg/>")
     (static / "assets" / "index-abc123.js").write_text("console.log(1)")
-    (tmp_path / "credentials.json").write_text('{"sessionKey": "sk-ant-secret"}')
+    (tmp_path / "credentials.json").write_text('{"sessionKey": "fake-test-key"}')
     return static
 
 
