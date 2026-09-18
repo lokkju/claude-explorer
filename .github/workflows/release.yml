@@ -72,6 +72,12 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Download wheel artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: dist
+          path: dist
+
       - name: Set up uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39  # v3
         with:
@@ -106,10 +112,20 @@ jobs:
           retention-days: 7
 
   build-mcpb:
-    name: Build MCPB bundle
-    # Runs in parallel with `build` (wheel) — they share the test-gate
+    name: Build MCPB bundle and attach release assets
+    # No longer parallel with `build`: this job is the single place that
+    # writes to the GitHub Release, so it needs the wheel in hand. Two
+    # jobs both calling action-gh-release on one tag race on release
+    # creation; one job attaching both files cannot.
+    #
+    # Why the wheel belongs on the Release at all: upstream distributes
+    # via PyPI, so the wheel was only ever a 7-day CI artifact. The
+    # publish job is gated to upstream (see below), so on a fork the
+    # Release is the only durable home for a built wheel.
+    #
+    # Previously parallel with `build` — they shared the test-gate
     # dependency but don't depend on each other.
-    needs: test
+    needs: [test, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # required for action-gh-release to upload assets
@@ -161,7 +177,9 @@ jobs:
         # Idempotent: re-running on the same tag updates the asset.
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844  # v2
         with:
-          files: dist/claude-explorer-*.mcpb
+          files: |
+            dist/claude-explorer-*.mcpb
+            dist/claude_explorer-*.whl
           fail_on_unmatched_files: true
 
   publish:
