@@ -168,6 +168,17 @@ jobs:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
+    # Upstream only. The PyPI project `claude-explorer` has its Trusted
+    # Publisher record pinned to rpeck/claude-explorer, and the `pypi`
+    # environment is configured in that repo — so from a fork the OIDC
+    # claim cannot match and this job fails every release. Forks still
+    # get the GitHub Release with the wheel and .mcpb attached from the
+    # `build` and `build-mcpb` jobs above.
+    #
+    # A fork that wants its own PyPI presence needs its own package name
+    # plus its own Trusted Publisher record; see
+    # docs/notes/fork-package-rename.md.
+    if: github.repository == 'rpeck/claude-explorer'
     # Pin to the `pypi` environment so the trusted-publisher record
     # matches and the required-reviewer gate (configured in Settings →
     # Environments → pypi) fires before upload.
