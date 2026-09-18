@@ -672,7 +672,30 @@ class SearchIndex:
                 if sv_exists else None
             )
 
-            cols_ok = (not existing_cols) or existing_cols == self._EXPECTED_MESSAGES_COLS
+            # "No columns" is ambiguous: PRAGMA table_info returns nothing
+            # both for a brand-new database and for one whose ``messages``
+            # table has been dropped. Treating the second case as "columns
+            # fine" recreated ``messages`` EMPTY and early-returned with
+            # the ledger untouched, so every drift pass saw zero drift and
+            # the index never refilled -- search dead until a manual
+            # reindex. Reachable after an interrupted rebuild: the DROPs
+            # each commit separately, so a kill between "DROP TABLE
+            # messages" and "DROP TABLE schema_version" leaves exactly
+            # this shape. A populated ledger is what distinguishes the two
+            # cases: a fresh database has none.
+            ledger_rows = 0
+            if cur.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='indexed_files'"
+            ).fetchone() is not None:
+                ledger_rows = cur.execute(
+                    "SELECT COUNT(*) FROM indexed_files"
+                ).fetchone()[0]
+
+            if existing_cols:
+                cols_ok = existing_cols == self._EXPECTED_MESSAGES_COLS
+            else:
+                cols_ok = ledger_rows == 0
             version_ok = row is not None and row[0] == SCHEMA_VERSION
 
             # v14 self-repair (2026-05-26): trust schema_version ONLY when

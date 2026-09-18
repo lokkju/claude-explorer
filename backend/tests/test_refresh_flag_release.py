@@ -101,9 +101,21 @@ async def test_second_request_409s_while_one_is_live(capture_path_only) -> None:
         await resp.body_iterator.aclose()
 
 
-async def test_flag_is_released_when_priming_raises(monkeypatch, tmp_path) -> None:
-    """If the generator blows up before its first yield, the handler must
-    not leave the flag claimed."""
+async def test_error_before_the_first_yield_becomes_an_error_frame(
+    monkeypatch, tmp_path
+) -> None:
+    """A generator that blows up before its first yield must still close
+    the stream cleanly and release the flag.
+
+    This used to propagate out of the handler as a 500 (and the handler
+    released the flag in an `except BaseException`). Since the pipeline
+    grew a terminal-error frame -- see
+    docs/notes/BACKLOG-verified-unfixed.md item 5 -- the exception is
+    caught inside the generator and delivered to the client as a normal
+    `error` event, which is what the frontend knows how to render. The
+    flag is then released by the generator's `finally` like any other
+    completion.
+    """
     monkeypatch.setattr(
         fetch_mod, "DEFAULT_CREDENTIALS_PATH", tmp_path / "nope.json"
     )
@@ -114,7 +126,11 @@ async def test_flag_is_released_when_priming_raises(monkeypatch, tmp_path) -> No
 
     monkeypatch.setattr(fetch_mod, "_capture_phase_stream", _boom)
 
-    with pytest.raises(RuntimeError):
-        await fetch_mod.refresh_pipeline(incremental=True, limit=None)
+    resp = await fetch_mod.refresh_pipeline(incremental=True, limit=None)
+    chunks = [c async for c in resp.body_iterator]
 
+    assert any("error" in c for c in chunks), (
+        f"expected a terminal error frame, got {chunks!r}"
+    )
+    assert any("capture exploded" in c for c in chunks)
     assert fetch_mod._refresh_in_progress is False

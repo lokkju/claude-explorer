@@ -626,8 +626,16 @@ async def _run_capture_with_keepalive(
         result = await capture_task
         yield {"_result": result}
     except Exception as exc:
-        capture_task.cancel()
         yield {"_error": str(exc)}
+    finally:
+        # Must be a finally, not just the except above. GeneratorExit and
+        # CancelledError are BaseException, so a consumer closing this
+        # stream mid-capture skipped the cancel entirely and left a
+        # headful browser running for the rest of the timeout -- after
+        # which the user's next click opened a second one, with both
+        # racing to save_credentials on the same path.
+        if not capture_task.done():
+            capture_task.cancel()
 
 
 async def _fetch_phase_stream(
@@ -1201,6 +1209,17 @@ async def refresh_pipeline_stream(
             if had_error or not captured_already:
                 return
             attempt += 1
+    except Exception as exc:  # noqa: BLE001
+        # Without this the stream just stopped: Starlette aborts an
+        # already-200 response mid-body, the client sees no `error` and
+        # no `complete`, and the sidebar spinner runs forever. The older
+        # fetch_conversations_stream has always emitted a terminal frame
+        # here; the refresh path was the asymmetric one. _fetch_phase_stream
+        # guards only load_credentials, so mkdir on a read-only or full
+        # volume, or a stale mount, lands here.
+        logger.exception("refresh pipeline failed")
+        kind = _classify_error(exc)
+        yield _send_event(_build_error_event(kind, str(exc)))
     finally:
         _refresh_in_progress = False
 
