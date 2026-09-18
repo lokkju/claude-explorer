@@ -485,6 +485,13 @@ python3 scripts/check-article-formats.py
 **Known-OK matches** (won't fail the scan but worth re-eyeballing):
 
 - `fake-test-key` and `sk-ant-sid01-fake-test-key` in `backend/tests/`, `fetcher/tests/` — deliberate fake fixtures.
+- `sk-ant-sid01-EXFILTRATED` and `sk-ant-secret` appear in the **history** of
+  `lokkju/search-index-freshness-fixes` (commits `c06817a`, `1bb922a`), as fixtures
+  in the PDF-containment and SPA-traversal tests. Both were renamed to
+  `fake-test-key` literals in `04c0b04`, so the working tree is clean, but
+  check #1 greps unpushed *commit diffs* and will surface them on any range
+  that spans those commits. Obviously-fake values; not rewritten because the
+  branch was already published.
 - `/Users/rpeck/` in test fixtures under `frontend/e2e/` — deliberate test data shape mirroring real CC session paths.
 - `~/.claude` in `PKG-INFO` (README copy) and source code — describing the actual home-directory paths the app reads from.
 - `claude-exporter` (the legacy pre-V1 name) in `.gitignore` (backwards-compat) and `PROCESS/a70251a5/outline.jsonl` (frozen historical conversation snapshots).
