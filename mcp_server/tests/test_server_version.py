@@ -105,13 +105,32 @@ def test_server_version_does_not_require_installed_package_metadata(
     monkeypatch.setattr(md, "version", fake_version)
 
     # Drop cached module so module-level code re-runs under the patch.
-    sys.modules.pop("mcp_server.server", None)
+    original = sys.modules.pop("mcp_server.server", None)
     try:
         reloaded = importlib.import_module("mcp_server.server")
     finally:
-        # Restore the genuine module so other tests don't run against the
-        # patched-and-reloaded one.
-        sys.modules.pop("mcp_server.server", None)
+        # Restore BOTH bindings. `sys.modules.pop` does not touch the
+        # parent package attribute, so `mcp_server.server` still pointed
+        # at whatever `import_module` last created -- and
+        # `from mcp_server import server` resolves via that attribute,
+        # not via sys.modules. Restoring only sys.modules therefore
+        # looked correct and fixed nothing.
+        #
+        # The consequence was subtle and expensive: conftest's
+        # `reset_mcp_singletons` does `from mcp_server import server`, so
+        # it nulled `_store` on the RELOADED module, while every test that
+        # did `from mcp_server.server import <tool>` at collection time
+        # kept calling the ORIGINAL module -- whose `_store` still pointed
+        # at an earlier test's tmp data_dir. test_split_regression then
+        # got "Session not found" for a file sitting on disk.
+        # See docs/notes/mcp-export-session-flake.md.
+        import mcp_server as _pkg
+
+        if original is not None:
+            sys.modules["mcp_server.server"] = original
+            _pkg.server = original
+        else:
+            sys.modules.pop("mcp_server.server", None)
 
     assert reloaded.mcp.version == mcp_server.__version__, (
         "In the bundle context (no installed claude-explorer wheel), "

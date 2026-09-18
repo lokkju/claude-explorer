@@ -123,15 +123,26 @@ def isolate_search_index_singleton(tmp_path_factory, monkeypatch) -> Iterator[No
     """
 
     from backend import search_index as si
+    from backend import summary_cache as sc
 
     safe_path = tmp_path_factory.mktemp("mcp_search_index_root") / "search-index.sqlite"
     monkeypatch.setattr(si, "default_index_path", lambda: safe_path)
 
+    # summary_cache resolves the SAME file through default_index_path and
+    # holds its own module singleton, so repointing the path without
+    # resetting that singleton leaves it connected to whatever file it
+    # opened first -- possibly the developer's real
+    # ~/.claude-explorer/search-index.sqlite. backend/tests/conftest.py
+    # resets both for exactly this reason; this mirror had only half.
+    # (Unrelated to the module-reload bug fixed alongside this -- that
+    # one was measured and is not caused by cache state.)
     si.reset_search_index_for_tests()
+    sc.reset_summary_cache_for_tests()
     try:
         yield
     finally:
         si.reset_search_index_for_tests()
+        sc.reset_summary_cache_for_tests()
 
 
 # ---------------------------------------------------------------------------
