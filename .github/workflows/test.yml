@@ -46,20 +46,7 @@ jobs:
         run: uv run pytest fetcher/tests/ --tb=short
 
       - name: MCP server pytest
-        # One test is deselected, not the suite. See
-        # docs/notes/mcp-export-session-flake.md: it fails 10/10 serially
-        # and ~1 run in 4 under xdist, and it is NOT new -- 5/20 failures
-        # measured at 2f5336f, before any of the 1.1.0 work. It only
-        # surfaced here because this fork had never run Actions.
-        #
-        # Narrowed to: ConversationStore._find_conversation_data returns
-        # nothing while _get_conversation_files() demonstrably lists the
-        # file and the uuid matches the filename. That may be a real
-        # store bug rather than a test artifact, so this deselect is a
-        # quarantine with a debt attached, not a resolution.
-        run: |
-          uv run pytest mcp_server/tests/ --tb=short \
-            --deselect 'mcp_server/tests/test_split_regression.py::test_mcp_export_session_preserves_summary_on_sliced_copy'
+        run: uv run pytest mcp_server/tests/ --tb=short
 
   e2e:
     name: Playwright (fixture mode)
