@@ -1043,6 +1043,18 @@ def test_slow_index_path_title_only_compaction_hit_present_when_flag_true(
 #       AND that the new column is populated correctly from existing
 #       title text.
 
+@pytest.mark.skipif(
+    si.SCHEMA_VERSION != 14,
+    reason=(
+        "The v13→v14 fast migration is gated on `on_disk_version == 13 AND "
+        "SCHEMA_VERSION == 14`, so it self-disables once SCHEMA_VERSION "
+        "advances -- the same expiry pattern as the v9→v10 and v11→v12 "
+        "shims. Under v15 a v13 database takes the standard DROP+rebuild "
+        "path instead, which is correct: v15 added a column to the messages "
+        "FTS5 table, and an FTS5 virtual table cannot gain a column without "
+        "being rebuilt."
+    ),
+)
 def test_v13_to_v14_fast_migration_preserves_messages_and_backfills_flag(
     tmp_path,
 ) -> None:
@@ -1193,6 +1205,18 @@ def test_v13_to_v14_fast_migration_preserves_messages_and_backfills_flag(
         idx.close()
 
 
+@pytest.mark.skipif(
+    si.SCHEMA_VERSION != 14,
+    reason=(
+        "The v13→v14 fast migration is gated on `on_disk_version == 13 AND "
+        "SCHEMA_VERSION == 14`, so it self-disables once SCHEMA_VERSION "
+        "advances -- the same expiry pattern as the v9→v10 and v11→v12 "
+        "shims. Under v15 a v13 database takes the standard DROP+rebuild "
+        "path instead, which is correct: v15 added a column to the messages "
+        "FTS5 table, and an FTS5 virtual table cannot gain a column without "
+        "being rebuilt."
+    ),
+)
 def test_v13_to_v14_migration_is_idempotent(tmp_path) -> None:
     """A partial migration (column added but schema_version not stamped)
     MUST survive a second open without crashing. Same idempotency

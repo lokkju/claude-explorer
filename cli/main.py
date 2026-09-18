@@ -340,6 +340,18 @@ def mcp() -> None:
     mcp_main()
 
 
+def _serve_static_dir():
+    """Indirection over the UI-bundle resolver so `serve` can be tested.
+
+    Imported lazily: `backend.static_assets` is a stdlib-only leaf, but
+    keeping the import inside the helper matches how the rest of this
+    module defers backend imports off the CLI startup path.
+    """
+    from backend.static_assets import _resolve_static_dir
+
+    return _resolve_static_dir()
+
+
 @main.command()
 @click.option("--host", default="127.0.0.1", help="Host to bind to")
 @click.option("--port", default=8765, help="Port to bind to")
@@ -372,6 +384,23 @@ def serve(host: str, port: int, reload: bool) -> None:
         # Detection is best-effort; never fail `serve` over the hint.
         pass
 
+    # Same treatment for a missing UI bundle. backend.main logs this at
+    # import time, but that lands in the structured log, not in front of
+    # the person who just typed the command -- who then opens the URL
+    # below and gets JSON. Reported 2026-09-16 as "a git based install
+    # doesn't include the ui".
+    try:
+        if _serve_static_dir() is None:
+            click.echo(
+                "\nWARNING: web UI not bundled; starting in API-only mode.\n"
+                "  Opening the URL below will return JSON, not the app.\n"
+                "  Run 'claude-explorer doctor' for the Web UI check, or\n"
+                "  'npm run build' in frontend/ for a dev checkout.\n",
+                err=True,
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
     click.echo(f"Starting server on http://{host}:{port}")
     click.echo("Press Ctrl+C to stop.")
 
@@ -402,24 +431,36 @@ def serve(host: str, port: int, reload: bool) -> None:
 @main.command("reindex-search")
 @click.option(
     "--full/--drift",
-    default=True,
-    help="--full rebuilds from scratch (DROP+rebuild). --drift only re-indexes files whose mtime changed.",
+    default=False,
+    help=(
+        "--drift (default) indexes anything new or changed and drops rows "
+        "for files that vanished. --full WIPES the index and rebuilds from "
+        "scratch."
+    ),
 )
 def reindex_search(full: bool) -> None:
-    """Manually rebuild the SQLite FTS5 search index.
+    """Bring the SQLite FTS5 search index in sync with what's on disk.
 
     NOTE: this runs automatically in the background every time
     ``claude-explorer serve`` starts, and the watcher keeps it in sync.
-    You should rarely need to invoke this CLI manually — it's a one-shot
-    override for cases like:
+    You should rarely need to invoke this CLI manually.
+
+    The default is a DRIFT pass: it indexes every file that is new or
+    whose mtime changed, drops rows for files that have disappeared, and
+    leaves everything else alone. Idempotent and cheap — for unchanged
+    files it costs one ``os.stat`` each. This is the right command for
+    "make sure everything is indexed."
+
+    ``--full`` is the destructive escape hatch: it WIPES every row
+    (messages, indexed_files, conversations) and rebuilds from scratch.
+    Search is degraded until it finishes, which is minutes on a real
+    corpus, and any conversation the enumerator can no longer discover
+    is dropped rather than repaired. Reach for it only when:
 
       * the index file got corrupted (delete it and re-run);
       * you want to verify a fresh build matches your data;
       * you bumped the schema version and want to force a rebuild
         without restarting the server.
-
-    Idempotent: re-runs are cheap because the upsert is a no-op for
-    unchanged files (mtime check).
     """
     from backend.search_index import (
         build_full_index,
@@ -439,6 +480,13 @@ def reindex_search(full: bool) -> None:
 
     store = ConversationStore()
     if full:
+        click.echo(
+            "WARNING: --full wipes every indexed row before rebuilding. "
+            "Search is degraded until the rebuild finishes, and any "
+            "conversation the enumerator can no longer find on disk is "
+            "dropped rather than repaired. Use --drift (the default) to "
+            "index what's new without wiping."
+        )
         click.echo("Wiping index and rebuilding from scratch...")
         idx.clear_all()
 

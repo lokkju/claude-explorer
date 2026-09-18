@@ -56,6 +56,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 
 from .config import get_settings, migrate_legacy_data_dir, read_env  # noqa: E402
+from .static_assets import _resolve_spa_file, _resolve_static_dir  # noqa: E402
 from .routers import conversations, search, export, config, fetch, bookmarks, orgs, files, preferences, watcher_health  # noqa: E402
 
 
@@ -118,34 +119,6 @@ class SelectiveGZipMiddleware(GZipMiddleware):
 
 
 log = logging.getLogger(__name__)
-
-
-def _resolve_static_dir() -> Path | None:
-    """Locate the bundled frontend assets, or return None if absent.
-
-    Resolution order:
-      1. **Installed mode**: ``<backend package>/_static/`` — written by the
-         hatch build hook during ``uv build``. This is what end users get
-         from PyPI wheels.
-      2. **Dev mode**: ``<repo_root>/frontend/dist/`` — written by
-         ``npm run build`` in the frontend dir. Lets contributors run
-         ``uv run uvicorn backend.main:app`` against a locally-built bundle
-         without re-running ``uv build``.
-
-    Returns the first directory containing ``index.html``, or None if
-    neither exists (API-only mode).
-    """
-    # 1. Installed-wheel location (bundled by hatch_build.py).
-    installed = Path(__file__).resolve().parent / "_static"
-    if (installed / "index.html").is_file():
-        return installed
-
-    # 2. Repo dev location.
-    repo_dev = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-    if (repo_dev / "index.html").is_file():
-        return repo_dev
-
-    return None
 
 
 # Telemetry surfaced by /api/health when the lifespan migration repeatedly
@@ -1071,10 +1044,12 @@ if _STATIC_DIR is not None:
         """
         if any(full_path == p or full_path.startswith(p) for p in _RESERVED_PREFIXES):
             raise HTTPException(status_code=404)
-        # If a real file exists (e.g. vite.svg at the repo dist root),
-        # serve it. Otherwise serve index.html for the SPA's client router.
-        candidate = _STATIC_DIR / full_path
-        if candidate.is_file():
+        # If a real file exists INSIDE the bundle (e.g. vite.svg at the
+        # dist root), serve it. Otherwise serve index.html for the SPA's
+        # client router. _resolve_spa_file owns the containment check —
+        # see its docstring before touching this.
+        candidate = _resolve_spa_file(_STATIC_DIR, full_path)
+        if candidate is not None:
             return FileResponse(candidate)
         return FileResponse(_STATIC_DIR / "index.html")
 else:

@@ -62,6 +62,38 @@ TOOL_PLACEHOLDERS: tuple[str, ...] = (
 CC_IMAGE_MARKER_RE = re.compile(r"\[Image: source: ([^\]]+)\]")
 
 
+def cc_image_cache_root() -> Path:
+    """Where Claude Code stores image-cache files.
+
+    Honors the same ``CLAUDE_DIR`` override as
+    ``backend.routers.files._image_cache_root``, so the export surfaces
+    and the HTTP surface agree on what "inside the cache" means.
+    """
+    from ..config import get_settings
+
+    return get_settings().claude_dir / "image-cache"
+
+
+def image_marker_path_is_safe(path: Path, image_cache_root: Path) -> bool:
+    """Refuse marker paths that resolve outside the CC image cache.
+
+    The absolute path in a ``[Image: source: <abs-path>]`` marker comes
+    out of MESSAGE TEXT — ``CC_IMAGE_MARKER_RE`` matches the literal
+    string anywhere in a message body, so whatever can write into a
+    conversation chooses the file. Every surface that turns a marker into
+    bytes MUST gate on this: the browser route
+    (``backend.routers.files.get_cc_image``) has always done so, and an
+    export that skips it writes the named file into an artifact the user
+    then sends to other people.
+    """
+    try:
+        resolved = path.expanduser().resolve(strict=True)
+        resolved.relative_to(image_cache_root.resolve())
+    except (FileNotFoundError, OSError, ValueError):
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Filename / timestamp / HTML helpers
 # ---------------------------------------------------------------------------

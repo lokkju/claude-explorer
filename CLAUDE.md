@@ -226,24 +226,33 @@ uv run claude-explorer install-watcher --uninstall
 
 #### `claude-explorer reindex-search` (manual override only)
 
-Force a rebuild of the SQLite FTS5 search index at
-`~/.claude-explorer/search-index.sqlite`. **You should not need this in
-normal operation:** the index is built automatically at backend startup
-(non-blocking lifespan task) and kept in sync by the same watcher
-loop that handles CC images (event-driven via `watchdog`, with a
-600s backstop poll). Use only when:
-
-- the index file got corrupted (delete it, then run this);
-- you want a known-fresh full rebuild;
-- a future schema bump requires manual rebuild without restarting `serve`.
+Bring the SQLite FTS5 search index at
+`~/.claude-explorer/search-index.sqlite` in sync with what's on disk.
+**You should not need this in normal operation:** the index is built
+automatically at backend startup (non-blocking lifespan task) and kept in
+sync by the same watcher loop that handles CC images (event-driven via
+`watchdog`, with a 600s backstop poll).
 
 ```bash
-# Default: full DROP + rebuild from scratch.
+# Default: drift pass. Indexes anything new or changed, drops rows for
+# files that vanished, leaves everything else alone. Idempotent; one
+# os.stat per unchanged file. This is the "make sure everything is
+# indexed" command.
 uv run claude-explorer reindex-search
 
-# Drift-only pass (re-index only files whose mtime changed since last index).
-uv run claude-explorer reindex-search --drift
+# Destructive escape hatch: WIPES every row, then rebuilds from scratch.
+uv run claude-explorer reindex-search --full
 ```
+
+`--full` was the default until 2026-09-16. It is destructive and slow:
+search is degraded for the duration, and any conversation the enumerator
+can no longer discover is dropped rather than repaired — so a `--full`
+run against a broken enumeration makes coverage *worse*. Use it only
+when:
+
+- the index file got corrupted (delete it, then run this);
+- you want a known-fresh full rebuild to verify against your data;
+- a future schema bump requires manual rebuild without restarting `serve`.
 
 **How search works in the running server:**
 
@@ -476,6 +485,13 @@ python3 scripts/check-article-formats.py
 **Known-OK matches** (won't fail the scan but worth re-eyeballing):
 
 - `fake-test-key` and `sk-ant-sid01-fake-test-key` in `backend/tests/`, `fetcher/tests/` — deliberate fake fixtures.
+- `sk-ant-sid01-EXFILTRATED` and `sk-ant-secret` appear in the **history** of
+  `lokkju/search-index-freshness-fixes` (commits `c06817a`, `1bb922a`), as fixtures
+  in the PDF-containment and SPA-traversal tests. Both were renamed to
+  `fake-test-key` literals in `04c0b04`, so the working tree is clean, but
+  check #1 greps unpushed *commit diffs* and will surface them on any range
+  that spans those commits. Obviously-fake values; not rewritten because the
+  branch was already published.
 - `/Users/rpeck/` in test fixtures under `frontend/e2e/` — deliberate test data shape mirroring real CC session paths.
 - `~/.claude` in `PKG-INFO` (README copy) and source code — describing the actual home-directory paths the app reads from.
 - `claude-exporter` (the legacy pre-V1 name) in `.gitignore` (backwards-compat) and `PROCESS/a70251a5/outline.jsonl` (frozen historical conversation snapshots).

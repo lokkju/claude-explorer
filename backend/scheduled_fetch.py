@@ -85,12 +85,20 @@ def run_scheduled_fetch(*, interval_sec: int = 3600, now: str | None = None) -> 
     ts = now or _now_iso()
     prior = read_status(status_path())
 
-    handle = _acquire_lock()
-    if handle is None:
-        log.info("scheduled-fetch: previous run still in progress; skipping")
-        return 0
-
+    # Lock acquisition lives INSIDE the try. _acquire_lock only catches
+    # FileExistsError, but its mkdir() and os.open() raise PermissionError
+    # (root-owned or read-only ~/.claude-explorer) and OSError(ENOSPC)
+    # too. Outside the try those escaped this function entirely, breaking
+    # the module's "never raises" contract: the supervised job died with
+    # a traceback and wrote no status, so `doctor` kept reporting the
+    # previous run's result as current.
+    handle = None
     try:
+        handle = _acquire_lock()
+        if handle is None:
+            log.info("scheduled-fetch: previous run still in progress; skipping")
+            return 0
+
         if not credentials_path().exists():
             _write(prior, ts, result="needs_auth", auth_expired=True,
                    interval_sec=interval_sec)
@@ -127,6 +135,14 @@ def run_scheduled_fetch(*, interval_sec: int = 3600, now: str | None = None) -> 
         return 0
     except Exception as exc:  # noqa: BLE001 - supervised job must never crash
         log.warning("scheduled-fetch: unexpected error: %s", exc)
+        # Record it. Logging alone left `doctor` and the UI reporting the
+        # PREVIOUS run's result as current, so a job that has been failing
+        # for days still read as "last success <recent>".
+        try:
+            _write(prior, ts, result="error", auth_expired=prior.auth_expired,
+                   interval_sec=interval_sec, error=str(exc))
+        except Exception:  # noqa: BLE001 - status write is best-effort
+            log.warning("scheduled-fetch: could not record error status")
         return 1
     finally:
         _release_lock(handle)
