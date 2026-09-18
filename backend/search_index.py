@@ -261,7 +261,26 @@ logger = logging.getLogger(__name__)
 #     a single UPDATE over ~hundreds of rows. Total work: ~ms on any
 #     plausible corpus. No reindex pain — the v13 messages table is
 #     left intact. Mirrors the v11→v12 fast-migration pattern.
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
+
+# v15 (2026-09-17): two ledger changes, bumped together because both
+# alter on-disk shape and a single DROP+rebuild pays for both.
+#
+#   * ``messages.path`` — message rows are now scoped by the FILE they
+#     came from, not just by ``conv_uuid``. Claude Code "continued
+#     session" files share one internal ``sessionId`` across two files
+#     (see ``backend/store.py``'s Pass B), and uuid-scoped DELETEs meant
+#     the second file's upsert wiped the first file's rows while the
+#     first file's ledger mtime stayed current — half a conversation
+#     silently unsearchable, with no drift pass able to notice. The two
+#     files are two PARTS of one conversation, so both now contribute
+#     rows under the same uuid.
+#   * ``indexed_files.size`` — drift compares mtime AND size. mtime
+#     equality across a read does not prove the file was unchanged on a
+#     filesystem with coarse mtime granularity (HFS+/NFSv3 ~1s,
+#     FAT/exFAT 2s), so a same-tick append was stamped with the mtime of
+#     the content read WITHOUT it and compared equal forever.
+#     ``SummaryCache`` has stamped both since it was written.
 
 
 # ``messages`` is the FTS5 virtual table. UNINDEXED columns store metadata
@@ -287,9 +306,36 @@ SCHEMA_VERSION = 14
 # companion ``conversation_summaries_meta`` table holds the source-hash
 # of ``read_conversation_summary_fast`` (see ``claude_code_reader.
 # LOGIC_VERSION``); a mismatch at startup wipes the cache table.
+# Column order of the ``messages`` FTS5 table, as a single source of
+# truth. snippet()/highlight() address columns by ORDINAL, so anything
+# that hard-codes those numbers breaks silently the next time a column
+# is inserted -- which has now happened twice (v13 inserted
+# is_compaction_summary before title, v15 inserted path after
+# conv_uuid). Derive the ordinals from this tuple; never retype them.
+# Pinned against the live PRAGMA order by
+# backend/tests/test_index_ledger_v15.py.
+MESSAGES_COLUMNS: tuple[str, ...] = (
+    "conv_uuid",
+    "path",
+    "message_uuid",
+    "sender",
+    "created_at",
+    "source",
+    "project_path",
+    "organization_id",
+    "conv_created_at",
+    "conv_updated_at",
+    "is_compaction_summary",
+    "title",
+    "body",
+    "body_text",
+)
+
+
 SCHEMA_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
     conv_uuid UNINDEXED,
+    path UNINDEXED,
     message_uuid UNINDEXED,
     sender UNINDEXED,
     created_at UNINDEXED,
@@ -319,6 +365,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(
 CREATE TABLE IF NOT EXISTS indexed_files (
     path TEXT PRIMARY KEY,
     mtime REAL NOT NULL,
+    size INTEGER NOT NULL DEFAULT -1,
     indexed_at INTEGER NOT NULL,
     conv_uuid TEXT
 );
@@ -376,6 +423,20 @@ CREATE TABLE IF NOT EXISTS conversations (
 # below quotes EVERY token, so this is mostly defensive — but if the
 # escape policy ever changes, this list documents the trap.
 _FTS5_OPERATORS = {"AND", "OR", "NOT", "NEAR"}
+
+
+def _resolved_size(file_path: Path, size: int | None) -> int:
+    """Size to stamp into the ledger. ``-1`` when it can't be determined.
+
+    -1 never equals a real ``st_size``, so an unknown size makes the file
+    read as drifted next pass rather than silently current.
+    """
+    if size is not None:
+        return size
+    try:
+        return file_path.stat().st_size
+    except OSError:
+        return -1
 
 
 def fts5_available() -> bool:
@@ -558,8 +619,8 @@ class SearchIndex:
     # current SCHEMA_VERSION. Used at open time to detect when an on-disk
     # ``messages`` table predates the current code (column-level drift),
     # which the version-row check alone can miss — see below.
-    _EXPECTED_MESSAGES_COLS = frozenset({
-        "conv_uuid", "message_uuid", "sender", "created_at",
+    _EXPECTED_MESSAGES_COLS = frozenset(MESSAGES_COLUMNS) | frozenset({
+        "conv_uuid", "path", "message_uuid", "sender", "created_at",
         "source", "project_path", "organization_id",
         "conv_created_at", "conv_updated_at",
         "is_compaction_summary",
@@ -1047,6 +1108,7 @@ class SearchIndex:
         conv: dict[str, Any],
         file_path: Path,
         mtime: float,
+        size: int | None = None,
     ) -> int:
         """Insert all messages for one conversation; replace any existing rows.
 
@@ -1087,7 +1149,8 @@ class SearchIndex:
             if isinstance(m, dict) and m.get("message_uuid")
         }
 
-        rows: list[tuple[str, str, str, str, str, str, str, str, str, int, str, str, str]] = []
+        path_str = str(file_path)
+        rows: list[tuple[str, str, str, str, str, str, str, str, str, str, int, str, str, str]] = []
         for msg in conv.get("chat_messages", []) or []:
             # 2026-05-16 (v7): two parallel projections from the SAME
             # source message via the existing linear-scan helper.
@@ -1114,6 +1177,7 @@ class SearchIndex:
             rows.append(
                 (
                     conv_uuid,
+                    path_str,
                     msg_uuid,
                     msg.get("sender", "") or "",
                     msg.get("created_at", "") or "",
@@ -1137,6 +1201,7 @@ class SearchIndex:
             rows.append(
                 (
                     conv_uuid, "title", "title", "",
+                    path_str,
                     source, project_path, organization_id,
                     conv_created_at, conv_updated_at,
                     0,
@@ -1146,16 +1211,22 @@ class SearchIndex:
 
         with self._write_lock:
             with self._write_conn:  # explicit BEGIN; auto-COMMIT or ROLLBACK
+                # v15: scoped by (conv_uuid, path), not conv_uuid alone.
+                # A CC continued session is two FILES under one sessionId;
+                # a uuid-wide DELETE here wiped the sibling file's rows
+                # while its ledger mtime stayed current, so nothing ever
+                # re-indexed it.
                 self._write_conn.execute(
-                    "DELETE FROM messages WHERE conv_uuid = ?", (conv_uuid,)
+                    "DELETE FROM messages WHERE conv_uuid = ? AND path = ?",
+                    (conv_uuid, path_str),
                 )
                 self._write_conn.executemany(
                     "INSERT INTO messages "
-                    "(conv_uuid, message_uuid, sender, created_at, source, "
+                    "(conv_uuid, path, message_uuid, sender, created_at, source, "
                     " project_path, organization_id, conv_created_at, "
                     " conv_updated_at, is_compaction_summary, "
                     " title, body, body_text) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 # v10 title projection (2026-05-23). INSERT OR REPLACE
@@ -1200,12 +1271,34 @@ class SearchIndex:
                 # "audit", DELETE no-op).
                 self._write_conn.execute(
                     "INSERT OR REPLACE INTO indexed_files "
-                    "(path, mtime, indexed_at, conv_uuid) "
-                    "VALUES (?, ?, ?, ?)",
-                    (str(file_path), float(mtime), int(time.time()), conv_uuid),
+                    "(path, mtime, size, indexed_at, conv_uuid) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        path_str,
+                        float(mtime),
+                        int(_resolved_size(file_path, size)),
+                        int(time.time()),
+                        conv_uuid,
+                    ),
                 )
 
         return len(rows)
+
+    def stamp_unindexable(self, file_path: Path, mtime: float, size: int) -> None:
+        """Ledger-only row for a file that yields no conversation.
+
+        No message rows, no projection row, empty ``conv_uuid``. Exists
+        purely so the drift scan stops treating the file as perpetually
+        new. See :func:`_stamp_unindexable`.
+        """
+        with self._write_lock:
+            with self._write_conn:
+                self._write_conn.execute(
+                    "INSERT OR REPLACE INTO indexed_files "
+                    "(path, mtime, size, indexed_at, conv_uuid) "
+                    "VALUES (?, ?, ?, ?, '')",
+                    (str(file_path), float(mtime), int(size), int(time.time())),
+                )
 
     def delete_conversation(self, conv_uuid: str, file_path: Path | None = None) -> None:
         """Remove a conversation's rows from the index."""
@@ -1267,21 +1360,38 @@ class SearchIndex:
                     # any post-migration Cowork upsert wrote conv_uuid
                     # so the primary lookup above succeeds).
                     conv_uuid = file_path.stem
+                # v15: drop only THIS file's message rows. A CC
+                # continued session spans two files under one uuid, and
+                # the uuid-wide DELETE took the survivor's rows with it
+                # -- while the survivor's ledger mtime still matched, so
+                # no drift pass ever put them back.
                 self._write_conn.execute(
-                    "DELETE FROM messages WHERE conv_uuid = ?", (conv_uuid,)
-                )
-                # v10: same uuid scope applies to the projection;
-                # leave-no-trace contract matches delete_conversation.
-                self._write_conn.execute(
-                    "DELETE FROM conversations WHERE conv_uuid = ?",
-                    (conv_uuid,),
+                    "DELETE FROM messages WHERE path = ?", (str(file_path),)
                 )
                 self._write_conn.execute(
                     "DELETE FROM indexed_files WHERE path = ?", (str(file_path),)
                 )
+                # The projection row is per-conversation, so it goes only
+                # once no indexed file feeds that uuid any more --
+                # otherwise the surviving file's conversation would
+                # vanish from the title sweep.
+                remaining = self._write_conn.execute(
+                    "SELECT 1 FROM indexed_files WHERE conv_uuid = ? LIMIT 1",
+                    (conv_uuid,),
+                ).fetchone()
+                if remaining is None:
+                    self._write_conn.execute(
+                        "DELETE FROM conversations WHERE conv_uuid = ?",
+                        (conv_uuid,),
+                    )
 
-    def needs_update(self, file_path: Path, current_mtime: float) -> bool:
-        """True if the file isn't indexed or its mtime has changed since.
+    def needs_update(
+        self,
+        file_path: Path,
+        current_mtime: float,
+        current_size: int | None = None,
+    ) -> bool:
+        """True if the file isn't indexed, or its mtime OR size changed.
 
         Threading: uses the per-thread read connection so cross-thread
         callers (the projects-dir Timer; asyncio.to_thread workers)
@@ -1289,16 +1399,19 @@ class SearchIndex:
         """
         conn = self._get_read_conn()
         cur = conn.execute(
-            "SELECT mtime FROM indexed_files WHERE path = ?", (str(file_path),)
+            "SELECT mtime, size FROM indexed_files WHERE path = ?",
+            (str(file_path),),
         )
         row = cur.fetchone()
         if row is None:
             return True
-        # mtime equality with float tolerance — if the file was rewritten
-        # within the same nanosecond we'd theoretically miss it, but in
-        # practice the watcher poll interval (5s) dwarfs any plausible
-        # mtime collision.
-        return float(row[0]) != float(current_mtime)
+        if float(row[0]) != float(current_mtime):
+            return True
+        # v15: size is the tie-breaker mtime can't provide. On a
+        # coarse-granularity filesystem an append inside the same mtime
+        # tick leaves mtime equal forever; size catches it.
+        size = _resolved_size(file_path, current_size)
+        return int(row[1]) != int(size)
 
     def list_indexed_paths(self) -> list[Path]:
         """All paths currently recorded in ``indexed_files``.
@@ -1311,8 +1424,8 @@ class SearchIndex:
         cur = conn.execute("SELECT path FROM indexed_files")
         return [Path(row[0]) for row in cur.fetchall()]
 
-    def _read_indexed_files_map(self) -> dict[str, float]:
-        """Snapshot of every ``indexed_files`` row as ``{path: mtime}``.
+    def _read_indexed_files_map(self) -> dict[str, tuple[float, int]]:
+        """Snapshot of every ``indexed_files`` row as ``{path: (mtime, size)}``.
 
         One-shot bulk read used by :func:`_drift_first_scan` instead
         of per-file ``needs_update`` calls; saves N SQL round-trips
@@ -1323,8 +1436,8 @@ class SearchIndex:
         table is empty.
         """
         conn = self._get_read_conn()
-        cur = conn.execute("SELECT path, mtime FROM indexed_files")
-        return {row[0]: row[1] for row in cur.fetchall()}
+        cur = conn.execute("SELECT path, mtime, size FROM indexed_files")
+        return {row[0]: (row[1], row[2]) for row in cur.fetchall()}
 
     def clear_all(self) -> None:
         """Wipe all rows. Caller is responsible for a subsequent rebuild.
@@ -1483,14 +1596,13 @@ class SearchIndex:
     # ellipsis, max_tokens). column_index is the position in the
     # messages FTS5 schema (0-indexed). Sweep is bm25-driven so we
     # get the densest match cluster across multi-token queries.
-    # v13 schema column order: conv_uuid(0), message_uuid(1), sender(2),
-    # created_at(3), source(4), project_path(5), organization_id(6),
-    # conv_created_at(7), conv_updated_at(8), is_compaction_summary(9),
-    # title(10), body(11), body_text(12). The indices shifted by +1 vs
-    # v12 when is_compaction_summary was inserted before title.
-    _SNIPPET_BODY_COL_IDX = 11
-    _SNIPPET_BODY_TEXT_COL_IDX = 12
-    _SNIPPET_TITLE_COL_IDX = 10
+    # Derived from MESSAGES_COLUMNS, never retyped. These were literal
+    # ints through v14 and shifted silently every time a column was
+    # inserted ahead of title/body; v15 made that a test failure instead
+    # of a wrong snippet.
+    _SNIPPET_BODY_COL_IDX = MESSAGES_COLUMNS.index("body")
+    _SNIPPET_BODY_TEXT_COL_IDX = MESSAGES_COLUMNS.index("body_text")
+    _SNIPPET_TITLE_COL_IDX = MESSAGES_COLUMNS.index("title")
     _SNIPPET_ELLIPSIS = "..."
     _SNIPPET_MAX_TOKENS = 30  # ~150 chars for English prose
 
@@ -2505,14 +2617,23 @@ def _drift_first_scan(
     drifted: list[tuple[Path, str]] = []
     for path, source in live_paths_with_source:
         try:
-            current_mtime = path.stat().st_mtime
+            st = path.stat()
         except OSError:
             # File vanished between enumeration and stat; ignore — the
             # next backstop pass will pick up the deletion via the
             # missing-pass below (path won't appear in live_set).
             continue
-        indexed_mtime = indexed_mtimes.get(str(path))
-        if indexed_mtime is None or float(indexed_mtime) != float(current_mtime):
+        entry = indexed_mtimes.get(str(path))
+        if entry is None:
+            drifted.append((path, source))
+            continue
+        # v15: mtime OR size. mtime alone misses an append landing inside
+        # the same mtime tick on a coarse-granularity filesystem.
+        indexed_mtime, indexed_size = entry
+        if (
+            float(indexed_mtime) != float(st.st_mtime)
+            or int(indexed_size) != int(st.st_size)
+        ):
             drifted.append((path, source))
 
     # Missing pass: any indexed_files row whose path is no longer on disk
@@ -2549,6 +2670,35 @@ def _drift_first_scan(
         )
 
     return drifted, missing
+
+
+def _stamp_unindexable(
+    index: "SearchIndex",
+    path: Path,
+    mtime: float | None,
+    size: int | None,
+) -> None:
+    """Record a file that produced no conversation, so it stops churning.
+
+    ``_load_conversation_at`` returns None for an empty or unparseable
+    session file, or one we couldn't read. Nothing was ever written to
+    ``indexed_files`` for those, and ``_drift_first_scan`` treats "no
+    ledger row" as drifted -- so every backstop pass and every debounced
+    inotify batch re-opened and re-parsed the same dead file, forever.
+    Verified before the fix: three consecutive passes each reported the
+    same empty .jsonl as drifted with zero indexed rows.
+
+    Stamping the current (mtime, size) with no conv_uuid and no message
+    rows makes the file read as current until it actually changes. If it
+    later becomes valid, the write that makes it valid moves mtime or
+    size and the next pass picks it up normally.
+    """
+    if mtime is None or size is None:
+        return
+    try:
+        index.stamp_unindexable(path, mtime, size)
+    except sqlite3.Error:
+        logger.exception("search_index: could not stamp unindexable %s", path)
 
 
 def build_full_index(
@@ -2600,36 +2750,42 @@ def build_full_index(
             # the file was mutated during the read, skip the upsert so the
             # index never stamps stale content with a fresh mtime.
             try:
-                mtime_before = path.stat().st_mtime
+                st_before = path.stat()
+                mtime_before, size_before = st_before.st_mtime, st_before.st_size
             except OSError:
-                mtime_before = None
+                mtime_before = size_before = None
             conv = _load_conversation_at(path, store, source=source)
             if conv is None:
+                _stamp_unindexable(index, path, mtime_before, size_before)
                 if on_progress is not None:
                     on_progress(i + 1, total)
                 continue
             try:
-                mtime_after = path.stat().st_mtime
+                st_after = path.stat()
+                mtime_after, size_after = st_after.st_mtime, st_after.st_size
             except OSError:
-                mtime_after = None
+                mtime_after = size_after = None
             # If we couldn't stat the file at all, fall back to 0.0 (legacy
             # behavior) — the file just disappeared and the next drift pass
             # will resolve via the cleanup branch.
             if mtime_before is None or mtime_after is None:
-                mtime = 0.0
-            elif mtime_before != mtime_after:
+                mtime, size = 0.0, -1
+            elif mtime_before != mtime_after or size_before != size_after:
                 logger.info(
-                    "search_index: file mtime drifted during initial-build "
-                    "read (%s → %s); skipping upsert, drift pass will retry: %s",
-                    mtime_before, mtime_after, path,
+                    "search_index: file changed during initial-build read "
+                    "(mtime %s → %s, size %s → %s); skipping upsert, drift "
+                    "pass will retry: %s",
+                    mtime_before, mtime_after, size_before, size_after, path,
                 )
                 if on_progress is not None:
                     on_progress(i + 1, total)
                 continue
             else:
-                mtime = mtime_before
+                mtime, size = mtime_before, size_before
             try:
-                messages_indexed += index.upsert_conversation(conv, path, mtime)
+                messages_indexed += index.upsert_conversation(
+                    conv, path, mtime, size
+                )
                 files_indexed += 1
             except sqlite3.Error:
                 logger.exception("search_index: upsert failed for %s", path)
@@ -2699,25 +2855,29 @@ def update_drifted_files(
         # Without this, the index would store stale content under a
         # fresh mtime and never re-detect the unread bytes.
         try:
-            mtime_before = path.stat().st_mtime
+            st_before = path.stat()
+            mtime_before, size_before = st_before.st_mtime, st_before.st_size
         except OSError:
             continue
         conv = _load_conversation_at(path, store, source=source)
         if conv is None:
+            _stamp_unindexable(index, path, mtime_before, size_before)
             continue
         try:
-            mtime_after = path.stat().st_mtime
+            st_after = path.stat()
+            mtime_after, size_after = st_after.st_mtime, st_after.st_size
         except OSError:
             continue
-        if mtime_before != mtime_after:
+        if mtime_before != mtime_after or size_before != size_after:
             logger.info(
-                "search_index: file mtime drifted during read (%s → %s); "
-                "skipping upsert, next drift pass will retry: %s",
-                mtime_before, mtime_after, path,
+                "search_index: file changed during read (mtime %s → %s, "
+                "size %s → %s); skipping upsert, next drift pass will "
+                "retry: %s",
+                mtime_before, mtime_after, size_before, size_after, path,
             )
             continue
         try:
-            index.upsert_conversation(conv, path, mtime_before)
+            index.upsert_conversation(conv, path, mtime_before, size_before)
             updated += 1
         except sqlite3.Error:
             logger.exception("search_index: drift-upsert failed for %s", path)

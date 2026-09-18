@@ -21,37 +21,46 @@ from __future__ import annotations
 
 import sqlite3
 
+from backend import search_index as si
+
 import pytest
 
 
 def _make_broken_v14_db(path) -> None:
-    """Construct the exact corrupted state observed on the user's machine:
+    """Construct the corrupted state observed on the user's machine:
 
-    - schema_version row = 14
-    - messages table = v14 (column set is unchanged from v13)
-    - conversations table = v13 (NO is_compaction_titled column)
-    - indexed_files = v12 (conv_uuid present)
+    - schema_version row = the CURRENT SCHEMA_VERSION
+    - messages table = current column set
+    - conversations table = pre-v14 (NO is_compaction_titled column)
+    - indexed_files = current shape
+
+    Version and message columns are taken from the code under test rather
+    than frozen at 14. The self-repair branch is gated on column drift,
+    not on a version pair, so this stays a test of self-repair instead of
+    decaying into a test of "v14 is stale now" the moment SCHEMA_VERSION
+    moves. (It did decay, at v15.)
     """
+    msg_cols = ", ".join(
+        c if c in ("title", "body", "body_text") else f"{c} UNINDEXED"
+        for c in si.MESSAGES_COLUMNS
+    )
     conn = sqlite3.connect(str(path))
-    conn.executescript("""
+    conn.executescript(f"""
         CREATE TABLE schema_version (version INTEGER NOT NULL);
-        INSERT INTO schema_version (version) VALUES (14);
+        INSERT INTO schema_version (version) VALUES ({si.SCHEMA_VERSION});
 
         CREATE VIRTUAL TABLE messages USING fts5(
-            conv_uuid UNINDEXED, message_uuid UNINDEXED, sender UNINDEXED,
-            created_at UNINDEXED, source UNINDEXED, project_path UNINDEXED,
-            organization_id UNINDEXED, conv_created_at UNINDEXED,
-            conv_updated_at UNINDEXED, is_compaction_summary UNINDEXED,
-            title, body, body_text,
+            {msg_cols},
             tokenize = "porter unicode61 remove_diacritics 1"
         );
 
         CREATE TABLE indexed_files (
             path TEXT PRIMARY KEY, mtime REAL NOT NULL,
+            size INTEGER NOT NULL DEFAULT -1,
             indexed_at INTEGER NOT NULL, conv_uuid TEXT
         );
 
-        -- v13-shape conversations: NO is_compaction_titled column.
+        -- pre-v14 conversations: NO is_compaction_titled column.
         CREATE TABLE conversations (
             conv_uuid TEXT PRIMARY KEY,
             title TEXT,
